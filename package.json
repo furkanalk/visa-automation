@@ -1,0 +1,33 @@
+{
+  "name": "visa-automation",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Visa Automation SaaS Platform - TypeScript Monorepo",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "dev:api": "npm run dev --workspace=apps/api",
+    "dev:worker": "npm run dev --workspace=apps/worker",
+    "typecheck": "tsc --build",
+    "lint": "eslint . --ext .ts,.tsx",
+    "test": "npm run test --workspaces --if-present",
+    "db:migrate": "./scripts/db/migrate.sh",
+    "db:seed": "./scripts/db/seed.sh",
+    "docker:up": "docker compose -f infra/docker/docker-compose.yml up -d",
+    "docker:down": "docker compose -f infra/docker/docker-compose.yml down",
+    "docker:logs": "docker compose -f infra/docker/docker-compose.yml logs -f"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "eslint": "^8.55.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

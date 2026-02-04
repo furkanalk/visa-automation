@@ -1,0 +1,23 @@
+{
+  "name": "@visa-automation/db",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "migrate": "node dist/migrate.js",
+    "migrate:up": "node dist/migrate.js up",
+    "migrate:down": "node dist/migrate.js down"
+  },
+  "dependencies": {
+    "kysely": "^0.27.0",
+    "pg": "^8.11.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.10.0",
+    "typescript": "^5.3.0"
+  }
+}

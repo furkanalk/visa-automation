@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.env
+.env.local
+*.log
+.DS_Store
+coverage/
+.nyc_output/
+*.tsbuildinfo
+
+# Secrets
+infra/docker/secrets/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test artifacts
+test-results/
+playwright-report/
