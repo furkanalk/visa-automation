@@ -1,3 +1,15 @@
+## Scope Labels
+
+This document defines the **production Docker Compose deployment**.
+
+- **[MVP REQUIRED]** → must exist for first production deployment
+- **[OPS]** → operational best practices & tuning
+- **[PHASED / LATER]** → optional enhancements
+
+This is a production deployment reference. Do not remove hardening/security settings.
+
+---
+
 # Production Docker Compose Guide
 
 > **Document Status:** Reference  
@@ -1028,3 +1040,25 @@ services:
     ├── rollback.sh
     └── health-check.sh
 ```
+
+
+---
+
+## Architecture Notes
+
+### Agent / Worker Concurrency [OPS]
+Portal load should be controlled via:
+- admin portal concurrency policies (SERIAL/PARALLEL)
+- then container scaling (`--scale worker=N`)
+
+Do not scale workers aggressively; increase gradually to avoid bans/rate limits.
+
+### Canary Health Check [MVP REQUIRED]
+After each deploy:
+- run at least one canary job per portal
+- verify selectors/DOM
+- fail rollout if canary fails
+
+Prevents broken automation reaching production.
+
+---

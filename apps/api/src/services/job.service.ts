@@ -37,6 +37,7 @@ export class JobService {
       priority: job.priority,
       applicant_data: request.applicant,
       config: request.config ?? {},
+      portal_id: request.portal_id,
       attempt_number: 1,
     };
 

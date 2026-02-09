@@ -93,6 +93,8 @@ services:
       DB_POOL_SIZE: 10
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      # Notification action link signing
+      NOTIFY_ACTION_SECRET: ${NOTIFY_ACTION_SECRET:-}
     ports:
       - "3000:3000"
     depends_on:
@@ -128,6 +130,11 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      # Telegram Notifications
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_IDS: ${TELEGRAM_CHAT_IDS:-}
+      NOTIFY_ACTION_BASE_URL: ${NOTIFY_ACTION_BASE_URL:-http://localhost:8000}
+      NOTIFY_ACTION_SECRET: ${NOTIFY_ACTION_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy

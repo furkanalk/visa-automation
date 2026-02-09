@@ -16,6 +16,7 @@ export const JOB_STATES = {
   PAYMENT: 'PAYMENT',
   
   // Wait states
+  WAITING_SLOT: 'WAITING_SLOT',
   WAITING_HITL: 'WAITING_HITL',
   PAUSED: 'PAUSED',
   

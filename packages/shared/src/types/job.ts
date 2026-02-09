@@ -68,6 +68,7 @@ export type JobRunStatus = 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
  */
 export interface CreateJobRequest {
   tenant_id: string; // Injected from auth context, NOT from request body
+  portal_id: string;
   external_ref?: string;
   visa_type: VisaType;
   priority?: number;
@@ -85,6 +86,7 @@ export interface CreateJobBody {
   priority?: number;
   applicant: ApplicantData;
   config?: JobConfig;
+  portal_id: string;
 }
 
 export interface CreateJobResponse {

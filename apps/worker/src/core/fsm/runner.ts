@@ -1,16 +1,45 @@
 import type { Logger } from 'pino';
-import type { JobQueuePayload, JobState, HitlTaskType } from '@visa-automation/shared';
+import type { JobQueuePayload, JobState, HitlTaskType, HitlContext } from '@visa-automation/shared';
 import { JOB_STATES, isValidTransition } from '@visa-automation/shared';
 import { db, JobRepository, JobEventRepository } from '@visa-automation/db';
-import { shouldTriggerHitl, getHitlType } from '../hitl/handler.js';
+import { shouldTriggerHitl } from '../hitl/handler.js';
+import { createJobContext } from '../browser/context-factory.js';
+import { Throttler } from '../networking/throttler.js';
+import { RateLimiter } from '../networking/rate-limiter.js';
+import type { PortalDriver } from '../../portals/types.js';
+import type { PortalConfig } from '../../config/types.js';
+
+export interface FSMContext {
+  jobId: string;
+  tenantId: string;
+  workerId: string;
+  jobRunId: string;
+  payload: JobQueuePayload;
+  portal: PortalDriver;
+  portalConfig: PortalConfig;
+  throttler: Throttler;
+  rateLimiter: RateLimiter;
+  page: import('playwright').Page;
+  logger: Logger;
+}
+
+export type StateHandler = (ctx: FSMContext) => Promise<void>;
+
+export class FSMHalt extends Error {
+  constructor(public result: Partial<FSMResult>) {
+    super('FSM_HALTED');
+    this.name = 'FSMHalt';
+  }
+}
 
 export interface FSMResult {
   success: boolean;
   lastState: JobState;
   hitlTriggered: boolean;
   hitlType?: HitlTaskType;
-  hitlContext?: Record<string, unknown>;
+  hitlContext?: HitlContext;
   confirmationNumber?: string;
+  meta?: Record<string, unknown>;
   error?: string;
 }
 
@@ -21,12 +50,19 @@ export async function runFSM(
   payload: JobQueuePayload,
   workerId: string,
   jobRunId: string,
-  logger: Logger
+  logger: Logger,
+  portal: PortalDriver,
+  portalConfig: PortalConfig,
+  handlers: Partial<Record<JobState, StateHandler>>
 ): Promise<FSMResult> {
   const jobRepo = new JobRepository(db.instance);
   const eventRepo = new JobEventRepository(db.instance);
   
   const { job_id, tenant_id, config } = payload;
+  
+  const jc = await createJobContext({ jobId: job_id, portalConfig });
+  const throttler = new Throttler(portalConfig.pacing);
+  const rateLimiter = new RateLimiter(portalConfig.rateLimit);
   
   // Start from resume state or QUEUED
   let currentState: JobState = payload.resume_from_state ?? JOB_STATES.QUEUED;
@@ -38,6 +74,9 @@ export async function runFSM(
     JOB_STATES.LOGGED_IN,
     JOB_STATES.FORM_FILLING,
     JOB_STATES.PROCESSING,
+    JOB_STATES.SLOT_SEARCHING,
+    JOB_STATES.SLOT_FOUND,
+    JOB_STATES.WAITING_SLOT,
     JOB_STATES.COMPLETED,
   ];
 
@@ -48,10 +87,11 @@ export async function runFSM(
     currentState = stateProgression[0];
   }
 
-  logger.info({ jobId: job_id, startState: currentState }, 'Starting FSM');
+  logger.info({ jobId: job_id, startState: currentState, portalId: portalConfig.portalId }, 'Starting FSM');
 
-  // Progress through states
-  while (stateIndex < stateProgression.length - 1) {
+  try {
+    // Progress through states
+    while (stateIndex < stateProgression.length - 1) {
     const nextState = stateProgression[stateIndex + 1];
     
     // Validate transition
@@ -87,19 +127,36 @@ export async function runFSM(
         hitlContext: {
           prompt: `Please resolve ${hitlCheck.type} for job`,
           screenshot_url: `/screenshots/${job_id}/${currentState}.png`,
-          input_type: hitlCheck.type === 'CAPTCHA' ? 'text' : 'text',
+          input_type: 'text',
         },
       };
     }
 
-    // Execute state transition (stub - in real implementation, this runs Playwright)
+    // Execute state transition
     logger.info({ 
       jobId: job_id, 
       from: currentState, 
       to: nextState 
     }, 'State transition');
 
-    await executeStateTransition(job_id, currentState, nextState, logger);
+    const handler = handlers[nextState];
+    if (handler) {
+      await handler({
+        jobId: job_id,
+        tenantId: tenant_id,
+        workerId,
+        jobRunId,
+        payload,
+        portal,
+        portalConfig,
+        throttler,
+        rateLimiter,
+        page: jc.page,
+        logger,
+      });
+    } else {
+      logger.debug({ jobId: job_id, to: nextState }, 'No handler for state (skipping)');
+    }
 
     // Update job status in database
     await jobRepo.updateStatus(job_id, nextState);
@@ -129,46 +186,18 @@ export async function runFSM(
     hitlTriggered: false,
     confirmationNumber,
   };
-}
-
-/**
- * Execute a single state transition (stub implementation)
- * In production, this would run Playwright automation
- */
-async function executeStateTransition(
-  jobId: string,
-  fromState: JobState,
-  toState: JobState,
-  logger: Logger
-): Promise<void> {
-  // Stub implementations for each state
-  switch (toState) {
-    case JOB_STATES.LOGIN_PROCESS:
-      logger.debug({ jobId }, 'Stub: Navigating to login page');
-      await sleep(200);
-      break;
-    
-    case JOB_STATES.LOGGED_IN:
-      logger.debug({ jobId }, 'Stub: Submitting login credentials');
-      await sleep(300);
-      break;
-    
-    case JOB_STATES.FORM_FILLING:
-      logger.debug({ jobId }, 'Stub: Filling application form');
-      await sleep(400);
-      break;
-    
-    case JOB_STATES.PROCESSING:
-      logger.debug({ jobId }, 'Stub: Submitting application');
-      await sleep(500);
-      break;
-    
-    case JOB_STATES.COMPLETED:
-      logger.debug({ jobId }, 'Stub: Application completed');
-      break;
-    
-    default:
-      logger.debug({ jobId, toState }, 'Stub: Generic state transition');
+  } catch (err) {
+    if (err instanceof FSMHalt) {
+      return {
+        success: true,
+        lastState: (err.result.lastState ?? currentState) as JobState,
+        hitlTriggered: false,
+        ...err.result,
+      } satisfies FSMResult;
+    }
+    throw err;
+  } finally {
+    await jc.close();
   }
 }
 

@@ -1,4 +1,5 @@
 import type { ColumnType, Generated, Insertable, Selectable, Updateable } from 'kysely';
+import type { HitlTaskType, HitlTaskStatus, HitlContext, HitlResolution } from '@visa-automation/shared';
 
 /**
  * Database schema for Kysely
@@ -92,10 +93,10 @@ export interface HitlTasksTable {
   job_id: string;
   job_run_id: string;
   tenant_id: string;
-  type: 'CAPTCHA' | 'OTP' | 'DOCUMENT_CLARIFICATION' | 'MANUAL_VERIFICATION' | 'CUSTOM_INPUT';
-  status: 'PENDING' | 'ASSIGNED' | 'RESOLVED' | 'EXPIRED' | 'CANCELLED';
-  context: ColumnType<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>;
-  resolution: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null, Record<string, unknown> | null>;
+  type: HitlTaskType | null;
+  status: HitlTaskStatus | null;
+  context: HitlContext | null;
+  resolution: HitlResolution | null;
   expires_at: Date;
   created_at: ColumnType<Date, Date | undefined, never>;
   resolved_at: Date | null;

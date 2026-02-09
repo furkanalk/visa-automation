@@ -1,4 +1,4 @@
-import type { JobState, HitlTaskType, JobConfig } from '@visa-automation/shared';
+import type { JobState, HitlTaskType, JobConfig, HitlContext } from '@visa-automation/shared';
 import { JOB_STATES, DEFAULTS } from '@visa-automation/shared';
 import { db, HitlRepository } from '@visa-automation/db';
 
@@ -13,7 +13,7 @@ interface CreateHitlTaskParams {
   job_run_id: string;
   tenant_id: string;
   type: HitlTaskType;
-  context: Record<string, unknown>;
+  context: HitlContext;
 }
 
 /**
@@ -63,11 +63,11 @@ export function shouldTriggerHitl(
 export function getHitlType(state: JobState): HitlTaskType {
   switch (state) {
     case JOB_STATES.LOGIN_PROCESS:
-      return 'CAPTCHA';
+      return 'TURNSTILE';
     case JOB_STATES.FORM_FILLING:
-      return 'DOCUMENT_CLARIFICATION';
+      return 'OTP';
     case JOB_STATES.PROCESSING:
-      return 'MANUAL_VERIFICATION';
+      return 'MANUAL_REVIEW';
     default:
       return 'CAPTCHA';
   }
@@ -78,7 +78,8 @@ export function getHitlType(state: JobState): HitlTaskType {
  */
 export async function createHitlTask(params: CreateHitlTaskParams): Promise<string> {
   const hitlRepo = new HitlRepository(db.instance);
-  
+  const hitlType = params.type;
+  const hitlContext = params.context;
   // Calculate expiration (default 30 minutes)
   const expiresAt = new Date(Date.now() + DEFAULTS.HITL_TIMEOUT_MINUTES * 60 * 1000);
 
@@ -86,9 +87,9 @@ export async function createHitlTask(params: CreateHitlTaskParams): Promise<stri
     job_id: params.job_id,
     job_run_id: params.job_run_id,
     tenant_id: params.tenant_id,
-    type: params.type,
+    type: hitlType,
     status: 'PENDING',
-    context: params.context,
+    context: hitlContext,
     expires_at: expiresAt,
   });
 
@@ -107,8 +108,8 @@ export function detectHitlScenario(
   // to detect captchas, OTP prompts, etc.
   
   // Simulated detection keywords
-  const captchaKeywords = ['captcha', 'recaptcha', 'verify you are human'];
-  const otpKeywords = ['enter code', 'verification code', 'otp'];
+  // const captchaKeywords = ['captcha', 'recaptcha', 'verify you are human'];
+  // const otpKeywords = ['enter code', 'verification code', 'otp'];
   
   // For now, just return not triggered
   return { triggered: false };

@@ -1,0 +1,10 @@
+{
+  "portalId": "as-visa",
+  "baseUrl": "https://appointment.as-visa.com/tr/ankara-bireysel-basvuru",
+  "timeouts": { "navigationMs": 60000, "actionMs": 20000 },
+  "pacing": { "minDelayMs": 250, "maxDelayMs": 900, "jitter": 0.35 },
+  "rateLimit": { "enabled": true, "actionsPerMinute": 20, "burst": 4 },
+  "proxy": { "enabled": false, "strategy": "off", "providers": [] },
+  "hitl": { "otpMode": "pause", "captchaMode": "hitl", "maxWaitSeconds": 180 },
+  "selectorsVersion": "v1"
+}

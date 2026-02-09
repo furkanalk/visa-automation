@@ -16,12 +16,14 @@ export interface HitlTask {
   resolved_by?: string;
 }
 
-export type HitlTaskType = 
+export type HitlTaskType =
+  | 'TURNSTILE'
   | 'CAPTCHA'
   | 'OTP'
   | 'DOCUMENT_CLARIFICATION'
-  | 'MANUAL_VERIFICATION'
+  | 'MANUAL_REVIEW'
   | 'CUSTOM_INPUT';
+
 
 export type HitlTaskStatus = 
   | 'PENDING'

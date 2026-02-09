@@ -6,6 +6,7 @@ import type { JobState } from '../fsm/states.js';
  */
 export interface JobQueuePayload {
   job_id: string;
+  portal_id: string; // (sonra PortalId yaparız; shared<->worker bağımlılığı şimdilik string kalsın)
   tenant_id: string;
   visa_type: VisaType;
   priority: number;

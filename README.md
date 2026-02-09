@@ -264,6 +264,14 @@ npm run typecheck
 | `REDIS_HOST` | `localhost` | Redis host |
 | `REDIS_PORT` | `6379` | Redis port |
 | `WORKER_CONCURRENCY` | `2` | Number of concurrent jobs per worker |
+| `TELEGRAM_BOT_TOKEN` | - | Telegram Bot API token (required for notifications) |
+| `TELEGRAM_CHAT_IDS` | - | Comma-separated Telegram chat IDs (required for notifications) |
+| `NOTIFY_ACTION_BASE_URL` | `http://localhost:8000` | Base URL for notification action buttons |
+| `NOTIFY_ACTION_SECRET` | - | Secret key for signing notification action links (required for both API and Worker) |
+
+**Note:** Copy `.env.example` to `.env` and configure your Telegram credentials before starting the worker.
+
+**Generate secret:** `openssl rand -base64 32`
 
 ## 📄 License
 

@@ -6,6 +6,8 @@ import { QUEUE_NAMES } from '@visa-automation/shared';
 import type { JobQueuePayload } from '@visa-automation/shared';
 import { processJob } from './processor.js';
 import { closeDb } from '@visa-automation/db';
+import { closeBrowser } from './core/browser/browser-manager.js';
+import './portals/as-visa/index.js';
 
 const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
 const LOG_LEVEL = LOG_LEVELS.includes(process.env.LOG_LEVEL as (typeof LOG_LEVELS)[number])
@@ -85,6 +87,7 @@ async function main() {
     if (redisConnection) {
       await redisConnection.quit();
     }
+    await closeBrowser();
     await closeDb();
     
     process.exit(0);
