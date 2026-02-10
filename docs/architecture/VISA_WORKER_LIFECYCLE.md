@@ -928,6 +928,74 @@ await emitJobEvent(jobId, 'PROXY_LOST', {
 
 ---
 
+## Testing Strategy
+
+### Selector Testing (Legal-Safe Approach)
+
+**Principle:** Test automation logic without copying target sites.
+
+#### 1. Fixture Testing
+Create minimal HTML fixtures with required elements:
+- Form elements: `#apForm`, `#NationalityTabID`, `#AppointmentTabID`
+- Date/time inputs: `#TravelDate`, `#datepicker`, `#AppointmentTime`
+- Applicant fields: `PassportNumber`, `Name`, `Surname`
+- UI elements: `#AppTime`, `.custom-loader-wrap`, `.appointment-form-wrapper`
+
+**Important:** Do NOT include Cloudflare/Turnstile scripts (won't work in CI anyway).
+
+#### 2. Mock API Contract
+Mirror backend endpoints based on observed behavior:
+```
+POST /AnBir/Macaristan/TarihGetir → returns date list
+POST /AnBir/Macaristan/SaatGetir → returns [{ value, text }]
+```
+
+Mock server returns identical JSON shapes for testing.
+
+#### 3. CI Test Layers
+
+**Selector Unit Tests:**
+- Verify selectors exist on fixture page
+- Test element presence, not behavior
+
+**Flow Unit Tests:**
+- Nationality select → AppointmentTab change
+- Date endpoint called → datepicker populated
+- Time endpoint called → AppointmentTime filled
+
+**Integration Tests:**
+- Full FSM flow with mocked backend
+- State transitions verified
+- Checkpoint data validated
+
+#### 4. Smoke Tests (Production)
+**Low-frequency, non-invasive checks:**
+- Page loads successfully
+- Form elements present
+- Dates endpoint returns data (log only)
+
+**Safety measures:**
+- Strict pacing + retry/backoff
+- Circuit breaker on errors (5xx/403 → cooldown)
+- No aggressive polling
+
+### Watcher Design (Slot Detection)
+
+**Goal:** Detect availability without aggressive automation.
+
+**Approach:**
+- Periodic checks with jitter (30-90s intervals)
+- Check date availability via UI or API response
+- Hash slot set for change detection
+- Fire SLOT_FOUND event when new slots appear
+
+**Not a booking trigger:**
+- Watcher only detects availability
+- Separate booking job can be queued
+- HITL approval recommended for operational safety
+
+---
+
 ## Related Documents
 
 - [Evidence Finalization](../business/VISA_EVIDENCE_FINALIZATION.md) — `FINALIZING` state and evidence sealing

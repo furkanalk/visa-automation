@@ -9,7 +9,8 @@ export async function slotHunt(args: {
   baseUrl: string;
   throttler: Throttler;
   rateLimiter: RateLimiter;
-}): Promise<{ found: boolean; dates?: string[]; confirmationNumber?: string }> {
+  shouldAbort?: () => Promise<boolean>;
+}): Promise<{ found: boolean; dates?: string[]; hash?: string; confirmationNumber?: string }> {
   const { page, baseUrl, throttler, rateLimiter } = args;
 
   await rateLimiter.take();
@@ -36,6 +37,9 @@ export async function slotHunt(args: {
   let lastHash: string | null = null;
 
   for (let i = 0; i < MAX_POLLS; i++) {
+    if (args.shouldAbort && (await args.shouldAbort())) {
+      return { found: false };
+    }
     await rateLimiter.take();
     await throttler.beforeAction();
 
@@ -48,14 +52,14 @@ export async function slotHunt(args: {
     }
 
     if (snap.dates.length > 0) {
-      return { found: true, dates: snap.dates };
+      return { found: true, dates: snap.dates, hash: snap.hash };
     }
 
     // jittered sleep between polls (throttler yoksa bile hafif bekleyelim)
     await sleep(1500 + Math.floor(Math.random() * 1500));
   }
 
-  return { found: false };
+  return { found: false, hash: lastHash ?? undefined };
 }
 
 async function getAvailabilitySnapshot(page: Page): Promise<{ dates: string[]; hash: string }> {

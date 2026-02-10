@@ -8,6 +8,8 @@ import { resolvePortalConfig } from './config/loader.js';
 import { getPortal } from './portals/registry.js';
 import { asVisaHandlers } from './portals/as-visa/fsm/handlers.js';
 import { scheduleSlotRetry } from './core/queue/schedule-retry.js';
+import { notifyBookingConfirmed } from './core/notify/index.js';
+import { notifyJobCompletedEmail } from './core/notify/email.js';
 
 /**
  * Main job processor - orchestrates the FSM execution
@@ -65,6 +67,16 @@ export async function processJob(
     // Confirmation number override (if portal produced one)
     if (portalResult.confirmationNumber) {
       result.confirmationNumber = portalResult.confirmationNumber;
+    }
+
+    if (result.lastState === JOB_STATES.CANCELLED) {
+      await db.instance
+        .updateTable('job_runs')
+        .set({ status: 'COMPLETED', finished_at: new Date() })
+        .where('id', '=', jobRun.id)
+        .execute();
+      logger.info({ jobId: job_id }, 'Job cancelled (STOP) - halted gracefully');
+      return;
     }
 
     // Slot found (we notified via Telegram) — stop here for MVP
@@ -173,7 +185,37 @@ export async function processJob(
 
     logger.info({ jobId: job_id, confirmationNumber: result.confirmationNumber }, 'Job completed');
 
-    // TODO: Add booking confirmation notification in future iteration
+    // Send completion email (optional if SMTP not configured)
+    if (process.env.SMTP_HOST) {
+      try {
+        await notifyJobCompletedEmail({
+          jobId: job_id,
+          tenantId: tenant_id,
+          portalId: portalConfig.portalId,
+          confirmationNumber: result.confirmationNumber,
+          logger,
+        });
+      } catch (e) {
+        logger.warn({ jobId: job_id, err: e }, 'Job completion email failed');
+      }
+    }
+
+    try {
+      if (result.confirmationNumber) {
+        await notifyBookingConfirmed({
+          jobId: job_id,
+          portalId: portalConfig.portalId,
+          tenantId: tenant_id,
+          baseUrl: portalConfig.baseUrl,
+          confirmationNumber: result.confirmationNumber,
+          details: (result as any).meta ?? undefined,
+          payload,
+          logger,
+        });
+      }
+    } catch (e) {
+      logger.error({ jobId: job_id, err: e }, 'Booking notification failed');
+    }
 
   } catch (err) {
     logger.error({ jobId: job_id, err }, 'Job processing error');

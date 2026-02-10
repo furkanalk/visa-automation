@@ -92,7 +92,28 @@ export async function runFSM(
   try {
     // Progress through states
     while (stateIndex < stateProgression.length - 1) {
-    const nextState = stateProgression[stateIndex + 1];
+      // STOP support: if job got cancelled externally, halt immediately
+      const liveJob = await jobRepo.findById(job_id);
+      if (liveJob?.status === JOB_STATES.CANCELLED && currentState !== JOB_STATES.CANCELLED) {
+        // best-effort transition to CANCELLED (if valid)
+        if (isValidTransition(currentState, JOB_STATES.CANCELLED)) {
+          await jobRepo.updateStatus(job_id, JOB_STATES.CANCELLED);
+          await eventRepo.createStateTransition(
+            job_id,
+            tenant_id,
+            currentState,
+            JOB_STATES.CANCELLED,
+            { reason: 'Stopped by operator' }
+          );
+        }
+        return {
+          success: true,
+          lastState: JOB_STATES.CANCELLED,
+          hitlTriggered: false,
+        };
+      }
+
+      const nextState = stateProgression[stateIndex + 1];
     
     // Validate transition
     if (!isValidTransition(currentState, nextState)) {
