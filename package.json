@@ -10,7 +10,9 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "dev:api": "npm run dev --workspace=apps/api",
+    "dev:cp-api": "npm run dev --workspace=@visa-automation/cp-api",
     "dev:worker": "npm run dev --workspace=apps/worker",
+    "dev:admin": "npm run dev --workspace=@visa-automation/admin-ui",
     "typecheck": "tsc --build",
     "lint": "eslint . --ext .ts,.tsx",
     "test": "npm run test --workspaces --if-present",

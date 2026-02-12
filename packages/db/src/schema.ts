@@ -1,5 +1,22 @@
 import type { ColumnType, Generated, Insertable, Selectable, Updateable } from 'kysely';
-import type { HitlTaskType, HitlTaskStatus, HitlContext, HitlResolution } from '@visa-automation/shared';
+import type {
+  HitlTaskType,
+  HitlTaskStatus,
+  HitlContext,
+  HitlResolution,
+  AgentMode,
+  AgentStatus,
+  AgentMetadata,
+  AgentProfileConfig,
+  PortalSettings,
+  PortalSelectors,
+  DOMDigest,
+  SnapshotMetadata,
+  DiffSeverity,
+  AuditChanges,
+  AuditMetadata,
+  ActorType,
+} from '@visa-automation/shared';
 
 /**
  * Database schema for Kysely
@@ -12,6 +29,17 @@ export interface Database {
   evidence_packs: EvidencePacksTable;
   job_events: JobEventsTable;
   job_status_summary: JobStatusSummaryTable;
+  // Control Plane tables
+  agents: AgentsTable;
+  agent_profiles: AgentProfilesTable;
+  portal_configs: PortalConfigsTable;
+  notify_settings: NotifySettingsTable;
+  watcher_config: WatcherConfigTable;
+  portal_snapshots: PortalSnapshotsTable;
+  audit_logs: AuditLogsTable;
+  system_settings: SystemSettingsTable;
+  customers: CustomersTable;
+  customer_secrets: CustomerSecretsTable;
 }
 
 // ============================================
@@ -165,3 +193,263 @@ export interface JobStatusSummaryTable {
 export type JobStatusSummary = Selectable<JobStatusSummaryTable>;
 export type NewJobStatusSummary = Insertable<JobStatusSummaryTable>;
 export type JobStatusSummaryUpdate = Updateable<JobStatusSummaryTable>;
+
+// ============================================
+// Agents (Control Plane)
+// ============================================
+export interface AgentsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  name: string;
+  mode: AgentMode;
+  status: AgentStatus;
+  profile_id: string | null;
+  desired_portals: ColumnType<string[], string[], string[]>;
+  desired_concurrency: ColumnType<number, number | undefined, number>;
+  current_job_id: string | null;
+  last_heartbeat_at: Date | null;
+  metadata: ColumnType<AgentMetadata, AgentMetadata | undefined, AgentMetadata>;
+  created_at: ColumnType<Date, Date | undefined, never>;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+export type Agent = Selectable<AgentsTable>;
+export type NewAgent = Insertable<AgentsTable>;
+export type AgentUpdate = Updateable<AgentsTable>;
+
+// ============================================
+// Agent Profiles (Control Plane)
+// ============================================
+export interface AgentProfilesTable {
+  id: Generated<string>;
+  tenant_id: string;
+  name: string;
+  description: string | null;
+  config: ColumnType<AgentProfileConfig, AgentProfileConfig, AgentProfileConfig>;
+  is_default: ColumnType<boolean, boolean | undefined, boolean>;
+  created_at: ColumnType<Date, Date | undefined, never>;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+export type AgentProfile = Selectable<AgentProfilesTable>;
+export type NewAgentProfile = Insertable<AgentProfilesTable>;
+export type AgentProfileUpdate = Updateable<AgentProfilesTable>;
+
+// ============================================
+// Portal Configs (Control Plane)
+// ============================================
+export interface PortalConfigsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  portal_id: string;
+  name: string;
+  base_url: string | null;
+  enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  config: ColumnType<PortalSettings, PortalSettings | undefined, PortalSettings>;
+  selectors: ColumnType<PortalSelectors, PortalSelectors | undefined, PortalSelectors>;
+  created_at: ColumnType<Date, Date | undefined, never>;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+export type PortalConfigRow = Selectable<PortalConfigsTable>;
+export type NewPortalConfig = Insertable<PortalConfigsTable>;
+export type PortalConfigUpdate = Updateable<PortalConfigsTable>;
+
+// ============================================
+// Notify Settings (Control Plane)
+// ============================================
+export interface NotifySettingsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  telegram_enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  telegram_bot_token: string | null;
+  telegram_chat_ids: ColumnType<string[], string[] | undefined, string[]>;
+  email_enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  smtp_host: string | null;
+  smtp_port: ColumnType<number, number | undefined, number>;
+  smtp_user: string | null;
+  smtp_pass: string | null;
+  smtp_from: string | null;
+  smtp_secure: ColumnType<boolean, boolean | undefined, boolean>;
+  fallback_email: string | null;
+  email_override: string | null;
+  webhook_enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  webhook_url: string | null;
+  webhook_secret: string | null;
+  created_at: ColumnType<Date, Date | undefined, never>;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+export type NotifySettingsRow = Selectable<NotifySettingsTable>;
+export type NewNotifySettings = Insertable<NotifySettingsTable>;
+export type NotifySettingsUpdate = Updateable<NotifySettingsTable>;
+
+// ============================================
+// Watcher Config (Control Plane)
+// ============================================
+export interface WatcherConfigTable {
+  id: Generated<string>;
+  tenant_id: string;
+  enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  window_start_hour: ColumnType<number, number | undefined, number>;
+  window_end_hour: ColumnType<number, number | undefined, number>;
+  jitter_minutes: ColumnType<number, number | undefined, number>;
+  portals: ColumnType<string[], string[] | undefined, string[]>;
+  notify_on_change: ColumnType<boolean, boolean | undefined, boolean>;
+  last_run_at: Date | null;
+  next_scheduled_at: Date | null;
+  created_at: ColumnType<Date, Date | undefined, never>;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+export type WatcherConfigRow = Selectable<WatcherConfigTable>;
+export type NewWatcherConfig = Insertable<WatcherConfigTable>;
+export type WatcherConfigUpdate = Updateable<WatcherConfigTable>;
+
+// ============================================
+// Portal Snapshots (Control Plane)
+// ============================================
+export interface PortalSnapshotsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  portal_id: string;
+  captured_at: ColumnType<Date, Date | undefined, never>;
+  html_hash: string;
+  html: string;
+  dom_digest: ColumnType<DOMDigest | null, DOMDigest | null, DOMDigest | null>;
+  screenshot_path: string | null;
+  diff_summary: string | null;
+  diff_severity: DiffSeverity | null;
+  previous_snapshot_id: string | null;
+  metadata: ColumnType<SnapshotMetadata, SnapshotMetadata | undefined, SnapshotMetadata>;
+}
+
+export type PortalSnapshotRow = Selectable<PortalSnapshotsTable>;
+export type NewPortalSnapshot = Insertable<PortalSnapshotsTable>;
+export type PortalSnapshotUpdate = Updateable<PortalSnapshotsTable>;
+
+// ============================================
+// Audit Logs (Control Plane)
+// ============================================
+export interface AuditLogsTable {
+  id: Generated<string>;
+  tenant_id: string | null;
+  actor_type: ActorType;
+  actor_id: string | null;
+  actor_name: string | null;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  changes: ColumnType<AuditChanges | null, AuditChanges | null, never>;
+  metadata: ColumnType<AuditMetadata, AuditMetadata | undefined, never>;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: ColumnType<Date, Date | undefined, never>;
+}
+
+export type AuditLogRow = Selectable<AuditLogsTable>;
+export type NewAuditLog = Insertable<AuditLogsTable>;
+
+// ============================================
+// System Settings (Centralized Config)
+// ============================================
+export type SettingValueType = 'string' | 'number' | 'boolean' | 'json' | 'array';
+
+export interface SystemSettingsTable {
+  id: Generated<string>;
+  tenant_id: string | null;
+  category: string;
+  key: string;
+  value: ColumnType<unknown, unknown, unknown>;
+  description: string | null;
+  value_type: SettingValueType;
+  is_sensitive: ColumnType<boolean, boolean | undefined, boolean>;
+  created_at: ColumnType<Date, Date | undefined, never>;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+  updated_by: string | null;
+}
+
+export type SystemSetting = Selectable<SystemSettingsTable>;
+export type NewSystemSetting = Insertable<SystemSettingsTable>;
+export type SystemSettingUpdate = Updateable<SystemSettingsTable>;
+
+// ============================================
+// Customers
+// ============================================
+export type CustomerStatus = 'active' | 'paused' | 'completed' | 'cancelled';
+
+export interface CustomerPreferences {
+  visa_type?: string;
+  appointment_city?: string;
+  preferred_dates?: { from: string; to: string };
+  family_size?: number;
+  special_requirements?: string[];
+}
+
+export interface CustomerFlags {
+  has_previous_refusal?: boolean;
+  requires_otp_staff?: boolean;
+  needs_family_booking?: boolean;
+  has_travel_soon?: boolean;
+  vip?: boolean;
+}
+
+export interface SlotCheckPolicy {
+  active_hours?: { start: number; end: number };
+  jitter_minutes?: number;
+  max_checks_per_day?: number;
+  cooldown_after_found_hours?: number;
+  check_interval_minutes?: number;
+}
+
+export interface CustomersTable {
+  id: Generated<string>;
+  tenant_id: string;
+  display_name: string;
+  internal_ref: string | null;
+  tags: ColumnType<string[], string[] | undefined, string[]>;
+  portal_id: string;
+  profile_id: string | null;
+  status: CustomerStatus;
+  priority: ColumnType<number, number | undefined, number>;
+  notify_email: string | null;
+  notify_phone: string | null;
+  notify_telegram_chat_id: string | null;
+  preferences: ColumnType<CustomerPreferences, CustomerPreferences | undefined, CustomerPreferences>;
+  flags: ColumnType<CustomerFlags, CustomerFlags | undefined, CustomerFlags>;
+  slot_check_policy: ColumnType<SlotCheckPolicy, SlotCheckPolicy | undefined, SlotCheckPolicy>;
+  total_jobs: ColumnType<number, number | undefined, number>;
+  successful_bookings: ColumnType<number, number | undefined, number>;
+  last_job_at: Date | null;
+  last_slot_found_at: Date | null;
+  created_at: ColumnType<Date, Date | undefined, never>;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+  created_by: string | null;
+  updated_by: string | null;
+}
+
+export type Customer = Selectable<CustomersTable>;
+export type NewCustomer = Insertable<CustomersTable>;
+export type CustomerUpdate = Updateable<CustomersTable>;
+
+// ============================================
+// Customer Secrets
+// ============================================
+export interface CustomerSecretsTable {
+  id: Generated<string>;
+  customer_id: string;
+  passport_no: string | null;
+  id_no: string | null;
+  birth_date: Date | null;
+  full_name: string | null;
+  nationality: string | null;
+  portal_username: string | null;
+  portal_password: string | null;
+  extra_fields: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown>>;
+  created_at: ColumnType<Date, Date | undefined, never>;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+export type CustomerSecret = Selectable<CustomerSecretsTable>;
+export type NewCustomerSecret = Insertable<CustomerSecretsTable>;
+export type CustomerSecretUpdate = Updateable<CustomerSecretsTable>;

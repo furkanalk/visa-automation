@@ -1,6 +1,14 @@
 import type { Kysely } from 'kysely';
 import type { Database, Job, NewJob, JobUpdate } from '../schema.js';
 
+export interface JobFilters {
+  tenantId: string;
+  status?: string;
+  visaType?: string;
+  limit?: number;
+  offset?: number;
+}
+
 export class JobRepository {
   constructor(private db: Kysely<Database>) {}
 
@@ -9,6 +17,15 @@ export class JobRepository {
       .selectFrom('jobs')
       .selectAll()
       .where('id', '=', id)
+      .executeTakeFirst();
+  }
+
+  async findByIdAndTenant(id: string, tenantId: string): Promise<Job | undefined> {
+    return this.db
+      .selectFrom('jobs')
+      .selectAll()
+      .where('id', '=', id)
+      .where('tenant_id', '=', tenantId)
       .executeTakeFirst();
   }
 
@@ -21,6 +38,49 @@ export class JobRepository {
       .limit(limit)
       .offset(offset)
       .execute();
+  }
+
+  async findWithFilters(filters: JobFilters): Promise<{ items: Job[]; total: number }> {
+    let query = this.db
+      .selectFrom('jobs')
+      .selectAll()
+      .where('tenant_id', '=', filters.tenantId);
+
+    if (filters.status) {
+      query = query.where('status', '=', filters.status);
+    }
+
+    if (filters.visaType) {
+      query = query.where('visa_type', '=', filters.visaType);
+    }
+
+    // Get total count
+    const countResult = await this.db
+      .selectFrom('jobs')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('tenant_id', '=', filters.tenantId)
+      .$if(!!filters.status, (qb) => qb.where('status', '=', filters.status!))
+      .$if(!!filters.visaType, (qb) => qb.where('visa_type', '=', filters.visaType!))
+      .executeTakeFirst();
+
+    const total = Number(countResult?.count ?? 0);
+
+    const items = await query
+      .orderBy('created_at', 'desc')
+      .limit(filters.limit ?? 20)
+      .offset(filters.offset ?? 0)
+      .execute();
+
+    return { items, total };
+  }
+
+  async countByTenant(tenantId: string): Promise<number> {
+    const result = await this.db
+      .selectFrom('jobs')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('tenant_id', '=', tenantId)
+      .executeTakeFirst();
+    return Number(result?.count ?? 0);
   }
 
   async create(job: NewJob): Promise<Job> {

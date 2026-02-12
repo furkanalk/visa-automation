@@ -1,0 +1,134 @@
+@import "tailwindcss";
+
+/* Enable class-based dark mode (Tailwind v4) */
+@variant dark (&:where(.dark, .dark *));
+
+/* Light mode - Ice blue */
+:root {
+  --bg-main: #f0f7ff;
+  --bg-card: #ffffff;
+  --bg-primary: #3b82f6;
+  --bg-sidebar: #1e3a5f;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --border-color: #bfdbfe;
+}
+
+/* Dark mode */
+.dark {
+  --bg-main: #0f172a;
+  --bg-card: #1e293b;
+  --bg-primary: #2563eb;
+  --bg-sidebar: #020617;
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --border-color: #334155;
+}
+
+/* Smooth theme transitions */
+html {
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #475569;
+}
+
+/* Focus ring utility */
+.focus-ring {
+  @apply focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2;
+}
+
+/* Task priority colors */
+.priority-urgent {
+  @apply border-l-4 border-red-500;
+}
+
+.priority-high {
+  @apply border-l-4 border-orange-500;
+}
+
+.priority-normal {
+  @apply border-l-4 border-blue-500;
+}
+
+.priority-low {
+  @apply border-l-4 border-gray-400;
+}
+
+/* Base styles for theme transitions */
+* {
+  transition-property: background-color, border-color, color, box-shadow, opacity;
+  transition-duration: 200ms;
+  transition-timing-function: ease-in-out;
+}
+
+body {
+  background-color: var(--bg-main);
+  color: var(--text-primary);
+}
+
+/* Table styling for light mode visibility */
+table {
+  border-color: var(--border-color);
+}
+
+th {
+  background-color: #e0f2fe;
+  border-color: #bfdbfe;
+}
+
+.dark th {
+  background-color: #1e293b;
+  border-color: #334155;
+}
+
+/* Better hover states in light mode */
+tr:hover td {
+  background-color: #e0f2fe;
+}
+
+.dark tr:hover td {
+  background-color: rgba(30, 41, 59, 0.5);
+}
+
+/* Code blocks */
+code, pre {
+  background-color: #e0f2fe;
+  border: 1px solid #bfdbfe;
+  border-radius: 4px;
+}
+
+.dark code, .dark pre {
+  background-color: #0f172a;
+  border-color: #334155;
+}
+
+/* Enhanced select styling */
+select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+  background-position: right 0.5rem center;
+  background-repeat: no-repeat;
+  background-size: 1.5em 1.5em;
+  padding-right: 2.5rem;
+}
+
+.dark select {
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%239ca3af' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+}

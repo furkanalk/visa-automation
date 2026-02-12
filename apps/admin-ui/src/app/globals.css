@@ -1,0 +1,145 @@
+@import "tailwindcss";
+
+/* Enable class-based dark mode (Tailwind v4) */
+@variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* Light mode colors - Ice blue theme */
+  --color-background: #f0f7ff;
+  --color-foreground: #0f172a;
+  --color-card: #ffffff;
+  --color-card-foreground: #0f172a;
+  --color-primary: #2563eb;
+  --color-primary-foreground: #f8fafc;
+  --color-secondary: #e0f2fe;
+  --color-secondary-foreground: #1e293b;
+  --color-muted: #e0f2fe;
+  --color-muted-foreground: #475569;
+  --color-accent: #dbeafe;
+  --color-accent-foreground: #1e293b;
+  --color-destructive: #ef4444;
+  --color-destructive-foreground: #f8fafc;
+  --color-border: #bfdbfe;
+  --color-input: #e0f2fe;
+  --color-ring: #2563eb;
+  --radius: 0.5rem;
+}
+
+/* Base styles */
+* {
+  transition-property: background-color, border-color, color, box-shadow, opacity;
+  transition-duration: 300ms;
+  transition-timing-function: ease-in-out;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+}
+
+/* Light mode - Ice blue */
+:root {
+  --bg-main: #f0f7ff;
+  --bg-card: #ffffff;
+  --bg-sidebar: #1e3a5f;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --border-color: #bfdbfe;
+}
+
+/* Dark mode */
+.dark {
+  --bg-main: #0f172a;
+  --bg-card: #1e293b;
+  --bg-sidebar: #020617;
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --border-color: #334155;
+}
+
+.dark body {
+  background-color: var(--bg-main);
+  color: var(--text-primary);
+}
+
+/* Smooth transitions for theme switch */
+html {
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-main);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--text-secondary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-primary);
+}
+
+/* Table styling for light mode visibility */
+table {
+  border-color: var(--border-color);
+}
+
+th {
+  background-color: #e0f2fe;
+  border-color: #bfdbfe;
+}
+
+.dark th {
+  background-color: #1e293b;
+  border-color: #334155;
+}
+
+/* Better hover states in light mode */
+tr:hover td {
+  background-color: #e0f2fe;
+}
+
+.dark tr:hover td {
+  background-color: rgba(30, 41, 59, 0.5);
+}
+
+/* Code blocks */
+code, pre {
+  background-color: #e0f2fe;
+  border: 1px solid #bfdbfe;
+}
+
+.dark code, .dark pre {
+  background-color: #0f172a;
+  border-color: #334155;
+}
+
+/* Dividers / hr */
+hr {
+  border-color: #bfdbfe;
+}
+
+.dark hr {
+  border-color: #334155;
+}
+
+/* Enhanced select styling */
+select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+  background-position: right 0.5rem center;
+  background-repeat: no-repeat;
+  background-size: 1.5em 1.5em;
+  padding-right: 2.5rem;
+}
+
+.dark select {
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%239ca3af' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+}
