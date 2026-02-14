@@ -126,39 +126,6 @@ CREATE TRIGGER trg_customer_secrets_updated
   FOR EACH ROW
   EXECUTE FUNCTION update_customers_timestamp();
 
--- Function to increment job count
-CREATE OR REPLACE FUNCTION increment_customer_job_count()
-RETURNS TRIGGER AS $$
-BEGIN
-  IF NEW.customer_id IS NOT NULL THEN
-    UPDATE customers 
-    SET total_jobs = total_jobs + 1,
-        last_job_at = now()
-    WHERE id = NEW.customer_id;
-  END IF;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- Add customer_id to jobs table if not exists
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns 
-    WHERE table_name = 'jobs' AND column_name = 'customer_id'
-  ) THEN
-    ALTER TABLE jobs ADD COLUMN customer_id UUID REFERENCES customers(id) ON DELETE SET NULL;
-    CREATE INDEX idx_jobs_customer ON jobs(customer_id);
-  END IF;
-END $$;
-
--- Trigger to increment customer job count on job creation
-DROP TRIGGER IF EXISTS trg_job_customer_count ON jobs;
-CREATE TRIGGER trg_job_customer_count
-  AFTER INSERT ON jobs
-  FOR EACH ROW
-  EXECUTE FUNCTION increment_customer_job_count();
-
 COMMENT ON TABLE customers IS 'Customer profiles - source of automation jobs';
 COMMENT ON TABLE customer_secrets IS 'Sensitive customer identity data (should be encrypted)';
 COMMENT ON COLUMN customers.preferences IS 'Visa application preferences as JSON';

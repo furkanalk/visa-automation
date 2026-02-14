@@ -390,6 +390,96 @@ export class CustomerRepository {
     };
   }
 
+  // List redacted customers for staff
+  async getRedactedList(
+    tenantId: string,
+    filters?: {
+      status?: CustomerStatus;
+      portalId?: string;
+      search?: string;
+      limit?: number;
+      offset?: number;
+    }
+  ): Promise<{ items: Array<Partial<Customer>>; total: number }> {
+    let query = this.db
+      .selectFrom('customers')
+      .selectAll()
+      .where('tenant_id', '=', tenantId);
+
+    if (filters?.status) {
+      query = query.where('status', '=', filters.status);
+    }
+
+    if (filters?.portalId) {
+      query = query.where('portal_id', '=', filters.portalId);
+    }
+
+    if (filters?.search) {
+      // Search only in non-sensitive fields
+      query = query.where((eb) =>
+        eb.or([
+          eb('internal_ref', 'ilike', `%${filters.search}%`),
+          eb('portal_id', 'ilike', `%${filters.search}%`),
+        ])
+      );
+    }
+
+    // Count
+    const countResult = await this.db
+      .selectFrom('customers')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('tenant_id', '=', tenantId)
+      .executeTakeFirst();
+
+    const total = Number(countResult?.count ?? 0);
+
+    // Fetch with pagination
+    const customers = await query
+      .orderBy('priority', 'desc')
+      .orderBy('created_at', 'desc')
+      .limit(filters?.limit ?? 50)
+      .offset(filters?.offset ?? 0)
+      .execute();
+
+    // Redact each customer
+    const redactedItems = customers.map((c) => this.redactCustomer(c));
+
+    return { items: redactedItems, total };
+  }
+
+  private redactCustomer(customer: Customer): Partial<Customer> {
+    return {
+      id: customer.id,
+      tenant_id: customer.tenant_id,
+      display_name: this.redactName(customer.display_name),
+      internal_ref: customer.internal_ref,
+      tags: customer.tags,
+      portal_id: customer.portal_id,
+      status: customer.status,
+      priority: customer.priority,
+      notify_email: customer.notify_email ? this.redactEmail(customer.notify_email) : null,
+      notify_phone: customer.notify_phone ? this.redactPhone(customer.notify_phone) : null,
+      notify_telegram_chat_id: null,
+      preferences: customer.preferences,
+      flags: customer.flags,
+      total_jobs: customer.total_jobs,
+      successful_bookings: customer.successful_bookings,
+      last_job_at: customer.last_job_at,
+      last_slot_found_at: customer.last_slot_found_at,
+      created_at: customer.created_at,
+    };
+  }
+
+  private redactName(name: string): string {
+    // "Furkan Akın" -> "F****n A***n"
+    const parts = name.split(' ');
+    return parts.map(part => {
+      if (part.length <= 1) return part;
+      if (part.length === 2) return part[0] + '*';
+      return part[0] + '*'.repeat(part.length - 2) + part[part.length - 1];
+    }).join(' ');
+  }
+
   private redactEmail(email: string): string {
     const [local, domain] = email.split('@');
     if (!local || !domain) return '***@***.***';

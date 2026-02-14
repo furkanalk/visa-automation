@@ -3,24 +3,21 @@
  */
 
 /**
- * Default configuration values
+ * Default configuration values.
+ * Runtime config (job priority, max_retries, hitl timeout, etc.) lives in Postgres system_settings;
+ * these are only for types or fallback where DB is not yet available (e.g. tests).
  */
 export const DEFAULTS = {
-  /** Default job priority (0-100, higher = more priority) */
+  /** Default job priority (0-100); use system_settings job.default_priority in production */
   JOB_PRIORITY: 50,
-  
-  /** Default max retries for failed jobs */
+  /** Default max retries; use system_settings job.max_retries in production */
   MAX_RETRIES: 3,
-  
-  /** Default HITL timeout in minutes */
+  /** Default HITL timeout in minutes; use system_settings hitl.task_timeout_minutes in production */
   HITL_TIMEOUT_MINUTES: 30,
-  
   /** Default max concurrent jobs per tenant */
   MAX_CONCURRENT_JOBS: 5,
-  
   /** Page size for pagination */
   PAGE_SIZE: 20,
-  
   /** Max page size */
   MAX_PAGE_SIZE: 100,
 } as const;

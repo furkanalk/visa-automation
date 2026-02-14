@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import type { Database, SystemSetting, SettingValueType } from '../schema.js';
 
 export interface SettingsFilters {
@@ -110,6 +110,24 @@ export class SystemSettingsRepository {
     }
 
     return result;
+  }
+
+  /**
+   * Max updated_at for settings visible to this tenant (tenant + global). For ETag/conditional GET.
+   */
+  async getMaxUpdatedAt(tenantId: string | null): Promise<Date | null> {
+    const row = await this.db
+      .selectFrom('system_settings')
+      .select(sql<Date>`max(updated_at)`.as('max_updated_at'))
+      .where((eb) =>
+        eb.or([
+          eb('tenant_id', '=', tenantId),
+          eb('tenant_id', 'is', null),
+        ])
+      )
+      .executeTakeFirst();
+    const val = row?.max_updated_at ?? null;
+    return val;
   }
 
   /**

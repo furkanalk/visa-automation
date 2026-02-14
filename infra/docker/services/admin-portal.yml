@@ -1,0 +1,24 @@
+# Admin Portal (Next.js) - single service file
+services:
+  admin-portal:
+    build:
+      context: ../../..
+      dockerfile: apps/web/admin-portal/Dockerfile
+      target: production
+      args:
+        NEXT_PUBLIC_CP_API_URL: ${NEXT_PUBLIC_CP_API_URL:-http://localhost:3001}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
+    image: ${IMAGE_ADMIN_PORTAL:-visa-automation/admin-portal:latest}
+    container_name: visa-admin-portal
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_CP_API_URL: ${NEXT_PUBLIC_CP_API_URL:-http://localhost:3001}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
+    ports:
+      - "3002:3002"
+    depends_on:
+      cp:
+        condition: service_healthy
+    networks:
+      - visa-network

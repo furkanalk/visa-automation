@@ -17,6 +17,14 @@ DB_PASSWORD="${DB_PASSWORD:-postgres}"
 
 export PGPASSWORD="$DB_PASSWORD"
 
+# Optional: mTLS (same as DB_SSL_* in app). psql uses libpq env vars.
+if [[ -n "${DB_SSL_CA_PATH:-}" ]]; then
+  export PGSSLROOTCERT="$DB_SSL_CA_PATH"
+  export PGSSLMODE="${DB_SSL:-verify-full}"
+fi
+if [[ -n "${DB_SSL_CERT_PATH:-}" ]]; then export PGSSLCERT="$DB_SSL_CERT_PATH"; fi
+if [[ -n "${DB_SSL_KEY_PATH:-}" ]]; then export PGSSLKEY="$DB_SSL_KEY_PATH"; fi
+
 echo "Running migrations against $DB_HOST:$DB_PORT/$DB_NAME"
 
 # Check if database exists

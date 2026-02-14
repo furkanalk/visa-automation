@@ -18,4 +18,17 @@ export type {
   NewSystemSetting,
   SystemSettingUpdate,
   SettingValueType,
+  // Staff types
+  StaffMember,
+  NewStaffMember,
+  StaffMemberUpdate,
+  StaffActivityLog,
+  NewStaffActivityLog,
+  StaffSession,
+  NewStaffSession,
+  StaffRole,
+  StaffStatus,
+  StaffMetrics,
+  StaffSettings,
+  SessionStatus,
 } from './schema.js';

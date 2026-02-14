@@ -73,3 +73,14 @@ export function isProcessingState(state: JobState): boolean {
 export function isWaitState(state: JobState): boolean {
   return WAIT_STATES.includes(state);
 }
+
+/**
+ * Guard: whether a job status transition is allowed.
+ * - From terminal (COMPLETED, FAILED_TERMINAL, CANCELLED): no transition (must stay).
+ * - From non-terminal: any transition allowed (FSM, cancel, fail, etc.).
+ */
+export function canTransitionFromTo(from: string, to: string): boolean {
+  if (from === to) return true;
+  if (TERMINAL_STATES.includes(from as JobState)) return false;
+  return true;
+}

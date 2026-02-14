@@ -1,0 +1,24 @@
+# Bootstrap: run DB migrations once after Postgres is healthy. All defaults live in Postgres (migrations).
+# CP and DP depend on this so they start only after bootstrap has run.
+# Path ../../../ is repo root when compose is run from infra/docker/{dev,test,prod}.
+services:
+  bootstrap:
+    image: postgres:16-alpine
+    container_name: visa-bootstrap
+    restart: "no"
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-visa_automation}
+      DB_USER: ${DB_USER:-postgres}
+      PGPASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - ../../../:/workspace:ro
+    working_dir: /workspace
+    command: ["/bin/sh", "-c", "apk add --no-cache bash 2>/dev/null || true; /bin/bash /workspace/scripts/db/migrate.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - visa-network

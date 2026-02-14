@@ -1,0 +1,87 @@
+# Prod – run from infra/docker/prod:  cp .env.example .env  (set secrets!)  &&  docker compose up -d
+# Order: Postgres → bootstrap (migrate) → CP → DP.
+name: visa-automation-prod
+
+include:
+  - ../services/postgres.yml
+  - ../services/redis.yml
+  - ../services/bootstrap.yml
+  - ../services/cp.yml
+  - ../services/dp.yml
+  - ../services/admin-portal.yml
+  - ../services/staff-portal.yml
+
+networks:
+  visa-network:
+    name: visa-network-prod
+
+services:
+  postgres:
+    env_file: .env
+    read_only: false
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+
+  redis:
+    env_file: .env
+    security_opt:
+      - no-new-privileges:true
+    user: redis
+
+  cp:
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    tmpfs:
+      - /tmp
+
+  dp:
+    env_file: .env
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    tmpfs:
+      - /tmp
+      - /home/pwuser/.cache
+
+  admin-portal:
+    env_file: .env
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    tmpfs:
+      - /tmp
+
+  staff-portal:
+    env_file: .env
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    tmpfs:
+      - /tmp

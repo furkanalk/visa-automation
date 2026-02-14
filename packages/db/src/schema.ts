@@ -34,12 +34,17 @@ export interface Database {
   agent_profiles: AgentProfilesTable;
   portal_configs: PortalConfigsTable;
   notify_settings: NotifySettingsTable;
+  notify_dedupe: NotifyDedupeTable;
   watcher_config: WatcherConfigTable;
   portal_snapshots: PortalSnapshotsTable;
   audit_logs: AuditLogsTable;
   system_settings: SystemSettingsTable;
   customers: CustomersTable;
   customer_secrets: CustomerSecretsTable;
+  // Staff Management tables
+  staff_members: StaffMembersTable;
+  staff_activity_log: StaffActivityLogTable;
+  staff_sessions: StaffSessionsTable;
 }
 
 // ============================================
@@ -129,6 +134,10 @@ export interface HitlTasksTable {
   created_at: ColumnType<Date, Date | undefined, never>;
   resolved_at: Date | null;
   resolved_by: string | null;
+  /** FK to staff_members – who was assigned (staff portal HITL). Filled when staff portal is implemented. */
+  assigned_staff_id: string | null;
+  /** FK to staff_members – who resolved (staff portal HITL). Filled when staff portal is implemented. */
+  resolved_staff_id: string | null;
 }
 
 export type HitlTask = Selectable<HitlTasksTable>;
@@ -161,6 +170,7 @@ export interface JobEventsTable {
   id: Generated<number>;
   job_id: string;
   tenant_id: string;
+  job_run_id: string | null;
   event_type: string;
   payload: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null, Record<string, unknown> | null>;
   created_at: ColumnType<Date, Date | undefined, never>;
@@ -283,6 +293,20 @@ export interface NotifySettingsTable {
 export type NotifySettingsRow = Selectable<NotifySettingsTable>;
 export type NewNotifySettings = Insertable<NotifySettingsTable>;
 export type NotifySettingsUpdate = Updateable<NotifySettingsTable>;
+
+// ============================================
+// Notify Dedupe (one send per job_id + type + semantic_key)
+// ============================================
+export interface NotifyDedupeTable {
+  id: Generated<string>;
+  job_id: string;
+  type: string;
+  semantic_key: string;
+  sent_at: ColumnType<Date, Date | undefined, never>;
+}
+
+export type NotifyDedupeRow = Selectable<NotifyDedupeTable>;
+export type NewNotifyDedupe = Insertable<NotifyDedupeTable>;
 
 // ============================================
 // Watcher Config (Control Plane)
@@ -453,3 +477,104 @@ export interface CustomerSecretsTable {
 export type CustomerSecret = Selectable<CustomerSecretsTable>;
 export type NewCustomerSecret = Insertable<CustomerSecretsTable>;
 export type CustomerSecretUpdate = Updateable<CustomerSecretsTable>;
+
+// ============================================
+// Staff Members
+// ============================================
+export type StaffRole = 'staff' | 'senior_staff' | 'supervisor' | 'admin';
+export type StaffStatus = 'active' | 'inactive' | 'suspended';
+
+export interface StaffSettings {
+  max_concurrent_tasks?: number;
+  notification_sound?: boolean;
+  preferred_task_types?: string[];
+}
+
+export interface StaffMetrics {
+  total_tasks?: number;
+  resolved_tasks?: number;
+  expired_tasks?: number;
+  avg_resolution_time_ms?: number;
+  success_rate?: number;
+}
+
+export interface StaffMembersTable {
+  id: Generated<string>;
+  tenant_id: string;
+  email: string;
+  password_hash: string | null;
+  name: string;
+  role: StaffRole;
+  avatar_url: string | null;
+  status: StaffStatus;
+  permissions: ColumnType<string[], string[] | undefined, string[]>;
+  settings: ColumnType<StaffSettings, StaffSettings | undefined, StaffSettings>;
+  metrics: ColumnType<StaffMetrics, StaffMetrics | undefined, StaffMetrics>;
+  last_active_at: Date | null;
+  created_at: ColumnType<Date, Date | undefined, never>;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+export type StaffMember = Selectable<StaffMembersTable>;
+export type NewStaffMember = Insertable<StaffMembersTable>;
+export type StaffMemberUpdate = Updateable<StaffMembersTable>;
+
+// ============================================
+// Staff Activity Log
+// ============================================
+export type StaffActivityAction = 
+  | 'login' | 'logout' 
+  | 'task_assigned' | 'task_resolved' | 'task_escalated' | 'task_expired'
+  | 'customer_viewed'
+  | 'session_start' | 'session_end';
+
+export interface StaffActivityDetails {
+  task_type?: string;
+  resolution_time_ms?: number;
+  resolution_value?: string;
+  escalation_reason?: string;
+  [key: string]: unknown;
+}
+
+export interface StaffActivityLogTable {
+  id: Generated<string>;
+  tenant_id: string;
+  staff_id: string;
+  action: string;
+  resource_type: string | null;
+  resource_id: string | null;
+  details: ColumnType<StaffActivityDetails, StaffActivityDetails | undefined, StaffActivityDetails>;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: ColumnType<Date, Date | undefined, never>;
+}
+
+export type StaffActivityLog = Selectable<StaffActivityLogTable>;
+export type NewStaffActivityLog = Insertable<StaffActivityLogTable>;
+
+// ============================================
+// Staff Sessions
+// ============================================
+export type SessionStatus = 'active' | 'idle' | 'busy' | 'offline';
+
+export interface DeviceInfo {
+  browser?: string;
+  os?: string;
+  device_type?: 'desktop' | 'mobile' | 'tablet';
+}
+
+export interface StaffSessionsTable {
+  id: Generated<string>;
+  tenant_id: string;
+  staff_id: string;
+  token_hash: string;
+  status: SessionStatus;
+  device_info: ColumnType<DeviceInfo, DeviceInfo | undefined, DeviceInfo>;
+  last_heartbeat_at: ColumnType<Date, Date | undefined, Date>;
+  created_at: ColumnType<Date, Date | undefined, never>;
+  expires_at: Date;
+}
+
+export type StaffSession = Selectable<StaffSessionsTable>;
+export type NewStaffSession = Insertable<StaffSessionsTable>;
+export type StaffSessionUpdate = Updateable<StaffSessionsTable>;

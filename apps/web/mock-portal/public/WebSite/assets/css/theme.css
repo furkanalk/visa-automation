@@ -1,0 +1,4 @@
+/* Mock AS-Visa theme.css - minimal mimic for automation */
+body { font-family: 'DM Sans', Arial, sans-serif; }
+.page_wapper { min-height: 100vh; }
+.content_all_warpper { position: relative; }

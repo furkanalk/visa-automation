@@ -4,29 +4,36 @@
   "private": true,
   "description": "Visa Automation SaaS Platform - TypeScript Monorepo",
   "workspaces": [
-    "apps/*",
-    "packages/*"
+    "apps/cp",
+    "apps/dp",
+    "apps/web/*",
+    "packages/*",
+    "tests/e2e"
   ],
   "scripts": {
     "build": "npm run build --workspaces",
-    "dev:api": "npm run dev --workspace=apps/api",
-    "dev:cp-api": "npm run dev --workspace=@visa-automation/cp-api",
-    "dev:worker": "npm run dev --workspace=apps/worker",
-    "dev:admin": "npm run dev --workspace=@visa-automation/admin-ui",
+    "dev:staff": "npm run dev --workspace=@visa-automation/staff-portal",
+    "dev:mock": "npm run dev --workspace=@visa-automation/mock-portal",
     "typecheck": "tsc --build",
     "lint": "eslint . --ext .ts,.tsx",
     "test": "npm run test --workspaces --if-present",
     "db:migrate": "./scripts/db/migrate.sh",
     "db:seed": "./scripts/db/seed.sh",
-    "docker:up": "docker compose -f infra/docker/docker-compose.yml up -d",
-    "docker:down": "docker compose -f infra/docker/docker-compose.yml down",
-    "docker:logs": "docker compose -f infra/docker/docker-compose.yml logs -f"
+    "docker:up": "cd infra/docker/dev && cp -n .env.example .env 2>/dev/null; docker compose up -d",
+    "docker:down": "cd infra/docker/dev && docker compose down",
+    "docker:logs": "cd infra/docker/dev && docker compose logs -f",
+    "docker:up:prod": "cd infra/docker/prod && docker compose up -d",
+    "dev:cp": "npm run dev --workspace=@visa-automation/cp",
+    "dev:dp": "npm run dev --workspace=@visa-automation/dp",
+    "dev:admin-portal": "npm run dev --workspace=@visa-automation/admin-portal",
+    "e2e": "npm run e2e --workspace=visa-automation-e2e"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
     "@typescript-eslint/eslint-plugin": "^6.13.0",
     "@typescript-eslint/parser": "^6.13.0",
     "eslint": "^8.55.0",
+    "puppeteer": "^24.37.3",
     "typescript": "^5.3.0"
   },
   "engines": {

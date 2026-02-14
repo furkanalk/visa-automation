@@ -1,278 +1,129 @@
-# Visa Automation SaaS Platform
+# Visa Automation
 
-A TypeScript monorepo for automating visa application processing using headless browser automation (Playwright) with a robust FSM-based job processing system.
+TypeScript monorepo for visa application automation: control-plane API, data-plane worker (Playwright), and admin/staff UIs. Jobs are queued via Redis (BullMQ), processed by the worker through a portal driver (e.g. as-visa) and FSM, with optional HITL and Telegram/email notifications.
 
-## 🏗️ Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         VISA AUTOMATION PLATFORM                         │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌──────────┐      ┌──────────┐      ┌──────────┐      ┌──────────┐   │
-│  │   Kong   │ ───▶ │   API    │ ───▶ │  Redis   │ ◀─── │  Worker  │   │
-│  │ Gateway  │      │ (Fastify)│      │ (BullMQ) │      │(Playwright│   │
-│  └──────────┘      └──────────┘      └──────────┘      └──────────┘   │
-│       │                 │                                    │         │
-│       │                 │                                    │         │
-│       │                 ▼                                    ▼         │
-│       │           ┌──────────┐                        ┌──────────┐   │
-│       │           │PostgreSQL│◀───────────────────────│   FSM    │   │
-│       └─────────▶ │    16    │                        │  Runner  │   │
-│                   └──────────┘                        └──────────┘   │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-## 📁 Project Structure
+## Project structure
 
 ```
-visa-automation/
-├── apps/
-│   ├── api/          # Fastify REST API
-│   └── worker/       # Playwright-based job processor
-├── packages/
-│   ├── shared/       # Shared types, FSM, constants
-│   └── db/           # Database schema, migrations, repositories
-├── infra/
-│   ├── docker/       # Docker Compose configuration
-│   └── kong/         # Kong API Gateway config
-├── scripts/
-│   └── db/           # Database utility scripts
-└── docs/             # Architecture documentation
+apps/
+├── cp/              # Control-plane API (port 3001): /cp/* + /api/jobs
+├── dp/              # Data-plane worker: queue consumer, portal drivers, FSM
+└── web/
+    ├── admin-portal/   # Next.js admin (3002)
+    ├── staff-portal/   # Next.js staff (3003)
+    └── mock-portal/    # Mock AS Visa UI (3004)
+
+packages/
+├── db/              # Postgres client, schema, migrations, repos
+└── shared/          # Types, FSM, queue payloads, constants
+
+infra/docker/        # dev | test | prod – each has compose.yml + .env.example
+scripts/             # db/migrate.sh, db/seed.sh, certs/gen-dev-mtls.sh
+docs/                # REFERENCE, ENDPOINTS
 ```
 
-## 🚀 Quick Start
+- **CP:** Single API for control-plane (agents, jobs, customers, staff, HITL, notify, watcher, settings, audit) and public job API (create, status, stop/ack).
+- **DP:** Picks jobs from Redis, runs the portal driver (e.g. as-visa), FSM, notify/HITL. Add a new portal by implementing a driver under `apps/dp/portals/<id>/` and registering it.
 
-### Prerequisites
+## Features & capacity
 
-- Node.js 20+
-- Docker and Docker Compose
-- PostgreSQL client (for running migrations manually)
+**What it does**
+- **Job queue:** Create jobs via API (tenant by `x-tenant-id`), priority queue (Redis/BullMQ), status/list and Telegram stop/ack.
+- **Automation:** DP worker runs a portal driver (Playwright), FSM with checkpoints, config from system_settings → profile → portal → job.
+- **HITL:** Human-in-the-loop for captcha/OTP; tasks in CP, assign/resolve via API.
+- **Notifications:** Telegram (slot open, booked, HITL, failures), optional email/webhook; action buttons use `NOTIFY_ACTION_TOKEN`.
+- **Control-plane:** Agents (async/sync), profiles, portal configs, customers, staff, audit log, watcher (snapshots/diffs), system settings (per-tenant + global).
+- **Security:** Optional Postgres mTLS (`DB_SSL_*`); tenant isolation on all CP and job API routes.
 
-### 1. Clone and Install
+**Capacity & limits**
+- **Scaling:** Add more DP worker instances; each worker runs an agent pool (async agents consume queue, sync agents can be assigned from CP). Limits set via env (`ASYNC_AGENT_COUNT`, `SYNC_AGENT_COUNT`, `MAX_AGENTS`) and system_settings.
+- **Throughput:** Bound by browser instances (one job per agent at a time) and portal rate limits; single-server deployment is the typical target.
+- **API limits:** e.g. job list/migrations pagination (limit caps ~100–500), batch-status up to 100 ids, audit export up to 10k rows. See [docs/ENDPOINTS.md](docs/ENDPOINTS.md) for query params.
+
+## Quick start
+
+**Prerequisites:** Node.js 20+, Docker & Docker Compose. For running migrations from the host (Option A or B below), `psql` must be on your PATH (PostgreSQL client).
 
 ```bash
+git clone <repo>
 cd visa-automation
 npm install
 ```
 
-### 2. Start Infrastructure
+**Option A – Docker (all services)**
 
 ```bash
-# Start all services (Postgres, Redis, Kong, API, Worker)
-cd infra/docker
-cp .env.example .env
-docker compose up -d
+npm run docker:up
+# From repo root once Postgres is up (DB_* default to localhost:5432):
+npm run db:migrate
+npm run db:seed
 ```
 
-### 3. Run Migrations
+Services: Postgres 5432, Redis 6379, **CP 3001**, Admin 3002, Staff 3003, Mock 3004.
+
+**Option B – Local (CP + DP; Postgres/Redis in Docker)**
 
 ```bash
-# Wait for Postgres to be ready, then run migrations
-chmod +x scripts/db/migrate.sh scripts/db/seed.sh
-./scripts/db/migrate.sh
-./scripts/db/seed.sh
+# 1) Start DB and Redis
+cd infra/docker/dev && cp .env.example .env && docker compose up -d postgres redis
+cd ../..
+
+# 2) From repo root: env for local runs (migrate + dev:cp/dev:dp read this)
+cp infra/docker/dev/.env.example .env
+# Edit .env: NOTIFY_ACTION_TOKEN, DB_HOST=localhost, REDIS_HOST=localhost, TELEGRAM_* as needed
+
+npm run db:migrate
+npm run db:seed
+npm run dev:cp      # Terminal 1
+npm run dev:dp      # Terminal 2
+# Optional: npm run dev:admin-portal, dev:staff-portal, dev:mock-portal
 ```
 
-### 4. Verify Services
+Create a job:
 
 ```bash
-# Check all services are healthy
-docker compose ps
-
-# Check API health
-curl http://localhost:3000/health/ready
-
-# Check Kong proxy
-curl http://localhost:8000/health/ready
-```
-
-## 📋 API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/health/live` | Liveness probe |
-| `GET` | `/health/ready` | Readiness probe (checks DB + Redis) |
-| `POST` | `/api/jobs` | Create a new visa automation job |
-| `GET` | `/api/jobs/:id` | Get job status by ID |
-| `GET` | `/api/jobs?tenant_id=xxx` | List jobs for a tenant |
-
-### Create a Job
-
-```bash
-curl -X POST http://localhost:3000/api/jobs \
+curl -s -X POST http://localhost:3001/api/jobs \
   -H "Content-Type: application/json" \
-  -d '{
-    "tenant_id": "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
-    "visa_type": "SCHENGEN",
-    "applicant": {
-      "name": "Jane Smith",
-      "passport_number": "CD9876543",
-      "nationality": "UK",
-      "email": "jane.smith@example.com"
-    },
-    "config": {
-      "simulate_hitl": false
-    }
-  }'
+  -H "x-tenant-id: default" \
+  -d '{"portal_id":"as-visa","visa_type":"SCHENGEN","applicant":{"name":"Test"}}'
 ```
 
-**Response:**
-```json
-{
-  "job_id": "uuid-here",
-  "status": "QUEUED",
-  "message": "Job created and queued for processing"
-}
-```
+Check health: `curl http://localhost:3001/cp/health/ready`
 
-## 🔄 FSM State Machine
+## Scripts (from repo root)
 
-The worker processes jobs through the following states:
+| Script | Description |
+|--------|-------------|
+| `npm run dev:cp` | Run CP API (3001) |
+| `npm run dev:dp` | Run DP worker |
+| `npm run dev:admin-portal` | Admin UI (3002) |
+| `npm run dev:staff-portal` | Staff UI (3003) |
+| `npm run dev:mock-portal` | Mock portal (3004) |
+| `npm run docker:up` | Start dev stack (infra/docker/dev) |
+| `npm run docker:down` | Stop dev stack |
+| `npm run db:migrate` | Run DB migrations |
+| `npm run db:seed` | Seed DB |
+| `npm run build` | Build all workspaces |
+| `npm run typecheck` | TypeScript check |
 
-```
-QUEUED → LOGIN_PROCESS → LOGGED_IN → FORM_FILLING → PROCESSING → COMPLETED
-                ↓              ↓            ↓
-            WAITING_HITL  WAITING_HITL  WAITING_HITL
-                ↓              ↓            ↓
-           (Resume after HITL resolution)
-```
+E2E tests live in `tests/e2e/`. From repo root: `npm run e2e:claim` runs the job lock concurrency test (requires Postgres up, migrations and seed applied).
 
-### HITL (Human-in-the-Loop)
+## Documentation
 
-When the worker encounters scenarios requiring human intervention (captchas, OTPs, etc.), it:
+- **[docs/REFERENCE.md](docs/REFERENCE.md)** – Functionality & capacity, env, config merge, mTLS, notify, run
+- **[docs/ENDPOINTS.md](docs/ENDPOINTS.md)** – Full API endpoint list
 
-1. Creates a `hitl_task` record
-2. Transitions job to `WAITING_HITL` state
-3. Waits for external resolution via API/webhook
-4. Resumes processing after resolution
+## Configuration
 
-**Simulated HITL:** Set `config.simulate_hitl: true` to force HITL trigger, or the system randomly triggers HITL ~20% of the time for demo purposes.
+Env template: **infra/docker/dev/.env.example** (dev) or **infra/docker/prod/.env.example** (prod). For local runs copy to `.env` at repo root; for Docker copy to `infra/docker/dev/.env` (or prod). Key variables:
 
-## ✅ Stop/Go Success Criteria
+- **Required for notifications:** `NOTIFY_ACTION_TOKEN` (e.g. `openssl rand -base64 32`), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_IDS_OPS`
+- **DB:** `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`
+- **CP/DP:** `CP_API_URL`, `PUBLIC_API_URL` (same host as CP); DP: `USE_MOCK_PORTAL=true` to target mock portal
+- **Frontends:** `NEXT_PUBLIC_CP_API_URL`, `NEXT_PUBLIC_API_URL`
 
-Use the following checklist to verify the system is working correctly:
+Full list and details: **docs/REFERENCE.md** and `infra/docker/dev/.env.example`.
 
-### 1. Infrastructure Health
-```bash
-# All containers should be "healthy"
-docker compose ps
-# Expected: postgres, redis, kong, api, worker all show (healthy)
-```
+## License
 
-### 2. API Readiness
-```bash
-curl http://localhost:3000/health/ready
-# Expected: {"status":"ok","checks":{"database":true,"redis":true}...}
-```
-
-### 3. Create and Process Job
-```bash
-# Create a job
-curl -X POST http://localhost:3000/api/jobs \
-  -H "Content-Type: application/json" \
-  -d '{
-    "tenant_id": "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
-    "visa_type": "SCHENGEN",
-    "applicant": {"name": "Test User"}
-  }'
-
-# Save the job_id from response, then check status after a few seconds
-curl http://localhost:3000/api/jobs/{job_id}
-# Expected: {"status":"COMPLETED"...} or {"status":"WAITING_HITL"...}
-```
-
-### 4. View Worker Logs
-```bash
-docker compose logs -f worker
-# Expected: State transition logs:
-# - Processing job
-# - QUEUED -> LOGIN_PROCESS
-# - LOGIN_PROCESS -> LOGGED_IN
-# - LOGGED_IN -> FORM_FILLING
-# - FORM_FILLING -> PROCESSING
-# - PROCESSING -> COMPLETED (or WAITING_HITL)
-```
-
-### 5. Verify Database State
-```bash
-docker compose exec postgres psql -U postgres -d visa_automation \
-  -c "SELECT id, status, retry_count FROM jobs ORDER BY created_at DESC LIMIT 5;"
-# Expected: Jobs with various statuses (COMPLETED, WAITING_HITL, etc.)
-
-docker compose exec postgres psql -U postgres -d visa_automation \
-  -c "SELECT job_id, event_type, payload FROM job_events ORDER BY created_at DESC LIMIT 10;"
-# Expected: STATE_TRANSITION events showing the FSM progression
-```
-
-### 6. HITL Task Verification
-```bash
-docker compose exec postgres psql -U postgres -d visa_automation \
-  -c "SELECT id, job_id, type, status FROM hitl_tasks;"
-# Expected: HITL tasks created for jobs that triggered HITL (if any)
-```
-
-## 🛠️ Development
-
-### Local Development (without Docker)
-
-```bash
-# Terminal 1: Start dependencies
-docker compose up postgres redis -d
-
-# Terminal 2: Run API
-npm run dev:api
-
-# Terminal 3: Run Worker
-npm run dev:worker
-```
-
-### Build
-
-```bash
-npm run build
-```
-
-### Type Check
-
-```bash
-npm run typecheck
-```
-
-## 📚 Documentation
-
-- [Architecture Specification](docs/architecture/VISA_SAAS_ARCHITECTURE.md)
-- [FSM Design](docs/architecture/VISA_FSM_DESIGN.md)
-- [Database Schema](docs/architecture/VISA_DATABASE_SCHEMA.md)
-- [API Contract](docs/api/VISA_CORE_API_CONTRACT.md)
-- [Docker Production Guide](docs/operations/VISA_DOCKER_COMPOSE_PRODUCTION.md)
-
-## 🔧 Configuration
-
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `3000` | API server port |
-| `LOG_LEVEL` | `info` | Logging level (debug, info, warn, error) |
-| `DB_HOST` | `localhost` | PostgreSQL host |
-| `DB_PORT` | `5432` | PostgreSQL port |
-| `DB_NAME` | `visa_automation` | Database name |
-| `DB_USER` | `postgres` | Database user |
-| `DB_PASSWORD` | `postgres` | Database password |
-| `REDIS_HOST` | `localhost` | Redis host |
-| `REDIS_PORT` | `6379` | Redis port |
-| `WORKER_CONCURRENCY` | `2` | Number of concurrent jobs per worker |
-| `TELEGRAM_BOT_TOKEN` | - | Telegram Bot API token (required for notifications) |
-| `TELEGRAM_CHAT_IDS` | - | Comma-separated Telegram chat IDs (required for notifications) |
-| `NOTIFY_ACTION_BASE_URL` | `http://localhost:8000` | Base URL for notification action buttons |
-| `NOTIFY_ACTION_SECRET` | - | Secret key for signing notification action links (required for both API and Worker) |
-
-**Note:** Copy `.env.example` to `.env` and configure your Telegram credentials before starting the worker.
-
-**Generate secret:** `openssl rand -base64 32`
-
-## 📄 License
-
-Private - All rights reserved.
+Private – All rights reserved.

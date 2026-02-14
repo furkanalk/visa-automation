@@ -29,6 +29,21 @@ export class JobRepository {
       .executeTakeFirst();
   }
 
+  /**
+   * Batch fetch jobs by IDs (for performance)
+   * Returns jobs that match both the IDs and tenant
+   */
+  async findByIds(tenantId: string, ids: string[]): Promise<Job[]> {
+    if (ids.length === 0) return [];
+    
+    return this.db
+      .selectFrom('jobs')
+      .selectAll()
+      .where('tenant_id', '=', tenantId)
+      .where('id', 'in', ids)
+      .execute();
+  }
+
   async findByTenantId(tenantId: string, limit = 20, offset = 0): Promise<Job[]> {
     return this.db
       .selectFrom('jobs')
@@ -122,25 +137,71 @@ export class JobRepository {
       .executeTakeFirst();
   }
 
+  /**
+   * Update status only if current status matches (optimistic guard for transitions).
+   * Returns updated job or undefined if no row matched.
+   */
+  async updateStatusIf(
+    id: string,
+    expectedCurrentStatus: string,
+    newStatus: string,
+    additionalUpdates?: Partial<JobUpdate>
+  ): Promise<Job | undefined> {
+    return this.db
+      .updateTable('jobs')
+      .set({
+        status: newStatus,
+        updated_at: new Date(),
+        ...additionalUpdates,
+      })
+      .where('id', '=', id)
+      .where('status', '=', expectedCurrentStatus)
+      .returningAll()
+      .executeTakeFirst();
+  }
+
+  /**
+   * Atomic claim: only for QUEUED jobs with no valid lock.
+   * Sets locked_by and locked_until in one update. Status stays QUEUED until first FSM transition.
+   */
   async acquireLock(id: string, workerId: string, durationMs: number): Promise<boolean> {
+    const now = new Date();
     const lockUntil = new Date(Date.now() + durationMs);
-    
+
     const result = await this.db
       .updateTable('jobs')
       .set({
         locked_by: workerId,
         locked_until: lockUntil,
-        updated_at: new Date(),
+        updated_at: now,
       })
       .where('id', '=', id)
+      .where('status', '=', 'QUEUED')
       .where((eb) =>
         eb.or([
           eb('locked_by', 'is', null),
-          eb('locked_until', '<', new Date()),
+          eb('locked_until', '<', now),
         ])
       )
       .executeTakeFirst();
-    
+
+    return (result.numUpdatedRows ?? 0n) > 0n;
+  }
+
+  /**
+   * Renew lease for a job held by this worker (e.g. on agent heartbeat).
+   */
+  async renewLock(id: string, lockedBy: string, durationMs: number): Promise<boolean> {
+    const lockUntil = new Date(Date.now() + durationMs);
+    const result = await this.db
+      .updateTable('jobs')
+      .set({
+        locked_until: lockUntil,
+        updated_at: new Date(),
+      })
+      .where('id', '=', id)
+      .where('locked_by', '=', lockedBy)
+      .executeTakeFirst();
     return (result.numUpdatedRows ?? 0n) > 0n;
   }
 
@@ -157,5 +218,47 @@ export class JobRepository {
       .executeTakeFirst();
     
     return (result.numUpdatedRows ?? 0n) > 0n;
+  }
+
+  /**
+   * Reset jobs that are RUNNING but have an expired lock (locked_until < now).
+   * Makes them reclaimable by setting status to QUEUED and clearing lock.
+   * Returns the number of jobs reset.
+   */
+  async resetStuckRunningJobs(): Promise<number> {
+    const now = new Date();
+    const result = await this.db
+      .updateTable('jobs')
+      .set({
+        status: 'QUEUED',
+        locked_by: null,
+        locked_until: null,
+        updated_at: now,
+      })
+      .where('status', '=', 'RUNNING')
+      .where((eb) => eb('locked_until', 'is', null).or('locked_until', '<', now))
+      .executeTakeFirst();
+    return Number(result.numUpdatedRows ?? 0n);
+  }
+
+  /**
+   * Clear expired lock on QUEUED jobs (worker claimed then died before run started).
+   * Status stays QUEUED; job becomes claimable again.
+   * Returns the number of jobs reset.
+   */
+  async clearExpiredLockOnQueuedJobs(): Promise<number> {
+    const now = new Date();
+    const result = await this.db
+      .updateTable('jobs')
+      .set({
+        locked_by: null,
+        locked_until: null,
+        updated_at: now,
+      })
+      .where('status', '=', 'QUEUED')
+      .where('locked_by', 'is not', null)
+      .where((eb) => eb('locked_until', 'is', null).or('locked_until', '<', now))
+      .executeTakeFirst();
+    return Number(result.numUpdatedRows ?? 0n);
   }
 }

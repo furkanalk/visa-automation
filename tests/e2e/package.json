@@ -1,0 +1,20 @@
+{
+  "name": "visa-automation-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "e2e": "tsx run-all.ts",
+    "e2e:happy": "tsx scenarios/happy-path.ts",
+    "e2e:hitl": "tsx scenarios/hitl.ts",
+    "e2e:retry": "tsx scenarios/timeout-retry.ts",
+    "e2e:claim": "tsx scenarios/claim-concurrency.ts"
+  },
+  "dependencies": {
+    "@visa-automation/db": "*",
+    "@visa-automation/shared": "*"
+  },
+  "devDependencies": {
+    "tsx": "^4.6.0"
+  }
+}

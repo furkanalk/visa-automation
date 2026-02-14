@@ -1,0 +1,41 @@
+# Control Plane API (cp) - single service file
+services:
+  cp:
+    build:
+      context: ../../..
+      dockerfile: apps/cp/Dockerfile
+      target: production
+    image: ${IMAGE_CP:-visa-automation/cp:latest}
+    container_name: visa-cp
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      HOST: 0.0.0.0
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-visa_automation}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      NOTIFY_ACTION_BASE_URL: ${NOTIFY_ACTION_BASE_URL:-http://localhost:3001}
+      NOTIFY_ACTION_TOKEN: ${NOTIFY_ACTION_TOKEN:-}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/cp/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - visa-network

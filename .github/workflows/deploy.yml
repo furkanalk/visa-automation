@@ -1,0 +1,52 @@
+# Deploy: promote to production. Triggered after Validate succeeds, or manually.
+# Gate: repo variable DEPLOY_REQUIRE_APPROVAL = "true" → uses environment "production" (add Required reviewers).
+#       DEPLOY_REQUIRE_APPROVAL = "false" or unset → uses "production-auto" (no approval). Create both environments.
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [Validate]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag (when manual; when auto from Validate, commit SHA is used)"
+        required: false
+        default: "main"
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  deploy-prod:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    environment: ${{ vars.DEPLOY_REQUIRE_APPROVAL == 'true' && 'production' || 'production-auto' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set deployment summary
+        run: |
+          TAG="${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.event.inputs.image_tag || 'main' }}"
+          echo "## Deploy to production" >> $GITHUB_STEP_SUMMARY
+          echo "Use image tag: \`$TAG\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "On your prod server run:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "cd infra/docker/prod" >> $GITHUB_STEP_SUMMARY
+          echo "cp .env.example .env   # then edit .env with real secrets" >> $GITHUB_STEP_SUMMARY
+          echo "export IMAGE_CP=${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-cp:$TAG" >> $GITHUB_STEP_SUMMARY
+          echo "export IMAGE_DP=${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-dp:$TAG" >> $GITHUB_STEP_SUMMARY
+          echo "export IMAGE_ADMIN_PORTAL=${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-admin-portal:$TAG" >> $GITHUB_STEP_SUMMARY
+          echo "export IMAGE_STAFF_PORTAL=${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-staff-portal:$TAG" >> $GITHUB_STEP_SUMMARY
+          echo "docker compose pull" >> $GITHUB_STEP_SUMMARY
+          echo "docker compose up -d" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Output deploy commands
+        run: |
+          TAG="${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.event.inputs.image_tag || 'main' }}"
+          echo "IMAGE_TAG=$TAG" >> $GITHUB_ENV
+          echo "Deploy with tag: $TAG"
