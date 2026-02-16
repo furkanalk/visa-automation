@@ -12,7 +12,8 @@ COPY apps/dp/package*.json ./apps/dp/
 
 # Install dependencies (without Playwright browsers for build stage)
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-RUN npm ci --workspace=packages/shared --workspace=packages/db --workspace=apps/dp
+RUN --mount=type=cache,target=/root/.npm \
+  npm ci --workspace=packages/shared --workspace=packages/db --workspace=apps/dp
 
 # Copy source code
 COPY tsconfig*.json ./
@@ -45,7 +46,8 @@ COPY --chown=pwuser:pwuser apps/dp/package*.json ./apps/dp/
 
 # Install production dependencies only
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-RUN npm ci --omit=dev --workspace=packages/shared --workspace=packages/db --workspace=apps/dp
+RUN --mount=type=cache,target=/root/.npm \
+  npm ci --omit=dev --workspace=packages/shared --workspace=packages/db --workspace=apps/dp
 
 # Copy built artifacts
 COPY --chown=pwuser:pwuser --from=builder /app/packages/shared/dist ./packages/shared/dist
@@ -69,7 +71,8 @@ COPY apps/dp/package*.json ./apps/dp/
 
 # Install all dependencies (skip Playwright in dev mode for speed)
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+  npm ci
 
 # Copy source
 COPY tsconfig*.json ./

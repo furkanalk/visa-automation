@@ -7,3 +7,8 @@ dist/
 
 # Secrets
 infra/docker/secrets/
+
+# Env: dev/.env.dev, test/.env.test, prod/.env.prod
+infra/docker/dev/.env.dev
+infra/docker/test/.env.test
+infra/docker/prod/.env.prod

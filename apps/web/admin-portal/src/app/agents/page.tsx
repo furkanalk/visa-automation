@@ -10,6 +10,7 @@ import { useAgents, useCreateAgent, useUpdateAgent, useDeleteAgent } from "@/hoo
 import { cpApi, type Agent } from "@/lib/api";
 import { AgentModal } from "@/components/agents/agent-modal";
 import { AgentSwimlanes } from "@/components/agents/agent-swimlanes";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Bot, Plus, RefreshCw, Trash2, Power, PowerOff, Settings2, CheckSquare, Square, Layers, Loader2, Edit, AlertCircle, LayoutGrid, Columns, ChevronDown, Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -32,16 +33,15 @@ const FSM_STATES: Record<string, { label: string; color: string; bgColor: string
   FAILED_TERMINAL: { label: "Failed", color: "text-red-600", bgColor: "bg-red-100 dark:bg-red-900/30" },
 };
 
-// Status dot component
+// Status dot: ONLINE = green, DRAINING = yellow, OFFLINE = gray (OFFLINE = disabled)
 function StatusDot({ status }: { status: string }) {
   return (
     <span
       className={cn(
         "inline-block h-2.5 w-2.5 rounded-full",
         status === "ONLINE" && "bg-green-500 animate-pulse",
-        status === "OFFLINE" && "bg-gray-400",
-        status === "DISABLED" && "bg-red-400",
-        status === "DRAINING" && "bg-yellow-500 animate-pulse"
+        status === "DRAINING" && "bg-yellow-500",
+        (status === "OFFLINE" || status === "DISABLED") && "bg-gray-400"
       )}
     />
   );
@@ -91,6 +91,7 @@ export default function AgentsPage() {
   const [bulkProfileDropdown, setBulkProfileDropdown] = useState(false);
   const [bulkStatusDropdown, setBulkStatusDropdown] = useState(false);
   const [bulkPortalDropdown, setBulkPortalDropdown] = useState(false);
+  const [agentToDeleteId, setAgentToDeleteId] = useState<string | null>(null);
   const { data: agents, isLoading, isError, error, refetch } = useAgents();
   const { data: profiles } = useQuery({
     queryKey: ["profiles"],
@@ -184,19 +185,23 @@ export default function AgentsPage() {
   };
 
   const handleToggleStatus = async (agent: Agent) => {
-    const newStatus = agent.status === "ONLINE" ? "DISABLED" : "ONLINE";
+    const newStatus = agent.status === "ONLINE" ? "OFFLINE" : "ONLINE";
     await updateAgent.mutateAsync({ id: agent.id, data: { status: newStatus } });
   };
 
-  const handleDelete = async (id: string) => {
-    if (confirm("Are you sure you want to delete this agent?")) {
-      await deleteAgent.mutateAsync(id);
-      setSelectedAgents((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-    }
+  const handleDeleteClick = (id: string) => {
+    setAgentToDeleteId(id);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!agentToDeleteId) return;
+    await deleteAgent.mutateAsync(agentToDeleteId);
+    setSelectedAgents((prev) => {
+      const next = new Set(prev);
+      next.delete(agentToDeleteId);
+      return next;
+    });
+    setAgentToDeleteId(null);
   };
 
   const toggleSelectAgent = (id: string) => {
@@ -256,9 +261,9 @@ export default function AgentsPage() {
     setBulkPortalDropdown(false);
   };
 
-  const getProfileName = (profileId: string | null) => {
+  const getProfileName = (profileId: string | null): string | null => {
     if (!profileId) return null;
-    return profiles?.items?.find((p) => p.id === profileId)?.name;
+    return profiles?.items?.find((p) => p.id === profileId)?.name ?? null;
   };
 
   const getJobState = (jobId: string | null) => {
@@ -435,7 +440,7 @@ export default function AgentsPage() {
                     </button>
                     <button
                       className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-slate-700 flex items-center gap-2 text-gray-500"
-                      onClick={() => handleBulkChangeStatus("DISABLED")}
+                      onClick={() => handleBulkChangeStatus("OFFLINE")}
                     >
                       <PowerOff className="h-4 w-4" />
                       Disable All
@@ -512,9 +517,10 @@ export default function AgentsPage() {
           agents={filteredAgents || []}
           portals={portals.items}
           jobStatuses={jobStatuses}
+          getProfileName={getProfileName}
           onEditAgent={handleOpenEditModal}
           onToggleStatus={handleToggleStatus}
-          onDeleteAgent={handleDelete}
+          onDeleteAgent={handleDeleteClick}
           onMoveAgent={handleMoveAgent}
         />
       ) : (
@@ -552,9 +558,16 @@ export default function AgentsPage() {
                         <StatusDot status={agent.status} />
                       </CardTitle>
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        <Badge variant={agent.mode === "ASYNC" ? "default" : "secondary"}>
+                        <span
+                          className={
+                            "inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold " +
+                            (agent.mode === "ASYNC"
+                              ? "border-purple-400 bg-purple-100 text-purple-800 dark:border-purple-600 dark:bg-purple-900/40 dark:text-purple-300"
+                              : "border-blue-400 bg-blue-100 text-blue-800 dark:border-blue-600 dark:bg-blue-900/40 dark:text-blue-300")
+                          }
+                        >
                           {agent.mode}
-                        </Badge>
+                        </span>
                         <Badge
                           variant={
                             agent.status === "ONLINE"
@@ -564,15 +577,17 @@ export default function AgentsPage() {
                               : "secondary"
                           }
                         >
-                          {agent.status}
+                          {agent.status === "ONLINE"
+                            ? "Online"
+                            : agent.status === "DRAINING"
+                            ? "Draining"
+                            : "Offline"}
                         </Badge>
-                        {/* Profile Badge */}
-                        {agent.profile_id && (
-                          <Badge variant="outline" className="flex items-center gap-1">
-                            <Settings2 className="h-3 w-3" />
-                            {getProfileName(agent.profile_id) || "Profile"}
-                          </Badge>
-                        )}
+                        {/* Profile: always show which profile the agent uses */}
+                        <Badge variant="outline" className="flex items-center gap-1">
+                          <Settings2 className="h-3 w-3" />
+                          {getProfileName(agent.profile_id) ?? "Default"}
+                        </Badge>
                       </div>
                     </div>
                   </div>
@@ -596,18 +611,34 @@ export default function AgentsPage() {
                       <span>Concurrency</span>
                       <span className="font-medium text-gray-900 dark:text-white">{agent.desired_concurrency}</span>
                     </div>
-                    <div className="flex justify-between">
+                    <div className="flex justify-between items-start gap-2">
                       <span>Portals</span>
-                      <span className="font-medium text-gray-900 dark:text-white">
-                        {agent.desired_portals?.length || "Any"}
+                      <span className="font-medium text-gray-900 dark:text-white text-right min-w-0 flex-1 truncate">
+                        {(() => {
+                          const ids = Array.isArray(agent.desired_portals) ? agent.desired_portals : [];
+                          if (ids.length === 0) return "Any";
+                          const names = ids.map((pid) => portals?.items?.find((p) => p.portal_id === pid)?.name ?? pid).filter(Boolean);
+                          const fullText = names.join(", ") || "—";
+                          const maxVisible = 2;
+                          if (names.length <= maxVisible) return fullText;
+                          const visible = names.slice(0, maxVisible).join(", ");
+                          const rest = names.length - maxVisible;
+                          return (
+                            <span title={fullText} className="cursor-help">
+                              {visible} <span className="text-gray-500 dark:text-gray-400">+{rest}</span>
+                            </span>
+                          );
+                        })()}
                       </span>
                     </div>
-                    {agent.last_heartbeat_at && (
-                      <div className="flex justify-between">
-                        <span>Last Heartbeat</span>
-                        <span className="text-gray-900 dark:text-white">{new Date(agent.last_heartbeat_at).toLocaleTimeString()}</span>
-                      </div>
-                    )}
+                    <div className="flex justify-between">
+                      <span>Last Heartbeat</span>
+                      <span className="text-gray-900 dark:text-white">
+                        {agent.last_heartbeat_at
+                          ? new Date(agent.last_heartbeat_at).toLocaleTimeString()
+                          : "None"}
+                      </span>
+                    </div>
                   </div>
                   <div className="flex items-center gap-2 mt-4 pt-4 border-t border-gray-100 dark:border-slate-700">
                     <Button
@@ -639,7 +670,7 @@ export default function AgentsPage() {
                     <Button
                       size="sm"
                       variant="destructive"
-                      onClick={() => handleDelete(agent.id)}
+                      onClick={() => handleDeleteClick(agent.id)}
                       disabled={agent.current_job_id !== null}
                     >
                       <Trash2 className="h-3 w-3" />
@@ -677,6 +708,18 @@ export default function AgentsPage() {
         onSubmit={handleSubmitAgent}
         agent={editingAgent}
         isSubmitting={createAgent.isPending || updateAgent.isPending}
+      />
+
+      <ConfirmDialog
+        open={agentToDeleteId !== null}
+        onClose={() => setAgentToDeleteId(null)}
+        onConfirm={handleDeleteConfirm}
+        title="Delete agent"
+        message="Are you sure you want to delete this agent?"
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        variant="destructive"
+        isLoading={deleteAgent.isPending}
       />
     </div>
   );

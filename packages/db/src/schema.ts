@@ -45,6 +45,7 @@ export interface Database {
   staff_members: StaffMembersTable;
   staff_activity_log: StaffActivityLogTable;
   staff_sessions: StaffSessionsTable;
+  dashboard_snapshots: DashboardSnapshotsTable;
 }
 
 // ============================================
@@ -481,8 +482,8 @@ export type CustomerSecretUpdate = Updateable<CustomerSecretsTable>;
 // ============================================
 // Staff Members
 // ============================================
-export type StaffRole = 'staff' | 'senior_staff' | 'supervisor' | 'admin';
-export type StaffStatus = 'active' | 'inactive' | 'suspended';
+export type StaffRole = 'staff' | 'admin' | 'super_admin';
+export type StaffStatus = 'active' | 'inactive' | 'suspended' | 'pending';
 
 export interface StaffSettings {
   max_concurrent_tasks?: number;
@@ -507,6 +508,8 @@ export interface StaffMembersTable {
   role: StaffRole;
   avatar_url: string | null;
   status: StaffStatus;
+  invite_token: string | null;
+  invite_token_expires_at: Date | null;
   permissions: ColumnType<string[], string[] | undefined, string[]>;
   settings: ColumnType<StaffSettings, StaffSettings | undefined, StaffSettings>;
   metrics: ColumnType<StaffMetrics, StaffMetrics | undefined, StaffMetrics>;
@@ -578,3 +581,19 @@ export interface StaffSessionsTable {
 export type StaffSession = Selectable<StaffSessionsTable>;
 export type NewStaffSession = Insertable<StaffSessionsTable>;
 export type StaffSessionUpdate = Updateable<StaffSessionsTable>;
+
+// ============================================
+// Dashboard Snapshots (Admin graph history)
+// ============================================
+export interface DashboardSnapshotsTable {
+  id: Generated<string>;
+  recorded_at: ColumnType<Date, Date | undefined, never>;
+  online_agents: number;
+  total_agents: number;
+  active_jobs: number;
+  total_jobs: number;
+  completed_jobs: number;
+}
+
+export type DashboardSnapshot = Selectable<DashboardSnapshotsTable>;
+export type NewDashboardSnapshot = Insertable<DashboardSnapshotsTable>;

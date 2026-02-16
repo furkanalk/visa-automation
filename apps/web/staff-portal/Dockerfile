@@ -22,7 +22,6 @@ RUN adduser --system --uid 1001 nextjs
 
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/staff-portal/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/staff-portal/.next/static ./apps/web/staff-portal/.next/static
-COPY --from=builder --chown=nextjs:nodejs /app/apps/web/staff-portal/public ./apps/web/staff-portal/public
 
 USER nextjs
 EXPOSE 3003

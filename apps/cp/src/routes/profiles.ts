@@ -200,7 +200,17 @@ export const profileRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    // Check if any agents are using this profile
+    // Default profile (bootstrap) cannot be deleted
+    if (profile.is_default) {
+      return reply.status(403).send({
+        success: false,
+        error: {
+          code: 'CANNOT_DELETE_DEFAULT_PROFILE',
+          message: 'The default profile cannot be deleted',
+        },
+      });
+    }
+
     const agentCount = await profileRepo.countAgentsUsingProfile(request.tenantId, profile.id);
     if (agentCount > 0) {
       return reply.status(409).send({
@@ -210,20 +220,6 @@ export const profileRoutes: FastifyPluginAsync = async (app) => {
           message: `Cannot delete profile: ${agentCount} agent(s) are using it`,
         },
       });
-    }
-
-    // Don't allow deleting the default profile if it's the only one
-    if (profile.is_default) {
-      const allProfiles = await profileRepo.findByTenantId(request.tenantId);
-      if (allProfiles.length === 1) {
-        return reply.status(409).send({
-          success: false,
-          error: {
-            code: 'CANNOT_DELETE_ONLY_DEFAULT',
-            message: 'Cannot delete the only default profile',
-          },
-        });
-      }
     }
 
     await profileRepo.delete(request.tenantId, request.params.id);

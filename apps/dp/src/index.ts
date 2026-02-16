@@ -123,11 +123,17 @@ async function main() {
     needSync: needSyncAgents 
   }, 'Agent counts after hydration');
 
+  // Default agent names: visor-agent-1, visor-agent-2, ... (worker-1); else visor-agent-{workerId}-1, ...
+  const agentName = (index: number) =>
+    WORKER_ID === 'worker-1'
+      ? `visor-agent-${index}`
+      : `visor-agent-${WORKER_ID}-${index}`;
+
   // Create additional ASYNC agents if needed
   for (let i = 0; i < needAsyncAgents; i++) {
     try {
       await agentPool.createAgent({
-        name: `${WORKER_ID}-async-${hydratedStats.asyncCount + i + 1}`,
+        name: agentName(hydratedStats.asyncCount + i + 1),
         mode: 'ASYNC',
       });
     } catch (err) {
@@ -139,7 +145,7 @@ async function main() {
   for (let i = 0; i < needSyncAgents; i++) {
     try {
       await agentPool.createAgent({
-        name: `${WORKER_ID}-sync-${hydratedStats.syncCount + i + 1}`,
+        name: agentName(hydratedStats.asyncCount + hydratedStats.syncCount + i + 1),
         mode: 'SYNC',
       });
     } catch (err) {

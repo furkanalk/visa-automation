@@ -110,10 +110,12 @@ export const healthRoutes: FastifyPluginAsync = async (app) => {
       overallStatus = 'unhealthy';
     }
 
-    // Memory usage
+    // Memory usage (in-process, latency effectively 0)
+    const memStart = Date.now();
     const memUsage = process.memoryUsage();
     checks.memory = {
       status: 'healthy',
+      latency_ms: Date.now() - memStart,
       details: {
         heap_used_mb: Math.round(memUsage.heapUsed / 1024 / 1024),
         heap_total_mb: Math.round(memUsage.heapTotal / 1024 / 1024),
@@ -121,9 +123,11 @@ export const healthRoutes: FastifyPluginAsync = async (app) => {
       },
     };
 
-    // Uptime
+    // Process (in-process, latency effectively 0)
+    const procStart = Date.now();
     checks.process = {
       status: 'healthy',
+      latency_ms: Date.now() - procStart,
       details: {
         uptime_seconds: Math.round(process.uptime()),
         pid: process.pid,

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
-import { customerApi, cpApi, type Customer, type CustomerStatus, type CustomerCounts, type PortalConfig, type Profile } from "@/lib/api";
+import { customerApi, cpApi, type Customer, type CustomerStatus, type CustomerCounts, type PortalConfig, type CustomerFormFieldSchema } from "@/lib/api";
 import {
   Plus,
   Search,
@@ -32,42 +32,79 @@ import {
 
 type ViewMode = "list" | "detail" | "create" | "edit";
 
+/** Keys that are always in "visa" section; don't show again in portal-specific. */
+const GENERAL_PREFERENCE_KEYS = ["idNo", "passportNumber", "name", "surname", "middleName", "birthDate", "email", "phone"] as const;
+
+type TravelDateMode = "auto" | "single" | "range";
+type TravelDateAlgorithm = "nearest" | "farthest" | "middle" | "1month" | "2months";
+
 interface CustomerFormData {
   display_name: string;
   internal_ref: string;
   portal_id: string;
-  profile_id: string;
   priority: number;
   tags: string;
+  idNo: string;
+  passportNumber: string;
+  name: string;
+  surname: string;
+  middleName: string;
+  birthDate: string;
+  email: string;
+  phone: string;
+  travelDateMode: TravelDateMode;
+  travelDateAlgorithm: TravelDateAlgorithm;
+  travelDateSingle: string;
+  travelDateFrom: string;
+  travelDateTo: string;
   notify_email: string;
   notify_phone: string;
   notify_telegram_chat_id: string;
-  visa_type: string;
-  appointment_city: string;
-  preferred_date_from: string;
-  preferred_date_to: string;
-  family_size: number;
+  customer_telegram_chat_id: string;
+  useSameEmail: boolean;
+  useSamePhone: boolean;
+  useDefaultTelegram: boolean;
   vip: boolean;
-  requires_otp_staff: boolean;
 }
+
+/** Portal-specific field values (keys match schema); stored in customer.preferences */
+type DynamicPreferences = Record<string, string | number | boolean>;
 
 const initialFormData: CustomerFormData = {
   display_name: "",
   internal_ref: "",
-  portal_id: "as-visa",
-  profile_id: "",
+  portal_id: "",
   priority: 50,
   tags: "",
+  idNo: "",
+  passportNumber: "",
+  name: "",
+  surname: "",
+  middleName: "",
+  birthDate: "",
+  email: "",
+  phone: "",
+  travelDateMode: "auto",
+  travelDateAlgorithm: "nearest",
+  travelDateSingle: "",
+  travelDateFrom: "",
+  travelDateTo: "",
   notify_email: "",
   notify_phone: "",
   notify_telegram_chat_id: "",
-  visa_type: "tourist",
-  appointment_city: "",
-  preferred_date_from: "",
-  preferred_date_to: "",
-  family_size: 1,
+  customer_telegram_chat_id: "",
+  useSameEmail: true,
+  useSamePhone: true,
+  useDefaultTelegram: true,
   vip: false,
-  requires_otp_staff: false,
+};
+
+const TRAVEL_ALGORITHM_LABELS: Record<TravelDateAlgorithm, string> = {
+  nearest: "Nearest available",
+  farthest: "Farthest available",
+  middle: "Mid-range (balanced)",
+  "1month": "Within 4–6 weeks",
+  "2months": "Within 8–12 weeks",
 };
 
 const STATUS_CONFIG: Record<CustomerStatus, { label: string; color: string; icon: React.ReactNode }> = {
@@ -82,8 +119,12 @@ export default function CustomersPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [formData, setFormData] = useState<CustomerFormData>(initialFormData);
+  /** Portal-specific field values; keys match portal's customerFormSchema */
+  const [dynamicPreferences, setDynamicPreferences] = useState<DynamicPreferences>({});
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteCustomerId, setDeleteCustomerId] = useState<string | null>(null);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelCustomerId, setCancelCustomerId] = useState<string | null>(null);
 
   // Filters
   const [search, setSearch] = useState("");
@@ -108,11 +149,49 @@ export default function CustomersPage() {
     queryFn: () => cpApi.getPortals(),
   });
 
-  // Fetch profiles for dropdown
-  const { data: profiles } = useQuery({
-    queryKey: ["profiles"],
-    queryFn: () => cpApi.getProfiles(),
+  // Fetch notify settings for Telegram chat dropdown (chats configured in Notifications)
+  const { data: notifySettings } = useQuery({
+    queryKey: ["notify-settings"],
+    queryFn: () => cpApi.getNotifySettings(),
   });
+  const telegramChatIds = notifySettings?.telegram_chat_ids ?? [];
+
+  // Selected portal and its customer form schema (for create/edit)
+  const selectedPortal = formData.portal_id
+    ? portals?.items?.find((p: PortalConfig) => p.portal_id === formData.portal_id)
+    : null;
+  const rawCustomerFormSchema = (selectedPortal?.config?.customerFormSchema as CustomerFormFieldSchema[] | undefined) ?? [];
+  const customerFormSchema = rawCustomerFormSchema.filter(
+    (f) => !(GENERAL_PREFERENCE_KEYS as readonly string[]).includes(f.key)
+  );
+
+  const buildPreferences = (data: CustomerFormData) => {
+    const prefs: Record<string, unknown> = {
+      idNo: data.idNo || undefined,
+      passportNumber: data.passportNumber || undefined,
+      name: data.name || undefined,
+      surname: data.surname || undefined,
+      middleName: data.middleName || undefined,
+      birthDate: data.birthDate || undefined,
+      email: data.email || undefined,
+      phone: data.phone || undefined,
+      travelDateMode: data.travelDateMode,
+      travelDateAlgorithm: data.travelDateAlgorithm,
+      ...(data.travelDateMode === "single" && data.travelDateSingle
+        ? { travelDateSingle: data.travelDateSingle }
+        : {}),
+      ...(data.travelDateMode === "range" && (data.travelDateFrom || data.travelDateTo)
+        ? { travelDateFrom: data.travelDateFrom || undefined, travelDateTo: data.travelDateTo || undefined }
+        : {}),
+      ...(data.customer_telegram_chat_id ? { customer_telegram_chat_id: data.customer_telegram_chat_id } : {}),
+      ...dynamicPreferences,
+    };
+    return prefs;
+  };
+
+  const getNotifyEmail = (data: CustomerFormData) => (data.useSameEmail ? data.email : data.notify_email) || null;
+  const getNotifyPhone = (data: CustomerFormData) => (data.useSamePhone ? data.phone : data.notify_phone) || null;
+  const getNotifyTelegramChatId = (data: CustomerFormData) => (data.useDefaultTelegram ? null : data.notify_telegram_chat_id) || null;
 
   // Create mutation
   const createMutation = useMutation({
@@ -121,25 +200,14 @@ export default function CustomersPage() {
         display_name: data.display_name,
         internal_ref: data.internal_ref || null,
         portal_id: data.portal_id,
-        profile_id: data.profile_id || null,
         priority: data.priority,
         tags: data.tags ? data.tags.split(",").map(t => t.trim()) : [],
-        notify_email: data.notify_email || null,
-        notify_phone: data.notify_phone || null,
-        notify_telegram_chat_id: data.notify_telegram_chat_id || null,
+        notify_email: getNotifyEmail(data),
+        notify_phone: getNotifyPhone(data),
+        notify_telegram_chat_id: getNotifyTelegramChatId(data),
         status: "active",
-        preferences: {
-          visa_type: data.visa_type || undefined,
-          appointment_city: data.appointment_city || undefined,
-          preferred_dates: data.preferred_date_from && data.preferred_date_to
-            ? { from: data.preferred_date_from, to: data.preferred_date_to }
-            : undefined,
-          family_size: data.family_size,
-        },
-        flags: {
-          vip: data.vip,
-          requires_otp_staff: data.requires_otp_staff,
-        },
+        preferences: buildPreferences(data),
+        flags: { vip: data.vip },
         slot_check_policy: {},
       });
     },
@@ -147,6 +215,7 @@ export default function CustomersPage() {
       queryClient.invalidateQueries({ queryKey: ["customers"] });
       setViewMode("list");
       setFormData(initialFormData);
+      setDynamicPreferences({});
     },
   });
 
@@ -157,24 +226,13 @@ export default function CustomersPage() {
         display_name: data.display_name,
         internal_ref: data.internal_ref || null,
         portal_id: data.portal_id,
-        profile_id: data.profile_id || null,
         priority: data.priority,
         tags: data.tags ? data.tags.split(",").map(t => t.trim()) : [],
-        notify_email: data.notify_email || null,
-        notify_phone: data.notify_phone || null,
-        notify_telegram_chat_id: data.notify_telegram_chat_id || null,
-        preferences: {
-          visa_type: data.visa_type || undefined,
-          appointment_city: data.appointment_city || undefined,
-          preferred_dates: data.preferred_date_from && data.preferred_date_to
-            ? { from: data.preferred_date_from, to: data.preferred_date_to }
-            : undefined,
-          family_size: data.family_size,
-        },
-        flags: {
-          vip: data.vip,
-          requires_otp_staff: data.requires_otp_staff,
-        },
+        notify_email: getNotifyEmail(data),
+        notify_phone: getNotifyPhone(data),
+        notify_telegram_chat_id: getNotifyTelegramChatId(data),
+        preferences: buildPreferences(data),
+        flags: { vip: data.vip },
       });
     },
     onSuccess: () => {
@@ -182,16 +240,27 @@ export default function CustomersPage() {
       setViewMode("list");
       setSelectedCustomer(null);
       setFormData(initialFormData);
+      setDynamicPreferences({});
     },
   });
 
-  // Delete mutation
+  // Delete mutation (permanent/hard delete)
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => customerApi.delete(id),
+    mutationFn: (id: string) => customerApi.delete(id, true),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["customers"] });
       setShowDeleteModal(false);
       setDeleteCustomerId(null);
+    },
+  });
+
+  // Cancel mutation (set status to cancelled)
+  const cancelMutation = useMutation({
+    mutationFn: (id: string) => customerApi.update(id, { status: "cancelled" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["customers"] });
+      setShowCancelModal(false);
+      setCancelCustomerId(null);
     },
   });
 
@@ -206,36 +275,76 @@ export default function CustomersPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["customers"] }),
   });
 
-  // Trigger slot check
+  const reactivateMutation = useMutation({
+    mutationFn: (id: string) => customerApi.update(id, { status: "active" }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["customers"] }),
+  });
+
+  // Trigger slot check (currently only logs the action; job creation not yet implemented)
+  const [slotCheckMessage, setSlotCheckMessage] = useState<string | null>(null);
   const triggerSlotCheckMutation = useMutation({
     mutationFn: (id: string) => customerApi.triggerSlotCheck(id),
+    onSuccess: (data) => {
+      setSlotCheckMessage(data.message);
+      setTimeout(() => setSlotCheckMessage(null), 6000);
+    },
   });
 
   const handleEdit = (customer: Customer) => {
     setSelectedCustomer(customer);
+    const prefs = customer.preferences as Record<string, unknown> | undefined;
+    const p = prefs && typeof prefs === "object" ? prefs : {};
+    const getStr = (k: string) => (typeof p[k] === "string" ? (p[k] as string) : "");
+    const getNumStr = (k: string) => (p[k] != null && p[k] !== "" ? String(p[k]) : "");
     setFormData({
       display_name: customer.display_name,
       internal_ref: customer.internal_ref || "",
       portal_id: customer.portal_id,
-      profile_id: customer.profile_id || "",
       priority: customer.priority,
       tags: customer.tags.join(", "),
+      idNo: getStr("idNo"),
+      passportNumber: getStr("passportNumber"),
+      name: getStr("name"),
+      surname: getStr("surname"),
+      middleName: getStr("middleName"),
+      birthDate: getStr("birthDate") || (p.birthYear != null && p.birthYear !== "" ? `${p.birthYear}-01-01` : ""),
+      email: getStr("email"),
+      phone: getStr("phone"),
+      travelDateMode: (p.travelDateMode as TravelDateMode) || "auto",
+      travelDateAlgorithm: (p.travelDateAlgorithm as TravelDateAlgorithm) || "nearest",
+      travelDateSingle: getStr("travelDateSingle"),
+      travelDateFrom: getStr("travelDateFrom"),
+      travelDateTo: getStr("travelDateTo"),
       notify_email: customer.notify_email || "",
       notify_phone: customer.notify_phone || "",
       notify_telegram_chat_id: customer.notify_telegram_chat_id || "",
-      visa_type: customer.preferences.visa_type || "",
-      appointment_city: customer.preferences.appointment_city || "",
-      preferred_date_from: customer.preferences.preferred_dates?.from || "",
-      preferred_date_to: customer.preferences.preferred_dates?.to || "",
-      family_size: customer.preferences.family_size || 1,
+      useSameEmail: customer.notify_email === (p.email as string) || !customer.notify_email,
+      useSamePhone: customer.notify_phone === (p.phone as string) || !customer.notify_phone,
+      useDefaultTelegram: !customer.notify_telegram_chat_id,
       vip: customer.flags.vip || false,
-      requires_otp_staff: customer.flags.requires_otp_staff || false,
+      customer_telegram_chat_id: (prefs && typeof prefs === "object" && typeof prefs.customer_telegram_chat_id === "string" ? prefs.customer_telegram_chat_id : "") || "",
     });
+    const travelKeys = ["travelDateMode", "travelDateAlgorithm", "travelDateSingle", "travelDateFrom", "travelDateTo"];
+    const reservedPrefKeys = ["customer_telegram_chat_id"];
+    const dyn: DynamicPreferences = {};
+    if (prefs && typeof prefs === "object") {
+      for (const [k, v] of Object.entries(prefs)) {
+        if (
+          (GENERAL_PREFERENCE_KEYS as readonly string[]).indexOf(k) === -1 &&
+          travelKeys.indexOf(k) === -1 &&
+          reservedPrefKeys.indexOf(k) === -1 &&
+          (typeof v === "string" || typeof v === "number" || typeof v === "boolean")
+        )
+          dyn[k] = v;
+      }
+    }
+    setDynamicPreferences(dyn);
     setViewMode("edit");
   };
 
   const handleCreate = () => {
     setFormData(initialFormData);
+    setDynamicPreferences({});
     setSelectedCustomer(null);
     setViewMode("create");
   };
@@ -244,6 +353,7 @@ export default function CustomersPage() {
     setViewMode("list");
     setSelectedCustomer(null);
     setFormData(initialFormData);
+    setDynamicPreferences({});
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -274,6 +384,12 @@ export default function CustomersPage() {
           </Button>
         </div>
 
+        {slotCheckMessage && (
+          <div className="rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20 px-4 py-2 text-sm text-blue-800 dark:text-blue-200">
+            {slotCheckMessage}
+          </div>
+        )}
+
         {/* Stats Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Card>
@@ -283,7 +399,7 @@ export default function CustomersPage() {
                   <p className="text-sm text-muted-foreground">Active</p>
                   <p className="text-2xl font-bold text-green-600">{counts.active}</p>
                 </div>
-                <CheckCircle className="h-8 w-8 text-green-600 opacity-20" />
+                <CheckCircle className="h-8 w-8 text-green-600 opacity-50" />
               </div>
             </CardContent>
           </Card>
@@ -294,7 +410,7 @@ export default function CustomersPage() {
                   <p className="text-sm text-muted-foreground">Paused</p>
                   <p className="text-2xl font-bold text-yellow-600">{counts.paused}</p>
                 </div>
-                <Pause className="h-8 w-8 text-yellow-600 opacity-20" />
+                <Pause className="h-8 w-8 text-yellow-600 opacity-50" />
               </div>
             </CardContent>
           </Card>
@@ -305,7 +421,7 @@ export default function CustomersPage() {
                   <p className="text-sm text-muted-foreground">Completed</p>
                   <p className="text-2xl font-bold text-blue-600">{counts.completed}</p>
                 </div>
-                <CheckCircle className="h-8 w-8 text-blue-600 opacity-20" />
+                <CheckCircle className="h-8 w-8 text-blue-600 opacity-50" />
               </div>
             </CardContent>
           </Card>
@@ -316,7 +432,7 @@ export default function CustomersPage() {
                   <p className="text-sm text-muted-foreground">Total</p>
                   <p className="text-2xl font-bold">{customersData?.total || 0}</p>
                 </div>
-                <Users className="h-8 w-8 text-muted-foreground opacity-20" />
+                <Users className="h-8 w-8 text-muted-foreground opacity-50" />
               </div>
             </CardContent>
           </Card>
@@ -425,6 +541,7 @@ export default function CustomersPage() {
                             <Button
                               variant="outline"
                               size="sm"
+                              title="Start slot check (run once now)"
                               onClick={() => triggerSlotCheckMutation.mutate(customer.id)}
                               disabled={triggerSlotCheckMutation.isPending}
                             >
@@ -435,6 +552,7 @@ export default function CustomersPage() {
                             <Button
                               variant="outline"
                               size="sm"
+                              title="Pause customer"
                               onClick={() => pauseMutation.mutate(customer.id)}
                               disabled={pauseMutation.isPending}
                             >
@@ -445,22 +563,49 @@ export default function CustomersPage() {
                             <Button
                               variant="outline"
                               size="sm"
+                              title="Resume customer"
                               onClick={() => resumeMutation.mutate(customer.id)}
                               disabled={resumeMutation.isPending}
                             >
                               <Play className="h-4 w-4" />
                             </Button>
                           )}
+                          {customer.status === "cancelled" && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              title="Reactivate customer (set status to active)"
+                              onClick={() => reactivateMutation.mutate(customer.id)}
+                              disabled={reactivateMutation.isPending}
+                            >
+                              <Play className="h-4 w-4" />
+                              Reactivate
+                            </Button>
+                          )}
                           <Button variant="outline" size="sm" onClick={() => handleEdit(customer)}>
                             <Edit className="h-4 w-4" />
                           </Button>
+                          {customer.status !== "cancelled" && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="text-amber-600 hover:text-amber-700"
+                              title="Cancel customer (set status to cancelled)"
+                              onClick={() => { setCancelCustomerId(customer.id); setShowCancelModal(true); }}
+                            >
+                              <XCircle className="h-4 w-4" />
+                              Cancel
+                            </Button>
+                          )}
                           <Button
                             variant="outline"
                             size="sm"
                             className="text-red-600 hover:text-red-700"
+                            title="Permanently delete customer"
                             onClick={() => { setDeleteCustomerId(customer.id); setShowDeleteModal(true); }}
                           >
                             <Trash2 className="h-4 w-4" />
+                            Delete
                           </Button>
                         </div>
                       </div>
@@ -502,16 +647,35 @@ export default function CustomersPage() {
           </div>
         )}
 
-        {/* Delete Confirmation Modal */}
+        {/* Cancel (set status to cancelled) Modal */}
+        <Modal
+          open={showCancelModal}
+          onClose={() => setShowCancelModal(false)}
+          title="Cancel Customer"
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setShowCancelModal(false)}>Close</Button>
+              <Button
+                variant="secondary"
+                onClick={() => cancelCustomerId && cancelMutation.mutate(cancelCustomerId)}
+                disabled={cancelMutation.isPending}
+              >
+                {cancelMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Set to Cancelled"}
+              </Button>
+            </>
+          }
+        >
+          <p>Set this customer&apos;s status to <strong>Cancelled</strong>? They will stop receiving slot checks. You can reactivate them later with the Reactivate button.</p>
+        </Modal>
+
+        {/* Delete (permanent) Confirmation Modal */}
         <Modal
           open={showDeleteModal}
           onClose={() => setShowDeleteModal(false)}
-          title="Delete Customer"
+          title="Permanently Delete Customer"
           footer={
             <>
-              <Button variant="outline" onClick={() => setShowDeleteModal(false)}>
-                Cancel
-              </Button>
+              <Button variant="outline" onClick={() => setShowDeleteModal(false)}>Close</Button>
               <Button
                 variant="destructive"
                 onClick={() => deleteCustomerId && deleteMutation.mutate(deleteCustomerId)}
@@ -520,13 +684,13 @@ export default function CustomersPage() {
                 {deleteMutation.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  "Delete"
+                  "Delete Permanently"
                 )}
               </Button>
             </>
           }
         >
-          <p>Are you sure you want to delete this customer? This action will mark them as cancelled.</p>
+          <p>Are you sure you want to <strong>permanently delete</strong> this customer? This cannot be undone and will remove all related data.</p>
         </Modal>
       </div>
     );
@@ -547,210 +711,416 @@ export default function CustomersPage() {
 
       <form onSubmit={handleSubmit}>
         <div className="grid gap-6 md:grid-cols-2">
-          {/* Basic Info */}
+          {/* Basic Information: display name, internal ref, priority, tags, portal */}
           <Card>
-            <CardHeader>
-              <CardTitle>Basic Information</CardTitle>
+            <CardHeader className="pb-3 flex flex-row items-center justify-between gap-4">
+              <CardTitle className="text-base">Basic Information</CardTitle>
+              <label className="flex items-center gap-2 cursor-pointer shrink-0">
+                <input
+                  type="checkbox"
+                  checked={formData.vip}
+                  onChange={(e) => setFormData({ ...formData, vip: e.target.checked })}
+                  className="rounded border-gray-300 dark:border-slate-600"
+                />
+                <span className="text-sm font-medium">VIP Customer</span>
+              </label>
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <label className="text-sm font-medium">Display Name *</label>
+                <label className="text-sm font-medium">Display name *</label>
                 <Input
+                  className="mt-1"
                   value={formData.display_name}
                   onChange={(e) => setFormData({ ...formData, display_name: e.target.value })}
                   required
                 />
               </div>
               <div>
-                <label className="text-sm font-medium">Internal Reference</label>
+                <label className="text-sm font-medium">Internal reference</label>
                 <Input
+                  className="mt-1"
                   value={formData.internal_ref}
                   onChange={(e) => setFormData({ ...formData, internal_ref: e.target.value })}
-                  placeholder="e.g., CUS-001"
+                  placeholder="e.g. CUS-001"
                 />
               </div>
-              <div>
-                <label className="text-sm font-medium">Tags (comma separated)</label>
-                <Input
-                  value={formData.tags}
-                  onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
-                  placeholder="vip, priority, family"
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium">Priority (1-100)</label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={100}
+                    className="mt-1"
+                    value={formData.priority}
+                    onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) || 50 })}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Tags (comma separated)</label>
+                  <Input
+                    className="mt-1"
+                    value={formData.tags}
+                    onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
+                    placeholder="vip, priority"
+                  />
+                </div>
               </div>
-              <div>
-                <label className="text-sm font-medium">Priority (1-100)</label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={formData.priority}
-                  onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) || 50 })}
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Portal Config */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Portal Configuration</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
               <div>
                 <label className="text-sm font-medium">Portal *</label>
                 <select
-                  className="w-full px-4 py-2 rounded-lg bg-blue-50 dark:bg-slate-700 text-gray-700 dark:text-gray-200 shadow-sm hover:shadow-md focus:shadow-md focus:ring-2 focus:ring-blue-400 dark:focus:ring-blue-500 outline-none cursor-pointer transition-all duration-200"
+                  className="mt-1 w-full px-4 py-2 rounded-lg bg-blue-50 dark:bg-slate-700 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-slate-600 focus:ring-2 focus:ring-blue-400 outline-none cursor-pointer"
                   value={formData.portal_id}
-                  onChange={(e) => setFormData({ ...formData, portal_id: e.target.value })}
+                  onChange={(e) => {
+                    setFormData({ ...formData, portal_id: e.target.value });
+                    setDynamicPreferences((prev) => (e.target.value !== formData.portal_id ? {} : prev));
+                  }}
                   required
                 >
-                  {portals?.items.map((portal: PortalConfig) => (
+                  <option value="">— Select portal —</option>
+                  {portals?.items?.map((portal: PortalConfig) => (
                     <option key={portal.id} value={portal.portal_id}>
                       {portal.name}
                     </option>
                   ))}
                 </select>
-              </div>
-              <div>
-                <label className="text-sm font-medium">Agent Profile</label>
-                <select
-                  className="w-full px-4 py-2 rounded-lg bg-blue-50 dark:bg-slate-700 text-gray-700 dark:text-gray-200 shadow-sm hover:shadow-md focus:shadow-md focus:ring-2 focus:ring-blue-400 dark:focus:ring-blue-500 outline-none cursor-pointer transition-all duration-200"
-                  value={formData.profile_id}
-                  onChange={(e) => setFormData({ ...formData, profile_id: e.target.value })}
-                >
-                  <option value="">Default Profile</option>
-                  {profiles?.items.map((profile: Profile) => (
-                    <option key={profile.id} value={profile.id}>
-                      {profile.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-sm font-medium">Visa Type</label>
-                <select
-                  className="w-full px-4 py-2 rounded-lg bg-blue-50 dark:bg-slate-700 text-gray-700 dark:text-gray-200 shadow-sm hover:shadow-md focus:shadow-md focus:ring-2 focus:ring-blue-400 dark:focus:ring-blue-500 outline-none cursor-pointer transition-all duration-200"
-                  value={formData.visa_type}
-                  onChange={(e) => setFormData({ ...formData, visa_type: e.target.value })}
-                >
-                  <option value="tourist">Tourist</option>
-                  <option value="business">Business</option>
-                  <option value="student">Student</option>
-                  <option value="work">Work</option>
-                  <option value="transit">Transit</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-sm font-medium">Appointment City</label>
-                <Input
-                  value={formData.appointment_city}
-                  onChange={(e) => setFormData({ ...formData, appointment_city: e.target.value })}
-                  placeholder="e.g., Istanbul"
-                />
+                <p className="text-xs text-muted-foreground mt-0.5">Portal for appointments; fields below depend on the selected portal.</p>
               </div>
             </CardContent>
           </Card>
 
-          {/* Preferred Dates */}
+          {/* Notifications: right of Basic Information */}
           <Card>
-            <CardHeader>
-              <CardTitle>Preferred Dates</CardTitle>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Notifications</CardTitle>
+              <p className="text-xs text-muted-foreground mt-0.5">Where to send notifications when a slot is found.</p>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm font-medium">From Date</label>
-                  <Input
-                    type="date"
-                    value={formData.preferred_date_from}
-                    onChange={(e) => setFormData({ ...formData, preferred_date_from: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium">To Date</label>
-                  <Input
-                    type="date"
-                    value={formData.preferred_date_to}
-                    onChange={(e) => setFormData({ ...formData, preferred_date_to: e.target.value })}
-                  />
-                </div>
-              </div>
+            <CardContent className="space-y-3">
               <div>
-                <label className="text-sm font-medium">Family Size</label>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <label className="text-sm font-medium">Email</label>
+                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.useSameEmail}
+                      onChange={(e) => setFormData({ ...formData, useSameEmail: e.target.checked })}
+                      className="rounded border-gray-300 dark:border-slate-600"
+                    />
+                    Same as Visa Information
+                  </label>
+                </div>
                 <Input
-                  type="number"
-                  min={1}
-                  max={10}
-                  value={formData.family_size}
-                  onChange={(e) => setFormData({ ...formData, family_size: parseInt(e.target.value) || 1 })}
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Notifications */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Notifications</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <label className="text-sm font-medium">Email</label>
-                <Input
+                  className="mt-1"
                   type="email"
-                  value={formData.notify_email}
+                  value={formData.useSameEmail ? formData.email : formData.notify_email}
                   onChange={(e) => setFormData({ ...formData, notify_email: e.target.value })}
+                  disabled={formData.useSameEmail}
                   placeholder="customer@example.com"
                 />
               </div>
               <div>
-                <label className="text-sm font-medium">Phone</label>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <label className="text-sm font-medium">Phone</label>
+                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.useSamePhone}
+                      onChange={(e) => setFormData({ ...formData, useSamePhone: e.target.checked })}
+                      className="rounded border-gray-300 dark:border-slate-600"
+                    />
+                    Same as Visa Information
+                  </label>
+                </div>
                 <Input
+                  className="mt-1"
                   type="tel"
-                  value={formData.notify_phone}
+                  value={formData.useSamePhone ? formData.phone : formData.notify_phone}
                   onChange={(e) => setFormData({ ...formData, notify_phone: e.target.value })}
+                  disabled={formData.useSamePhone}
                   placeholder="+90 555 123 4567"
                 />
               </div>
               <div>
-                <label className="text-sm font-medium">Telegram Chat ID</label>
-                <Input
-                  value={formData.notify_telegram_chat_id}
+                <div className="flex items-center gap-2 flex-wrap mb-1">
+                  <label className="text-sm font-medium">Telegram (System)</label>
+                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.useDefaultTelegram}
+                      onChange={(e) => setFormData({ ...formData, useDefaultTelegram: e.target.checked })}
+                      className="rounded border-gray-300 dark:border-slate-600"
+                    />
+                    Use default (from Settings → Notifications)
+                  </label>
+                </div>
+                <select
+                  className="mt-1 w-full px-3 py-2 rounded-lg bg-blue-50 dark:bg-slate-700 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-slate-600 text-sm focus:ring-2 focus:ring-blue-400 outline-none cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed"
+                  value={formData.useDefaultTelegram ? (telegramChatIds[0] ?? "") : formData.notify_telegram_chat_id}
                   onChange={(e) => setFormData({ ...formData, notify_telegram_chat_id: e.target.value })}
-                  placeholder="123456789"
+                  disabled={formData.useDefaultTelegram}
+                >
+                  <option value="">None</option>
+                  {!formData.useDefaultTelegram && formData.notify_telegram_chat_id && !telegramChatIds.includes(formData.notify_telegram_chat_id) && (
+                    <option value={formData.notify_telegram_chat_id}>{formData.notify_telegram_chat_id} (current)</option>
+                  )}
+                  {telegramChatIds.map((chatId) => (
+                    <option key={chatId} value={chatId}>
+                      {chatId}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  {formData.useDefaultTelegram
+                    ? "Uses the default chat from Settings → Notifications."
+                    : telegramChatIds.length === 0
+                      ? "Add Telegram chat IDs in Settings → Notifications."
+                      : "Chat list from Settings → Notifications."}
+                </p>
+              </div>
+              <div>
+                <label className="text-sm font-medium">Customer (optional)</label>
+                <Input
+                  className="mt-1"
+                  value={formData.customer_telegram_chat_id}
+                  onChange={(e) => setFormData({ ...formData, customer_telegram_chat_id: e.target.value })}
+                  placeholder="Telegram chat ID"
                 />
+                <p className="text-xs text-muted-foreground mt-0.5">Customer-specific Telegram chat ID; no default.</p>
               </div>
             </CardContent>
           </Card>
 
-          {/* Flags */}
+          {/* Visa Information: full width, multi-column grid */}
           <Card className="md:col-span-2">
-            <CardHeader>
-              <CardTitle>Special Flags</CardTitle>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Visa Information</CardTitle>
+              <p className="text-xs text-muted-foreground mt-0.5">Applicant identity and contact; the agent uses these when filling the form.</p>
             </CardHeader>
             <CardContent>
-              <div className="flex flex-wrap gap-6">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={formData.vip}
-                    onChange={(e) => setFormData({ ...formData, vip: e.target.checked })}
-                    className="rounded"
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div>
+                  <label className="text-sm font-medium">ID No (e.g. national ID)</label>
+                  <Input
+                    className="mt-1"
+                    value={formData.idNo}
+                    onChange={(e) => setFormData({ ...formData, idNo: e.target.value })}
+                    placeholder="National ID"
                   />
-                  <span>VIP Customer</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={formData.requires_otp_staff}
-                    onChange={(e) => setFormData({ ...formData, requires_otp_staff: e.target.checked })}
-                    className="rounded"
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Passport number *</label>
+                  <Input
+                    className="mt-1"
+                    value={formData.passportNumber}
+                    onChange={(e) => setFormData({ ...formData, passportNumber: e.target.value })}
+                    required
                   />
-                  <span>Requires OTP from Staff</span>
-                </label>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">First name *</label>
+                  <Input
+                    className="mt-1"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Last name *</label>
+                  <Input
+                    className="mt-1"
+                    value={formData.surname}
+                    onChange={(e) => setFormData({ ...formData, surname: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Middle name (optional)</label>
+                  <Input
+                    className="mt-1"
+                    value={formData.middleName}
+                    onChange={(e) => setFormData({ ...formData, middleName: e.target.value })}
+                    placeholder="Middle name"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Birth date</label>
+                  <Input
+                    type="date"
+                    className="mt-1"
+                    value={formData.birthDate}
+                    onChange={(e) => setFormData({ ...formData, birthDate: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Email *</label>
+                  <Input
+                    type="email"
+                    className="mt-1"
+                    value={formData.email}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Phone *</label>
+                  <Input
+                    type="tel"
+                    className="mt-1"
+                    value={formData.phone}
+                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                    required
+                  />
+                </div>
+              </div>
+              <div className="mt-4 pt-4 border-t border-gray-200 dark:border-slate-600">
+                <label className="text-sm font-medium">Travel date</label>
+                <p className="text-xs text-muted-foreground mt-0.5">If left empty, the agent picks by algorithm; if set, that date or range is used.</p>
+                <div className="mt-2 flex flex-wrap gap-3 items-end">
+                  <div className="min-w-[180px]">
+                    <select
+                      className="w-full px-3 py-2 rounded-lg bg-blue-50 dark:bg-slate-700 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-slate-600 text-sm"
+                      value={formData.travelDateMode}
+                      onChange={(e) => setFormData({ ...formData, travelDateMode: e.target.value as TravelDateMode })}
+                    >
+                      <option value="auto">Agent picks (algorithm)</option>
+                      <option value="single">Single date</option>
+                      <option value="range">Date range</option>
+                    </select>
+                  </div>
+                  {formData.travelDateMode === "auto" && (
+                    <div className="min-w-[180px]">
+                      <select
+                        className="w-full px-3 py-2 rounded-lg bg-blue-50 dark:bg-slate-700 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-slate-600 text-sm"
+                        value={formData.travelDateAlgorithm}
+                        onChange={(e) => setFormData({ ...formData, travelDateAlgorithm: e.target.value as TravelDateAlgorithm })}
+                      >
+                        {(Object.keys(TRAVEL_ALGORITHM_LABELS) as TravelDateAlgorithm[]).map((algo) => (
+                          <option key={algo} value={algo}>
+                            {TRAVEL_ALGORITHM_LABELS[algo]}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {formData.travelDateMode === "single" && (
+                    <Input
+                      type="date"
+                      className="w-[180px]"
+                      value={formData.travelDateSingle}
+                      onChange={(e) => setFormData({ ...formData, travelDateSingle: e.target.value })}
+                    />
+                  )}
+                  {formData.travelDateMode === "range" && (
+                    <>
+                      <Input
+                        type="date"
+                        className="w-[160px]"
+                        value={formData.travelDateFrom}
+                        onChange={(e) => setFormData({ ...formData, travelDateFrom: e.target.value })}
+                        placeholder="From"
+                      />
+                      <Input
+                        type="date"
+                        className="w-[160px]"
+                        value={formData.travelDateTo}
+                        onChange={(e) => setFormData({ ...formData, travelDateTo: e.target.value })}
+                        placeholder="To"
+                      />
+                    </>
+                  )}
+                </div>
               </div>
             </CardContent>
           </Card>
+
+          {/* Portal-specific fields (from portal config → customer form schema) */}
+          {formData.portal_id && (
+            <Card className="md:col-span-2">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Portal-specific information</CardTitle>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {selectedPortal?.name || formData.portal_id}. If appointment date/time is left empty, the agent picks automatically or by algorithm; if set, that value is used.
+                </p>
+              </CardHeader>
+              <CardContent>
+                {customerFormSchema.length === 0 ? (
+                  <p className="text-sm text-amber-600 dark:text-amber-400">
+                    No form fields defined for this portal. Add them in <strong>Portals → {selectedPortal?.name || formData.portal_id} → Configure</strong> under &quot;Customer form fields&quot;.
+                  </p>
+                ) : (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {customerFormSchema.map((field) => {
+                      const value = dynamicPreferences[field.key];
+                      const setValue = (v: string | number | boolean) =>
+                        setDynamicPreferences((prev) => ({ ...prev, [field.key]: v }));
+                      return (
+                        <div key={field.key}>
+                          <label className="text-sm font-medium">
+                            {field.label}
+                            {field.required ? " *" : ""}
+                          </label>
+                          {field.type === "select" && (
+                            <select
+                              className="w-full px-4 py-2 rounded-lg bg-blue-50 dark:bg-slate-700 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-slate-600 mt-1 focus:ring-2 focus:ring-blue-400 outline-none cursor-pointer"
+                              value={value != null ? String(value) : ""}
+                              onChange={(e) => setValue(e.target.value)}
+                              required={field.required}
+                            >
+                              <option value="">—</option>
+                              {(field.options ?? []).map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                          {field.type === "checkbox" && (
+                            <div className="mt-1">
+                              <input
+                                type="checkbox"
+                                checked={value === true}
+                                onChange={(e) => setValue(e.target.checked)}
+                                className="rounded border-gray-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500"
+                              />
+                            </div>
+                          )}
+                          {field.type === "text" && (
+                            <Input
+                              className="mt-1"
+                              value={value != null ? String(value) : ""}
+                              onChange={(e) => setValue(e.target.value)}
+                              placeholder={field.placeholder}
+                              required={field.required}
+                            />
+                          )}
+                          {field.type === "number" && (
+                            <Input
+                              type="number"
+                              className="mt-1"
+                              value={value != null ? String(value) : ""}
+                              onChange={(e) => setValue(e.target.value ? Number(e.target.value) : "")}
+                              placeholder={field.placeholder}
+                              required={field.required}
+                            />
+                          )}
+                          {field.type === "date" && (
+                            <Input
+                              type="date"
+                              className="mt-1"
+                              value={value != null ? String(value) : ""}
+                              onChange={(e) => setValue(e.target.value)}
+                              required={field.required}
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         {/* Form Actions */}

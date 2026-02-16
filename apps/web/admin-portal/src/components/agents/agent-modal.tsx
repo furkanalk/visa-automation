@@ -60,31 +60,34 @@ export function AgentModal({
     enabled: open,
   });
 
-  // Reset form when opening/closing or agent changes
+  // Default profile for new agents: is_default one, else first in list
+  const defaultProfileId =
+    profiles?.items?.find((p) => p.is_default)?.id ?? profiles?.items?.[0]?.id ?? null;
+
+  // Reset form when opening/closing or agent changes (or profiles load for create)
   useEffect(() => {
-    if (open) {
-      if (agent) {
-        setFormData({
-          name: agent.name,
-          mode: agent.mode,
-          status: agent.status,
-          profile_id: agent.profile_id,
-          desired_portals: agent.desired_portals || [],
-          desired_concurrency: agent.desired_concurrency || 1,
-        });
-      } else {
-        setFormData({
-          name: "",
-          mode: "ASYNC",
-          status: "ONLINE",
-          profile_id: null,
-          desired_portals: [],
-          desired_concurrency: 1,
-        });
-      }
-      setErrors({});
+    if (!open) return;
+    if (agent) {
+      setFormData({
+        name: agent.name,
+        mode: agent.mode,
+        status: agent.status,
+        profile_id: agent.profile_id,
+        desired_portals: Array.isArray(agent.desired_portals) ? agent.desired_portals : [],
+        desired_concurrency: agent.desired_concurrency || 1,
+      });
+    } else {
+      setFormData({
+        name: "",
+        mode: "ASYNC",
+        status: "ONLINE",
+        profile_id: defaultProfileId,
+        desired_portals: [],
+        desired_concurrency: 1,
+      });
     }
-  }, [open, agent]);
+    setErrors({});
+  }, [open, agent, defaultProfileId]);
 
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -201,9 +204,17 @@ export function AgentModal({
             >
               <option value="ONLINE">Online</option>
               <option value="OFFLINE">Offline</option>
-              <option value="DISABLED">Disabled</option>
-              <option value="DRAINING">Draining</option>
+              <option
+                value="DRAINING"
+                disabled={!agent?.current_job_id}
+                title={!agent?.current_job_id ? "No active job (Draining only when a job is running)" : undefined}
+              >
+                Draining{!agent?.current_job_id ? " (no active job)" : ""}
+              </option>
             </select>
+            {!agent?.current_job_id && (
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Draining is only available when the agent has an active job.</p>
+            )}
           </FormField>
         )}
 
@@ -211,7 +222,7 @@ export function AgentModal({
         <FormField label="Profile" htmlFor="profile">
           <select
             id="profile"
-            value={formData.profile_id || ""}
+            value={formData.profile_id ?? ""}
             onChange={(e) =>
               setFormData((prev) => ({
                 ...prev,
@@ -220,7 +231,6 @@ export function AgentModal({
             }
             className="w-full h-9 rounded-lg px-4 bg-blue-50 dark:bg-slate-700 text-gray-700 dark:text-gray-200 shadow-sm hover:shadow-md focus:shadow-md focus:bg-white dark:focus:bg-slate-600 outline-none cursor-pointer transition-all duration-200 text-sm"
           >
-            <option value="">No profile</option>
             {profiles?.items?.map((profile) => (
               <option key={profile.id} value={profile.id}>
                 {profile.name}
@@ -228,6 +238,9 @@ export function AgentModal({
               </option>
             ))}
           </select>
+          {profiles?.items?.length === 0 && (
+            <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">Create a profile first in Profiles.</p>
+          )}
         </FormField>
 
         {/* Concurrency */}

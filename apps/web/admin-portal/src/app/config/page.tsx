@@ -31,7 +31,7 @@ interface EditedValue {
 
 export default function ConfigPage() {
   const queryClient = useQueryClient();
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(["system", "job"]));
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [editedValues, setEditedValues] = useState<Map<string, EditedValue>>(new Map());
   const [saveMessage, setSaveMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
@@ -63,12 +63,15 @@ export default function ConfigPage() {
     },
   });
 
-  // Group settings by category
+  // Group settings by category (dedupe by category+key so each setting appears once)
   const groupedSettings = React.useMemo(() => {
     if (!settings?.items) return new Map<string, SystemSetting[]>();
-    
+    const seen = new Set<string>();
     const grouped = new Map<string, SystemSetting[]>();
     for (const setting of settings.items) {
+      const key = `${setting.category}.${setting.key}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
       if (!grouped.has(setting.category)) {
         grouped.set(setting.category, []);
       }
@@ -147,6 +150,35 @@ export default function ConfigPage() {
       return JSON.stringify(value, null, 2);
     }
     return String(value);
+  };
+
+  /** Display type for UI: integer, float, boolean, string, json, array */
+  const getDisplayType = (setting: SystemSetting): string => {
+    if (setting.value_type === "boolean") return "boolean";
+    if (setting.value_type === "json") return "json";
+    if (setting.value_type === "array") return "array";
+    if (setting.value_type === "string") return "string";
+    if (setting.value_type === "number") {
+      const editKey = getEditKey(setting.category, setting.key);
+      const edited = editedValues.get(editKey);
+      const value = edited ? edited.value : setting.value;
+      const n = typeof value === "number" ? value : Number(value);
+      return Number.isInteger(n) ? "integer" : "float";
+    }
+    return setting.value_type;
+  };
+
+  /** Infer unit from key (and optionally description) for display */
+  const getUnit = (setting: SystemSetting): string | null => {
+    const k = setting.key.toLowerCase();
+    const d = (setting.description ?? "").toLowerCase();
+    if (k.endsWith("_ms") || k.includes("_ms") || d.includes("millisecond")) return "ms";
+    if (k.endsWith("_seconds") || k.includes("_seconds") || k.includes("ttl_seconds") || d.includes("second")) return "s";
+    if (k.includes("_minutes") || k.includes("timeout_minutes") || d.includes("minute")) return "min";
+    if (k.includes("_hours") || k.includes("retention_hours") || d.includes("hour")) return "h";
+    if (k.includes("viewport_width") || k.includes("viewport_height") || d.includes("viewport")) return "px";
+    if (k.includes("per_minute") || k.includes("actions_per_minute")) return "/min";
+    return null;
   };
 
   const getCategoryIcon = (category: string) => {
@@ -311,13 +343,18 @@ export default function ConfigPage() {
                       >
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-mono text-sm font-medium">
                                 {setting.key}
                               </span>
                               <Badge variant="outline" className="text-xs">
-                                {setting.value_type}
+                                {getDisplayType(setting)}
                               </Badge>
+                              {getUnit(setting) && (
+                                <span className="text-xs text-gray-500 dark:text-gray-400 font-mono">
+                                  ({getUnit(setting)})
+                                </span>
+                              )}
                               {setting.isGlobal && (
                                 <Badge variant="secondary" className="text-xs">
                                   Global
@@ -366,12 +403,19 @@ export default function ConfigPage() {
                               onChange={(e) => handleValueChange(setting, e.target.value)}
                             />
                           ) : (
-                            <Input
-                              type={setting.value_type === "number" ? "number" : "text"}
-                              value={getDisplayValue(setting)}
-                              onChange={(e) => handleValueChange(setting, e.target.value)}
-                              className="font-mono"
-                            />
+                            <div className="flex items-center gap-2">
+                              <Input
+                                type={setting.value_type === "number" ? "number" : "text"}
+                                value={getDisplayValue(setting)}
+                                onChange={(e) => handleValueChange(setting, e.target.value)}
+                                className="font-mono flex-1"
+                              />
+                              {getUnit(setting) && (
+                                <span className="text-sm text-gray-500 dark:text-gray-400 font-medium shrink-0 w-8">
+                                  {getUnit(setting)}
+                                </span>
+                              )}
+                            </div>
                           )}
                         </div>
                       </div>

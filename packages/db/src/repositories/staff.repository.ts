@@ -38,6 +38,18 @@ export class StaffRepository {
       .executeTakeFirst();
   }
 
+  async findByInviteToken(token: string): Promise<StaffMember | undefined> {
+    const staff = await this.db
+      .selectFrom('staff_members')
+      .selectAll()
+      .where('invite_token', '=', token)
+      .where('status', '=', 'pending')
+      .executeTakeFirst();
+    if (!staff?.invite_token_expires_at) return staff;
+    if (new Date(staff.invite_token_expires_at) < new Date()) return undefined;
+    return staff;
+  }
+
   async list(
     tenantId: string,
     filters?: {
@@ -98,10 +110,24 @@ export class StaffRepository {
       .executeTakeFirstOrThrow();
   }
 
+  /**
+   * Serialize JSONB columns (permissions, settings) so pg driver sends valid JSON to Postgres.
+   */
   async update(tenantId: string, id: string, updates: StaffMemberUpdate): Promise<StaffMember | undefined> {
+    const setObj: Record<string, unknown> = {
+      ...updates,
+      updated_at: new Date(),
+    };
+    if (setObj.permissions !== undefined) {
+      const arr = Array.isArray(setObj.permissions) ? setObj.permissions : [];
+      setObj.permissions = sql`${JSON.stringify(arr)}::jsonb`;
+    }
+    if (setObj.settings !== undefined && typeof setObj.settings === 'object' && setObj.settings !== null && !Array.isArray(setObj.settings)) {
+      setObj.settings = sql`${JSON.stringify(setObj.settings)}::jsonb`;
+    }
     return this.db
       .updateTable('staff_members')
-      .set(updates)
+      .set(setObj as StaffMemberUpdate)
       .where('tenant_id', '=', tenantId)
       .where('id', '=', id)
       .returningAll()

@@ -113,7 +113,7 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
    * GET /cp/system/config
    * Requires: super_admin role
    */
-  app.get('/config', async (request, reply) => {
+  app.get('/config', async (_request, reply) => {
     const db = getDb();
     const settingsRepo = new SystemSettingsRepository(db);
     const all = await settingsRepo.getAllGrouped(null);

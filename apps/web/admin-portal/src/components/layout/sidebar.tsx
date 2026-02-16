@@ -51,7 +51,7 @@ export function Sidebar() {
   return (
     <div className="flex h-full w-64 flex-col bg-[var(--bg-sidebar)] dark:bg-slate-950 transition-colors duration-300">
       <div className="flex h-16 shrink-0 items-center justify-between px-6">
-        <span className="text-xl font-bold text-white">Visa Auto</span>
+        <span className="text-xl font-bold text-white">Visor Manager</span>
         <ThemeToggle size="sm" />
       </div>
       <nav className="flex flex-1 flex-col px-4 py-4">

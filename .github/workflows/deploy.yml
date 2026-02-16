@@ -35,14 +35,15 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "On your prod server run:" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "# Env: prod uses prod/.env.prod (copy from prod/.env.prod.example, fill secrets)" >> $GITHUB_STEP_SUMMARY
           echo "cd infra/docker/prod" >> $GITHUB_STEP_SUMMARY
-          echo "cp .env.example .env   # then edit .env with real secrets" >> $GITHUB_STEP_SUMMARY
+          echo "cp .env.prod.example .env.prod   # edit .env.prod with real secrets" >> $GITHUB_STEP_SUMMARY
           echo "export IMAGE_CP=${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-cp:$TAG" >> $GITHUB_STEP_SUMMARY
           echo "export IMAGE_DP=${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-dp:$TAG" >> $GITHUB_STEP_SUMMARY
           echo "export IMAGE_ADMIN_PORTAL=${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-admin-portal:$TAG" >> $GITHUB_STEP_SUMMARY
           echo "export IMAGE_STAFF_PORTAL=${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-staff-portal:$TAG" >> $GITHUB_STEP_SUMMARY
-          echo "docker compose pull" >> $GITHUB_STEP_SUMMARY
-          echo "docker compose up -d" >> $GITHUB_STEP_SUMMARY
+          echo "docker compose --env-file .env.prod -f compose.yml -f prod-override.yml pull" >> $GITHUB_STEP_SUMMARY
+          echo "docker compose --env-file .env.prod -f compose.yml -f prod-override.yml up -d --no-build" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Output deploy commands

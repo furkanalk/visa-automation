@@ -60,10 +60,10 @@ jobs:
       - name: Start services (compose)
         run: |
           cd infra/docker/test
-          cp .env.example .env
-          docker compose up -d
+          cp .env.test.example .env.test
+          docker compose --env-file .env.test -f compose.yml -f test-override.yml up -d --no-build
           sleep 30
-          docker compose ps
+          docker compose --env-file .env.test -f compose.yml -f test-override.yml ps
 
       - name: Run E2E
         run: npm run e2e
@@ -74,8 +74,8 @@ jobs:
 
       - name: Show logs on failure
         if: failure()
-        run: cd infra/docker/test && docker compose logs --tail=200
+        run: cd infra/docker/test && docker compose --env-file .env.test -f compose.yml -f test-override.yml logs --tail=200
 
       - name: Teardown
         if: always()
-        run: cd infra/docker/test && docker compose down -v
+        run: cd infra/docker/test && docker compose --env-file .env.test -f compose.yml -f test-override.yml down -v

@@ -53,6 +53,13 @@ export interface TestEmailRequest {
   to?: string;
   subject?: string;
   body?: string;
+  /** Optional: use these for test without saving (e.g. current form values). */
+  smtp_host?: string;
+  smtp_port?: number;
+  smtp_user?: string;
+  smtp_pass?: string;
+  smtp_from?: string;
+  smtp_secure?: boolean;
 }
 
 export interface TestNotifyResponse {

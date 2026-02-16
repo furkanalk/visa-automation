@@ -220,9 +220,12 @@ export class JobRepository {
     return (result.numUpdatedRows ?? 0n) > 0n;
   }
 
+  /** Terminal job statuses; these are never reset by stuck-job recovery. */
+  private static readonly TERMINAL_STATUSES = ['COMPLETED', 'FAILED_TERMINAL', 'CANCELLED'] as const;
+
   /**
-   * Reset jobs that are RUNNING but have an expired lock (locked_until < now).
-   * Makes them reclaimable by setting status to QUEUED and clearing lock.
+   * Reset jobs that have an expired lock (locked_by set, locked_until &lt; now or null).
+   * Only non-terminal jobs are reset; they become reclaimable (status QUEUED, lock cleared).
    * Returns the number of jobs reset.
    */
   async resetStuckRunningJobs(): Promise<number> {
@@ -235,8 +238,9 @@ export class JobRepository {
         locked_until: null,
         updated_at: now,
       })
-      .where('status', '=', 'RUNNING')
+      .where('locked_by', 'is not', null)
       .where((eb) => eb('locked_until', 'is', null).or('locked_until', '<', now))
+      .where('status', 'not in', JobRepository.TERMINAL_STATUSES)
       .executeTakeFirst();
     return Number(result.numUpdatedRows ?? 0n);
   }

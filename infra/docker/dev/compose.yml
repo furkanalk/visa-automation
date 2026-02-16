@@ -1,4 +1,6 @@
-# Dev – run from infra/docker/dev:  cp .env.example .env  &&  docker compose up -d
+# Dev – run from infra/docker/dev:
+#   cp .env.dev.example .env.dev
+#   ./up.sh   # veya: docker compose --env-file .env.dev -f compose.yml -f dev-override.yml up -d --build --pull=never
 # Order: Postgres → bootstrap (migrate) → CP → DP. All config defaults in Postgres.
 name: visa-automation-dev
 
@@ -15,40 +17,3 @@ include:
 networks:
   visa-network:
     name: visa-network-dev
-
-services:
-  cp:
-    build:
-      target: development
-    env_file: .env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      bootstrap:
-        condition: service_completed_successfully
-    volumes:
-      - ../../../../apps/cp/src:/app/apps/cp/src:ro
-      - ../../../../packages:/app/packages:ro
-    command: ["npm", "run", "dev", "--workspace=@visa-automation/cp"]
-
-  dp:
-    build:
-      target: development
-    env_file: .env
-    volumes:
-      - ../../../../apps/dp/src:/app/apps/dp/src:ro
-      - ../../../../packages:/app/packages:ro
-    command: ["npm", "run", "dev", "--workspace=@visa-automation/dp"]
-
-  admin-portal:
-    env_file: .env
-  staff-portal:
-    env_file: .env
-  mock-portal:
-    env_file: .env
-  postgres:
-    env_file: .env
-  redis:
-    env_file: .env

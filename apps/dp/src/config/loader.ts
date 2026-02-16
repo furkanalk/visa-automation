@@ -1,4 +1,5 @@
 import type { PortalConfig, PortalId, DeepPartial } from './types.js';
+import type { AgentProfileConfig } from '@visa-automation/shared';
 import { deepMerge } from './merge.js';
 
 /**
@@ -51,13 +52,45 @@ function assertFullPortalConfig(portalId: PortalId, m: Record<string, unknown>):
 }
 
 /**
+ * Convert agent profile config (rpm, minMs, etc.) to a portal-shaped partial for merging.
+ * Only overlapping concepts are mapped; missing keys leave portal value unchanged.
+ */
+function profileToPortalPartial(profile: AgentProfileConfig | null | undefined): Record<string, unknown> {
+  if (!profile || typeof profile !== 'object') return {};
+  const out: Record<string, unknown> = {};
+  const r = profile.rateLimit as { rpm?: number; rph?: number } | undefined;
+  if (r?.rpm !== undefined) {
+    out.rateLimit = { ...((out.rateLimit as object) ?? {}), actionsPerMinute: r.rpm };
+  }
+  const p = profile.pacing as { minMs?: number; maxMs?: number } | undefined;
+  if (p?.minMs !== undefined || p?.maxMs !== undefined) {
+    const pacing: Record<string, unknown> = { ...((out.pacing as object) ?? {}) };
+    if (p.minMs !== undefined) pacing.minDelayMs = p.minMs;
+    if (p.maxMs !== undefined) pacing.maxDelayMs = p.maxMs;
+    out.pacing = pacing;
+  }
+  const t = profile.timeouts as { navigationMs?: number; actionMs?: number } | undefined;
+  if (t?.navigationMs !== undefined || t?.actionMs !== undefined) {
+    const timeouts: Record<string, unknown> = { ...((out.timeouts as object) ?? {}) };
+    if (t.navigationMs !== undefined) timeouts.navigationMs = t.navigationMs;
+    if (t.actionMs !== undefined) timeouts.actionMs = t.actionMs;
+    out.timeouts = timeouts;
+  }
+  return out;
+}
+
+/**
  * Resolve portal config from CP (Postgres) only. No file defaults – CP must provide full config.
- * Merge order: primaryFromCP < jobOverride. All required fields must be present (from bootstrap/migrations or Admin).
+ * Merge order: profile and portal are merged according to config_priority; then jobOverride on top.
  */
 export function resolvePortalConfig(args: {
   portalId: PortalId;
   /** Full portal config from CP (Admin Portals). Must include base_url and all config keys. */
   primaryFromCP: DeepPartial<PortalConfig>;
+  /** Agent profile config (optional). Overlapping keys merged per config_priority. */
+  profileConfig?: AgentProfileConfig | null;
+  /** When both profile and portal have a key: profile_over_portal = profile wins; portal_over_profile = portal wins. Default: portal_over_profile. */
+  configPriority?: 'profile_over_portal' | 'portal_over_profile';
   jobOverride?: DeepPartial<PortalConfig>;
 }): PortalConfig {
   if (!args.primaryFromCP?.baseUrl) {
@@ -66,10 +99,21 @@ export function resolvePortalConfig(args: {
     );
   }
 
-  const merged = deepMerge(
-    args.primaryFromCP as Record<string, unknown>,
-    (args.jobOverride ?? {}) as Record<string, unknown>
-  ) as Record<string, unknown>;
+  const priority = args.configPriority ?? 'portal_over_profile';
+  const profilePartial = profileToPortalPartial(args.profileConfig);
+
+  const merged =
+    priority === 'profile_over_portal'
+      ? (deepMerge(
+          args.primaryFromCP as Record<string, unknown>,
+          profilePartial,
+          (args.jobOverride ?? {}) as Record<string, unknown>
+        ) as Record<string, unknown>)
+      : (deepMerge(
+          profilePartial,
+          args.primaryFromCP as Record<string, unknown>,
+          (args.jobOverride ?? {}) as Record<string, unknown>
+        ) as Record<string, unknown>);
 
   assertFullPortalConfig(args.portalId, merged);
 

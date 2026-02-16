@@ -92,11 +92,21 @@ export async function auditOnSend(
       after: request.auditContext.body as Record<string, unknown>,
     } : null;
 
+    // When auditing agent resource, if no actor (e.g. request from worker), use resource as actor
+    let actorType = request.actorType ?? 'user';
+    let actorId = request.actorId;
+    let actorName = request.actorName;
+    if (resourceType === 'agent' && (actorId == null || actorName == null) && resourceId) {
+      actorType = 'agent';
+      actorId = resourceId;
+      actorName = actorName ?? `Agent ${resourceId.slice(0, 8)}`;
+    }
+
     await auditRepo.create({
       tenant_id: request.tenantId,
-      actor_type: request.actorType ?? 'user',
-      actor_id: request.actorId,
-      actor_name: request.actorName,
+      actor_type: actorType,
+      actor_id: actorId,
+      actor_name: actorName,
       action,
       resource_type: resourceType,
       resource_id: resourceId,

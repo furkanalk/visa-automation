@@ -29,6 +29,32 @@ const getRoles = (): string | undefined => {
   }
 };
 
+// Actor info for audit logs (x-actor-id, x-actor-name)
+const getActorId = (): string | undefined => {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const raw = localStorage.getItem("visa-automation-auth");
+    if (!raw) return undefined;
+    const state = JSON.parse(raw) as { state?: { user?: { id?: string } } };
+    return state?.state?.user?.id;
+  } catch {
+    return undefined;
+  }
+};
+
+const getActorName = (): string | undefined => {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const raw = localStorage.getItem("visa-automation-auth");
+    if (!raw) return undefined;
+    const state = JSON.parse(raw) as { state?: { user?: { name?: string; email?: string } } };
+    const user = state?.state?.user;
+    return user?.name ?? user?.email;
+  } catch {
+    return undefined;
+  }
+};
+
 interface ApiResponse<T> {
   success: boolean;
   data?: T;
@@ -66,6 +92,10 @@ async function fetchApi<T>(
   };
   const role = getRoles();
   if (role) headers["x-roles"] = role;
+  const actorId = getActorId();
+  if (actorId) headers["x-actor-id"] = actorId;
+  const actorName = getActorName();
+  if (actorName) headers["x-actor-name"] = actorName;
 
   try {
     const response = await fetchWithTimeout(url, {
@@ -121,13 +151,19 @@ export const cpApi = {
   updatePortal: (id: string, data: Partial<PortalConfig>) =>
     fetchApi<PortalConfig>(`${getCpApiUrl()}/cp/portals/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   enablePortal: (id: string) =>
-    fetchApi<PortalConfig>(`${getCpApiUrl()}/cp/portals/${id}/enable`, { method: "POST" }),
+    fetchApi<PortalConfig>(`${getCpApiUrl()}/cp/portals/${id}/enable`, { method: "POST", body: "{}" }),
   disablePortal: (id: string) =>
-    fetchApi<PortalConfig>(`${getCpApiUrl()}/cp/portals/${id}/disable`, { method: "POST" }),
+    fetchApi<PortalConfig>(`${getCpApiUrl()}/cp/portals/${id}/disable`, { method: "POST", body: "{}" }),
 
   // System
   getSystemStatus: () => fetchApi<SystemStatus>(`${getCpApiUrl()}/cp/system/status`),
   getHealth: () => fetchApi<HealthStatus>(`${getCpApiUrl()}/cp/health`),
+
+  // Dashboard history (agent/job activity graph, 7-day retention)
+  getDashboardHistory: (period?: "24h" | "3d" | "7d") => {
+    const q = period ? `?period=${period}` : "";
+    return fetchApi<DashboardHistoryData>(`${getCpApiUrl()}/cp/dashboard/history${q}`);
+  },
 
   // Audit
   getAuditLogs: (params?: Record<string, string>) => {
@@ -205,10 +241,20 @@ export const cpApi = {
       `${getCpApiUrl()}/cp/notify/test/telegram`,
       { method: "POST", body: JSON.stringify({ chat_id: chatId, message }) }
     ),
-  testEmail: (to?: string, subject?: string, body?: string) =>
+  testEmail: (params?: {
+      to?: string;
+      subject?: string;
+      body?: string;
+      smtp_host?: string;
+      smtp_port?: number;
+      smtp_user?: string;
+      smtp_pass?: string;
+      smtp_from?: string;
+      smtp_secure?: boolean;
+    }) =>
     fetchApi<{ channel: string; message: string; details: Record<string, unknown> }>(
       `${getCpApiUrl()}/cp/notify/test/email`,
-      { method: "POST", body: JSON.stringify({ to, subject, body }) }
+      { method: "POST", body: JSON.stringify(params ?? {}) }
     ),
 
   // Watcher
@@ -293,7 +339,6 @@ export interface CreateProfileData {
 export interface PortalConfig {
   id: string;
   tenant_id: string;
-  portal_id: string;
   name: string;
   base_url?: string | null;
   enabled: boolean;
@@ -301,6 +346,17 @@ export interface PortalConfig {
   selectors?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  portal_id: string;
+}
+
+/** Portal-specific customer form: fields shown when adding/editing a customer for this portal. Agent uses these values (stored in customer.preferences). */
+export interface CustomerFormFieldSchema {
+  key: string;
+  label: string;
+  type: "text" | "number" | "date" | "select" | "checkbox";
+  required?: boolean;
+  placeholder?: string;
+  options?: { value: string; label: string }[];
 }
 
 export interface Job {
@@ -345,6 +401,20 @@ export interface SystemStatus {
   agent_stats: { total: number; online: number; offline: number };
 }
 
+export interface DashboardHistoryPoint {
+  timestamp: string;
+  online_agents: number;
+  total_agents: number;
+  active_jobs: number;
+  total_jobs: number;
+  completed_jobs: number;
+}
+
+export interface DashboardHistoryData {
+  period: string;
+  points: DashboardHistoryPoint[];
+}
+
 export interface HealthStatus {
   status: "healthy" | "degraded" | "unhealthy";
   checks: Record<string, { status: string; latency_ms?: number }>;
@@ -353,11 +423,12 @@ export interface HealthStatus {
 export interface AuditLog {
   id: string;
   tenant_id: string;
-  actor_id: string;
+  actor_id: string | null;
   actor_type: string;
+  actor_name?: string | null;
   action: string;
   resource_type: string;
-  resource_id: string;
+  resource_id: string | null;
   changes: Record<string, unknown> | null;
   metadata: Record<string, unknown>;
   created_at: string;
@@ -571,6 +642,8 @@ export interface CustomerPreferences {
   preferred_dates?: { from: string; to: string };
   family_size?: number;
   special_requirements?: string[];
+  /** Portal-specific fields (keys from portal customerFormSchema); agent uses these. */
+  [key: string]: unknown;
 }
 
 export interface CustomerFlags {
@@ -647,36 +720,40 @@ export interface CustomerCounts {
 
 export const settingsApi = {
   async getAll(): Promise<SettingsGrouped> {
-    return fetchApi<{ data: SettingsGrouped }>(`${getCpApiUrl()}/cp/settings`).then(r => r.data);
+    const res = await fetchApi<SettingsGrouped>(`${getCpApiUrl()}/cp/settings`);
+    return res ?? {};
   },
 
   async getList(category?: string): Promise<{ items: SystemSetting[]; total: number }> {
     const query = category ? `?category=${category}` : '';
-    return fetchApi<{ data: { items: SystemSetting[]; total: number } }>(
+    const res = await fetchApi<{ items: SystemSetting[]; total: number }>(
       `${getCpApiUrl()}/cp/settings/list${query}`
-    ).then(r => r.data);
+    );
+    return res ?? { items: [], total: 0 };
   },
 
   async getCategories(): Promise<string[]> {
-    return fetchApi<{ data: { categories: string[] } }>(
+    const res = await fetchApi<{ categories: string[] }>(
       `${getCpApiUrl()}/cp/settings/categories`
-    ).then(r => r.data.categories);
+    );
+    return res?.categories ?? [];
   },
 
   async getValue(category: string, key: string): Promise<unknown> {
-    return fetchApi<{ data: { value: unknown } }>(
+    const res = await fetchApi<{ value: unknown }>(
       `${getCpApiUrl()}/cp/settings/${category}/${key}`
-    ).then(r => r.data.value);
+    );
+    return res?.value;
   },
 
   async setValue(category: string, key: string, value: unknown, description?: string): Promise<SystemSetting> {
-    return fetchApi<{ data: SystemSetting }>(
+    return fetchApi<SystemSetting>(
       `${getCpApiUrl()}/cp/settings/${category}/${key}`,
       {
         method: 'PUT',
         body: JSON.stringify({ value, description }),
       }
-    ).then(r => r.data);
+    ) as Promise<SystemSetting>;
   },
 
   async bulkUpdate(updates: Array<{ category: string; key: string; value: unknown }>): Promise<void> {
@@ -693,19 +770,20 @@ export const settingsApi = {
   },
 
   async getGlobalSettings(): Promise<{ items: SystemSetting[]; total: number }> {
-    return fetchApi<{ data: { items: SystemSetting[]; total: number } }>(
+    const res = await fetchApi<{ items: SystemSetting[]; total: number }>(
       `${getCpApiUrl()}/cp/settings/global`
-    ).then(r => r.data);
+    );
+    return res ?? { items: [], total: 0 };
   },
 
   async setGlobalValue(category: string, key: string, value: unknown, description?: string): Promise<SystemSetting> {
-    return fetchApi<{ data: SystemSetting }>(
+    return fetchApi<SystemSetting>(
       `${getCpApiUrl()}/cp/settings/global/${category}/${key}`,
       {
         method: 'PUT',
         body: JSON.stringify({ value, description }),
       }
-    ).then(r => r.data);
+    ) as Promise<SystemSetting>;
   },
 };
 
@@ -738,9 +816,11 @@ export const customerApi = {
     if (filters.limit) params.append('limit', String(filters.limit));
     if (filters.offset) params.append('offset', String(filters.offset));
     const query = params.toString() ? `?${params.toString()}` : '';
-    return fetchApi<{ data: { items: Customer[]; total: number; counts: CustomerCounts } }>(
+    const empty = { items: [] as Customer[], total: 0, counts: { active: 0, paused: 0, completed: 0, cancelled: 0 } as CustomerCounts };
+    const res = await fetchApi<{ items: Customer[]; total: number; counts: CustomerCounts }>(
       `${getCpApiUrl()}/cp/customers${query}`
-    ).then(r => r.data);
+    );
+    return res ?? empty;
   },
 
   async getCounts(): Promise<CustomerCounts> {
@@ -756,7 +836,7 @@ export const customerApi = {
     return fetchApi<{ data: Partial<Customer> }>(`${getCpApiUrl()}/cp/customers/${id}/redacted`).then(r => r.data);
   },
 
-  async create(customer: Omit<Customer, 'id' | 'tenant_id' | 'total_jobs' | 'successful_bookings' | 'last_job_at' | 'last_slot_found_at' | 'created_at' | 'updated_at' | 'created_by' | 'updated_by'>): Promise<Customer> {
+  async create(customer: Omit<Customer, 'id' | 'tenant_id' | 'total_jobs' | 'successful_bookings' | 'last_job_at' | 'last_slot_found_at' | 'created_at' | 'updated_at' | 'created_by' | 'updated_by' | 'profile_id'> & { profile_id?: string | null }): Promise<Customer> {
     return fetchApi<{ data: Customer }>(`${getCpApiUrl()}/cp/customers`, {
       method: 'POST',
       body: JSON.stringify(customer),
@@ -780,12 +860,14 @@ export const customerApi = {
   async pause(id: string): Promise<Customer> {
     return fetchApi<{ data: Customer }>(`${getCpApiUrl()}/cp/customers/${id}/pause`, {
       method: 'POST',
+      body: '{}',
     }).then(r => r.data);
   },
 
   async resume(id: string): Promise<Customer> {
     return fetchApi<{ data: Customer }>(`${getCpApiUrl()}/cp/customers/${id}/resume`, {
       method: 'POST',
+      body: '{}',
     }).then(r => r.data);
   },
 
@@ -803,7 +885,7 @@ export const customerApi = {
   async triggerSlotCheck(id: string): Promise<{ message: string; customer_id: string }> {
     return fetchApi<{ data: { message: string; customer_id: string } }>(
       `${getCpApiUrl()}/cp/customers/${id}/run-slot-check`,
-      { method: 'POST' }
+      { method: 'POST', body: '{}' }
     ).then(r => r.data);
   },
 
@@ -818,8 +900,8 @@ export const customerApi = {
 // =====================================================
 // Staff Management API
 // =====================================================
-export type StaffRole = 'staff' | 'senior_staff' | 'supervisor' | 'admin';
-export type StaffStatus = 'active' | 'inactive' | 'suspended';
+export type StaffRole = 'staff' | 'admin' | 'super_admin';
+export type StaffStatus = 'active' | 'inactive' | 'suspended' | 'pending';
 
 export interface StaffMember {
   id: string;
@@ -899,6 +981,31 @@ export const staffApi = {
     return fetchApi<StaffMember>(`${getCpApiUrl()}/cp/staff/${id}`);
   },
 
+  // Auth: get invite details by token (for register page)
+  async getInviteByToken(token: string): Promise<{ email: string; name: string }> {
+    return fetchApi<{ email: string; name: string }>(`${getCpApiUrl()}/cp/auth/invite/${encodeURIComponent(token)}`);
+  },
+
+  // Auth: complete registration (set password with invite token)
+  async completeRegistration(token: string, password: string): Promise<{ message: string; staff: StaffMember }> {
+    const data = await fetchApi<{ message: string; staff: StaffMember }>(`${getCpApiUrl()}/cp/auth/complete-registration`, {
+      method: "POST",
+      body: JSON.stringify({ token, password }),
+    });
+    return data;
+  },
+
+  // Get staff by email (for login suspended check; returns null if not found)
+  async getByEmail(email: string): Promise<StaffMember | null> {
+    const q = new URLSearchParams({ email: email.trim() });
+    try {
+      const data = await fetchApi<StaffMember>(`${getCpApiUrl()}/cp/staff/by-email?${q}`);
+      return data;
+    } catch {
+      return null;
+    }
+  },
+
   // Create staff member
   async create(staff: {
     email: string;
@@ -913,9 +1020,10 @@ export const staffApi = {
     });
   },
 
-  // Update staff member
+  // Update staff member (email only allowed for super_admin)
   async update(id: string, updates: Partial<{
     name: string;
+    email: string;
     role: StaffRole;
     status: StaffStatus;
     permissions: string[];
@@ -939,6 +1047,7 @@ export const staffApi = {
   async suspend(id: string): Promise<StaffMember> {
     return fetchApi<StaffMember>(`${getCpApiUrl()}/cp/staff/${id}/suspend`, {
       method: 'POST',
+      body: '{}',
     });
   },
 
@@ -946,6 +1055,7 @@ export const staffApi = {
   async activate(id: string): Promise<StaffMember> {
     return fetchApi<StaffMember>(`${getCpApiUrl()}/cp/staff/${id}/activate`, {
       method: 'POST',
+      body: '{}',
     });
   },
 

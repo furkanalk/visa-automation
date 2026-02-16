@@ -263,13 +263,6 @@ export default function JobsPage() {
         </Card>
       )}
 
-      {!isLoading && filteredJobs?.length === 0 && (
-        <div className="text-center py-12">
-          <Briefcase className="h-12 w-12 text-gray-300 dark:text-gray-600 mx-auto mb-4" />
-          <p className="text-gray-500 dark:text-gray-400">No jobs found</p>
-        </div>
-      )}
-
       {/* Job Detail Modal */}
       {selectedJob && (
         <JobDetailModal

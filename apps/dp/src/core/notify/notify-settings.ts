@@ -50,7 +50,8 @@ export async function getNotifySettings(
   const entry = cache.get(tenantId);
   if (entry && entry.expiresAt > now) return entry.data;
 
-  const url = `${cpApiUrl.replace(/\/+$/, '')}/cp/notify/worker`;
+  const base = cpApiUrl.replace(new RegExp('/+$'), '');
+  const url = `${base}/cp/notify/worker`;
   const res = await fetch(url, {
     headers: {
       'x-tenant-id': tenantId,
@@ -71,7 +72,3 @@ export async function getNotifySettings(
   cache.set(tenantId, { data, expiresAt: now + CACHE_TTL_MS });
   return data;
 }
-</think>
-Düzeltme: `telegram_bot_token` ataması.
-<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>
-StrReplace

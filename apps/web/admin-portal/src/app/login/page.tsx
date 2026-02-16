@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { useAuthStore } from "@/stores/auth";
 import { useThemeStore } from "@/stores/theme";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { staffApi } from "@/lib/api";
 import { Lock } from "lucide-react";
 
 export default function LoginPage() {
@@ -29,6 +30,12 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
+      const staff = await staffApi.getByEmail(email);
+      if (staff?.status === "suspended") {
+        setError("This account is suspended. Contact administrator for help.");
+        setLoading(false);
+        return;
+      }
       const success = await login(email, password);
       if (success) {
         router.push("/");
@@ -56,7 +63,7 @@ export default function LoginPage() {
           </div>
           <CardTitle className="text-2xl text-gray-900 dark:text-white">Welcome back</CardTitle>
           <CardDescription>
-            Sign in to Visa Automation Admin
+            Sign in to Visor Manager
           </CardDescription>
         </CardHeader>
         <CardContent>

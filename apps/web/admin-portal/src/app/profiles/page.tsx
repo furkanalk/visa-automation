@@ -118,7 +118,7 @@ export default function ProfilesPage() {
             const pacingMin = getConfigValue(profile.config, ["pacing", "minMs"]);
             const pacingMax = getConfigValue(profile.config, ["pacing", "maxMs"]);
             const navTimeout = getConfigValue(profile.config, ["timeouts", "navigationMs"]);
-            const maxRetries = getConfigValue(profile.config, ["retry", "maxRetries"]);
+            const maxAttempts = getConfigValue(profile.config, ["retry", "maxAttempts"]);
 
             return (
               <Card key={profile.id}>
@@ -159,10 +159,10 @@ export default function ProfilesPage() {
                         <span className="text-gray-900 dark:text-white">{navTimeout}ms</span>
                       </div>
                     )}
-                    {maxRetries && (
+                    {maxAttempts && (
                       <div className="flex justify-between">
-                        <span className="text-gray-500 dark:text-gray-400">Max Retries</span>
-                        <span className="text-gray-900 dark:text-white">{maxRetries}</span>
+                        <span className="text-gray-500 dark:text-gray-400">Max retries</span>
+                        <span className="text-gray-900 dark:text-white">{maxAttempts}</span>
                       </div>
                     )}
                   </div>
@@ -171,14 +171,17 @@ export default function ProfilesPage() {
                       <Edit className="h-3 w-3 mr-1" />
                       Edit
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      onClick={() => handleDelete(profile.id)}
-                      disabled={profile.is_default}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
+                    <span title={profile.is_default ? "Default profile cannot be deleted." : undefined} className="inline-block">
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => handleDelete(profile.id)}
+                        disabled={profile.is_default}
+                        title={profile.is_default ? "Default profile cannot be deleted." : "Delete profile"}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </span>
                   </div>
                 </CardContent>
               </Card>

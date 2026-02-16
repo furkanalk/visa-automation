@@ -4,6 +4,7 @@ import helmet from '@fastify/helmet';
 import { healthRoutes } from './routes/health.js';
 import { metricsRoutes } from './routes/metrics.js';
 import { systemRoutes } from './routes/system.js';
+import { dashboardRoutes } from './routes/dashboard.js';
 import { agentRoutes } from './routes/agents.js';
 import { profileRoutes } from './routes/profiles.js';
 import { portalRoutes } from './routes/portals.js';
@@ -15,6 +16,7 @@ import { hitlRoutes } from './routes/hitl.js';
 import { settingsRoutes } from './routes/settings.js';
 import { customerRoutes } from './routes/customers.js';
 import { staffRoutes } from './routes/staff.js';
+import { authRoutes } from './routes/auth.js';
 import { publicJobRoutes } from './routes/public-jobs.js';
 import { tenantMiddleware } from './middleware/tenant.js';
 import { auditPreHandler, auditOnSend } from './middleware/audit.js';
@@ -40,6 +42,7 @@ export async function createApp(): Promise<FastifyInstance> {
   await app.register(healthRoutes, { prefix: '/cp/health' });
   await app.register(metricsRoutes, { prefix: '/cp/metrics' });
   await app.register(systemRoutes, { prefix: '/cp/system' });
+  await app.register(dashboardRoutes, { prefix: '/cp/dashboard' });
 
   // Public API routes (same contract as former apps/api; no tenant middleware)
   await app.register(publicJobRoutes, { prefix: '/api/jobs' });
@@ -70,7 +73,8 @@ export async function createApp(): Promise<FastifyInstance> {
     await cpApp.register(hitlRoutes, { prefix: '/hitl' });
     await cpApp.register(settingsRoutes, { prefix: '/settings' });
     await cpApp.register(customerRoutes, { prefix: '/customers' });
-    await cpApp.register(staffRoutes); // Staff routes don't have a prefix - uses /cp/staff directly
+    await cpApp.register(staffRoutes); // /cp/staff
+    await cpApp.register(authRoutes, { prefix: '/auth' }); // /cp/auth (tenant optional for invite)
   }, { prefix: '/cp' });
 
   // Global error handler

@@ -537,8 +537,8 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    // TODO: Create a job for this customer via the queue
-    // For now, return a placeholder response
+    // TODO: Create a job for this customer via the queue and return job_id
+    // For now we only audit and return success (no job is created yet)
 
     await auditRepo.create({
       tenant_id: request.tenantId,
@@ -554,9 +554,8 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
     return {
       success: true,
       data: {
-        message: 'Slot check triggered',
+        message: 'Slot check requested. Job creation is not yet implemented; only the action was logged.',
         customer_id: customer.id,
-        // job_id: will be added when job creation is implemented
       },
     };
   });

@@ -22,6 +22,12 @@ export async function tenantMiddleware(
   request: FastifyRequest,
   reply: FastifyReply
 ): Promise<void> {
+  const path = request.url.split('?')[0];
+  if (path.startsWith('/cp/auth')) {
+    (request as FastifyRequest & { tenantId: string }).tenantId = '';
+    return;
+  }
+
   const tenantIdOrSlug = request.headers['x-tenant-id'] as string | undefined;
 
   if (!tenantIdOrSlug) {

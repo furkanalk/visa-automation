@@ -1,5 +1,7 @@
 import type { FastifyPluginCallback } from 'fastify';
+import { randomBytes } from 'crypto';
 import { getDb, StaffRepository, AuditRepository } from '@visa-automation/db';
+import { sendInviteEmail } from './auth.js';
 import type { StaffStatus, StaffRole } from '@visa-automation/db';
 
 // Request/Response types
@@ -25,6 +27,7 @@ interface CreateStaffBody {
 
 interface UpdateStaffBody {
   name?: string;
+  email?: string;
   role?: StaffRole;
   status?: StaffStatus;
   permissions?: string[];
@@ -44,6 +47,13 @@ interface ActivityLogQuery {
 
 interface LeaderboardQuery {
   period?: 'today' | 'week' | 'month' | 'all';
+}
+
+/** Super admin can manage all; admin can only manage staff. */
+function canManageTargetRole(actorRoles: string[], targetRole: StaffRole): boolean {
+  if (actorRoles.includes('super_admin')) return true;
+  if (targetRole === 'staff' && actorRoles.includes('admin')) return true;
+  return false;
 }
 
 export const staffRoutes: FastifyPluginCallback = (app, _opts, done) => {
@@ -94,6 +104,29 @@ export const staffRoutes: FastifyPluginCallback = (app, _opts, done) => {
   });
 
   /**
+   * Get staff by email (for login/suspended check; no auth required beyond tenant)
+   * GET /cp/staff/by-email?email=xxx
+   */
+  app.get<{ Querystring: { email: string } }>('/staff/by-email', async (request, reply) => {
+    const email = request.query.email?.trim();
+    if (!email) {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'email query is required' },
+      });
+    }
+    const staff = await staffRepo.findByEmail(request.tenantId, email);
+    if (!staff) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'STAFF_NOT_FOUND', message: 'Staff member not found' },
+      });
+    }
+    const { password_hash: _pw, ...rest } = staff;
+    return { success: true, data: rest };
+  });
+
+  /**
    * Get single staff member
    * GET /cp/staff/:id
    */
@@ -120,8 +153,28 @@ export const staffRoutes: FastifyPluginCallback = (app, _opts, done) => {
    * Create staff member
    * POST /cp/staff
    */
-  app.post<{ Body: CreateStaffBody }>('/staff', async (request) => {
+  app.post<{ Body: CreateStaffBody }>('/staff', async (request, reply) => {
     const { email, name, role = 'staff', permissions = [], settings = {} } = request.body;
+    const roles = (request as any).roles ?? [];
+    if (role === 'super_admin' || role === 'admin') {
+      if (!roles.includes('super_admin')) {
+        return reply.status(403).send({
+          success: false,
+          error: { code: 'NO_PERMISSION', message: 'Only super_admin can create super_admin or admin.' },
+        });
+      }
+    } else if (role === 'staff') {
+      if (!roles.includes('super_admin') && !roles.includes('admin')) {
+        return reply.status(403).send({
+          success: false,
+          error: { code: 'NO_PERMISSION', message: 'Only super_admin or admin can create staff.' },
+        });
+      }
+    }
+
+    const inviteToken = randomBytes(32).toString('hex');
+    const inviteTokenExpiresAt = new Date();
+    inviteTokenExpiresAt.setDate(inviteTokenExpiresAt.getDate() + 7);
 
     const staff = await staffRepo.create({
       tenant_id: request.tenantId,
@@ -130,7 +183,9 @@ export const staffRoutes: FastifyPluginCallback = (app, _opts, done) => {
       role,
       permissions,
       settings,
-      status: 'active',
+      status: 'pending',
+      invite_token: inviteToken,
+      invite_token_expires_at: inviteTokenExpiresAt,
     });
 
     await auditRepo.create({
@@ -142,6 +197,11 @@ export const staffRoutes: FastifyPluginCallback = (app, _opts, done) => {
       resource_id: staff.id,
       changes: { after: { email, name, role } },
     });
+
+    const emailSent = await sendInviteEmail(app, request.tenantId, email, name, inviteToken);
+    if (!emailSent) {
+      request.log.warn({ staffId: staff.id, email }, 'Staff created but invite email could not be sent');
+    }
 
     return {
       success: true,
@@ -163,13 +223,44 @@ export const staffRoutes: FastifyPluginCallback = (app, _opts, done) => {
       });
     }
 
+    const roles = (request as any).roles ?? [];
+    if (!canManageTargetRole(roles, existing.role)) {
+      return reply.status(403).send({
+        success: false,
+        error: { code: 'NO_PERMISSION', message: 'You cannot manage this staff member.' },
+      });
+    }
+
     const updates: Record<string, unknown> = {};
     if (request.body.name !== undefined) updates.name = request.body.name;
-    if (request.body.role !== undefined) updates.role = request.body.role;
+    if (request.body.role !== undefined) {
+      if (!canManageTargetRole(roles, request.body.role)) {
+        return reply.status(403).send({
+          success: false,
+          error: { code: 'NO_PERMISSION', message: 'You cannot assign this role.' },
+        });
+      }
+      updates.role = request.body.role;
+    }
     if (request.body.status !== undefined) updates.status = request.body.status;
     if (request.body.permissions !== undefined) updates.permissions = request.body.permissions;
     if (request.body.settings !== undefined) updates.settings = request.body.settings;
     if (request.body.avatar_url !== undefined) updates.avatar_url = request.body.avatar_url;
+
+    // Only super_admin may update email
+    if (request.body.email !== undefined) {
+      const roles = (request as any).roles ?? [];
+      if (!roles.includes('super_admin')) {
+        return reply.status(403).send({
+          success: false,
+          error: {
+            code: 'NO_PERMISSION',
+            message: 'No permission granted. Only super_admin can update staff email.',
+          },
+        });
+      }
+      updates.email = request.body.email;
+    }
 
     const staff = await staffRepo.update(request.tenantId, request.params.id, updates);
 
@@ -200,6 +291,14 @@ export const staffRoutes: FastifyPluginCallback = (app, _opts, done) => {
       return reply.status(404).send({
         success: false,
         error: { code: 'STAFF_NOT_FOUND', message: 'Staff member not found' },
+      });
+    }
+
+    const roles = (request as any).roles ?? [];
+    if (!canManageTargetRole(roles, existing.role)) {
+      return reply.status(403).send({
+        success: false,
+        error: { code: 'NO_PERMISSION', message: 'You cannot delete this staff member.' },
       });
     }
 
@@ -318,6 +417,14 @@ export const staffRoutes: FastifyPluginCallback = (app, _opts, done) => {
       });
     }
 
+    const roles = (request as any).roles ?? [];
+    if (!canManageTargetRole(roles, existing.role)) {
+      return reply.status(403).send({
+        success: false,
+        error: { code: 'NO_PERMISSION', message: 'You cannot manage this staff member.' },
+      });
+    }
+
     const staff = await staffRepo.updateStatus(request.tenantId, request.params.id, 'suspended');
 
     await auditRepo.create({
@@ -347,6 +454,14 @@ export const staffRoutes: FastifyPluginCallback = (app, _opts, done) => {
       return reply.status(404).send({
         success: false,
         error: { code: 'STAFF_NOT_FOUND', message: 'Staff member not found' },
+      });
+    }
+
+    const roles = (request as any).roles ?? [];
+    if (!canManageTargetRole(roles, existing.role)) {
+      return reply.status(403).send({
+        success: false,
+        error: { code: 'NO_PERMISSION', message: 'You cannot manage this staff member.' },
       });
     }
 

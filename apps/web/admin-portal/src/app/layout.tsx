@@ -7,8 +7,8 @@ import { Providers } from "./providers";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Visa Automation Admin",
-  description: "Admin dashboard for Visa Automation platform",
+  title: "Visor Manager",
+  description: "Admin dashboard for Visor Manager",
 };
 
 export default function RootLayout({

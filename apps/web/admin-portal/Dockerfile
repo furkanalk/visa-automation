@@ -5,7 +5,8 @@ WORKDIR /app
 
 COPY package.json package-lock*.json ./
 COPY apps/web/admin-portal/package.json apps/web/admin-portal/
-RUN npm ci --workspace=@visa-automation/admin-portal
+RUN --mount=type=cache,target=/root/.npm \
+  npm ci --workspace=@visa-automation/admin-portal
 
 COPY apps/web/admin-portal apps/web/admin-portal
 ARG NEXT_PUBLIC_CP_API_URL=http://localhost:3001
@@ -39,7 +40,8 @@ WORKDIR /app
 
 COPY package.json package-lock*.json ./
 COPY apps/web/admin-portal apps/web/admin-portal
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+  npm ci
 
 WORKDIR /app/apps/web/admin-portal
 ENV NODE_ENV=development

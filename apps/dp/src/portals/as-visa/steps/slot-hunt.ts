@@ -1,7 +1,7 @@
 import type { Page } from 'playwright';
 import type { Throttler } from '../../../core/networking/throttler.js';
 import type { RateLimiter } from '../../../core/networking/rate-limiter.js';
-import { AS_VISA_SELECTORS as S } from '../selectors.js';
+import { AS_VISA_SELECTORS as S } from '../pages/make-appointment/index.js';
 import { createHash } from 'node:crypto';
 
 export async function slotHunt(args: {

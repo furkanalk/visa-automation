@@ -69,4 +69,6 @@ Bu dosya projedeki özellikleri (tamamlanan, sürüyor, planlanan) toplar.
 
 ---
 
-*Yeni özellik eklerken ilgili bölüme (Tamamlanan / Sürüyor / Planlanan) madde ekleyin.*
+### Admin Portal
+
+- Import / Export feature in settings tab. There should be Import and Export options for each tab seperatly and also one dump that will import all and export all. This functionality should be located at Settings tab. If you have a better approach, tell me.

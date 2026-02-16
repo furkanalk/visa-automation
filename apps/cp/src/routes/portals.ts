@@ -29,6 +29,16 @@ export const portalRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
+    if (!portal.enabled) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'PORTAL_DISABLED',
+          message: `Portal '${request.params.portalId}' is disabled. Enable it in Admin → Portals to process jobs.`,
+        },
+      });
+    }
+
     return {
       success: true,
       data: portal,

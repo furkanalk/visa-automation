@@ -30,6 +30,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     Querystring: {
       status?: string;
       mode?: string;
+      name?: string;
       portal_id?: string;
       profile_id?: string;
       limit?: string;
@@ -47,6 +48,9 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     if (request.query.mode) {
       query.mode = request.query.mode as AgentMode;
     }
+    if (request.query.name) {
+      query.name = request.query.name;
+    }
     if (request.query.portal_id) {
       query.portal_id = request.query.portal_id;
     }
@@ -54,16 +58,27 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       query.profile_id = request.query.profile_id;
     }
 
-    const agents = await agentRepo.findByTenantId(request.tenantId, query);
-    const counts = await agentRepo.countByTenant(request.tenantId);
+    const rawAgents = await agentRepo.findByTenantId(request.tenantId, query);
+    // Dedupe by name: keep the row with the latest heartbeat (avoids duplicate cards from old registrations)
+    const byName = new Map<string, (typeof rawAgents)[0]>();
+    const toTime = (d: Date | null | undefined) => (d ? new Date(d).getTime() : 0);
+    for (const a of rawAgents) {
+      const cur = byName.get(a.name);
+      const aTime = toTime(a.last_heartbeat_at) || new Date(a.updated_at).getTime();
+      const curTime = cur ? toTime(cur.last_heartbeat_at) || new Date(cur.updated_at).getTime() : 0;
+      if (!cur || aTime >= curTime) byName.set(a.name, a);
+    }
+    const agents = Array.from(byName.values());
+    const dedupedAsync = agents.filter((a) => a.mode === 'ASYNC').length;
+    const dedupedSync = agents.filter((a) => a.mode === 'SYNC').length;
 
     return {
       success: true,
       data: {
         items: agents,
-        total: counts.total,
-        async_count: counts.async,
-        sync_count: counts.sync,
+        total: agents.length,
+        async_count: dedupedAsync,
+        sync_count: dedupedSync,
       },
       meta: {
         request_id: request.id,
@@ -135,6 +150,18 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
+    // Enforce unique name per tenant: POST is create-only; updates go via PATCH
+    const existing = await agentRepo.findByTenantAndName(request.tenantId, name);
+    if (existing) {
+      return reply.status(409).send({
+        success: false,
+        error: {
+          code: 'AGENT_NAME_EXISTS',
+          message: `An agent with name '${name}' already exists for this tenant. Use PATCH /cp/agents/:id to update.`,
+        },
+      });
+    }
+
     const agent = await agentRepo.create({
       tenant_id: request.tenantId,
       name,
@@ -157,6 +184,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
    * PATCH /cp/agents/:id
    */
   app.patch<{ Params: AgentParams; Body: UpdateAgentRequest }>('/:id', async (request, reply) => {
+    const body = request.body ?? {};
     const agent = await agentRepo.findById(request.tenantId, request.params.id);
 
     if (!agent) {
@@ -169,15 +197,31 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
+    // Draining is only allowed when agent has an active job
+    if (body.status === 'DRAINING' && !agent.current_job_id) {
+      return reply.status(400).send({
+        success: false,
+        error: {
+          code: 'DRAINING_REQUIRES_JOB',
+          message: 'Draining can only be set when the agent has an active job',
+        },
+      });
+    }
+
     // Build update object
     const updates: Record<string, unknown> = {};
-    const body = request.body;
 
     if (body.name !== undefined) updates.name = body.name;
     if (body.mode !== undefined) updates.mode = body.mode;
     if (body.status !== undefined) updates.status = body.status;
     if (body.profile_id !== undefined) updates.profile_id = body.profile_id;
-    if (body.desired_portals !== undefined) updates.desired_portals = body.desired_portals;
+    if (body.desired_portals !== undefined) {
+      updates.desired_portals = Array.isArray(body.desired_portals)
+        ? body.desired_portals
+        : typeof body.desired_portals === 'object' && body.desired_portals !== null
+          ? Object.keys(body.desired_portals)
+          : [];
+    }
     if (body.desired_concurrency !== undefined) updates.desired_concurrency = body.desired_concurrency;
     if (body.metadata !== undefined) updates.metadata = body.metadata;
 
@@ -250,13 +294,22 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       browser_healthy,
     };
 
-    const updated = await agentRepo.updateHeartbeat(
-      request.tenantId,
-      request.params.id,
-      status,
-      current_job_id,
-      updatedMetadata
-    );
+    // When agent is OFFLINE (admin-disabled), DISABLED, or DRAINING (admin/worker-set), do not overwrite status on heartbeat
+    const preserveStatus = agent.status === 'OFFLINE' || agent.status === 'DISABLED' || agent.status === 'DRAINING';
+    const updated = preserveStatus
+      ? await agentRepo.updateHeartbeatMetadataOnly(
+          request.tenantId,
+          request.params.id,
+          current_job_id ?? null,
+          updatedMetadata
+        )
+      : await agentRepo.updateHeartbeat(
+          request.tenantId,
+          request.params.id,
+          status,
+          current_job_id,
+          updatedMetadata
+        );
 
     // Renew job lease when agent reports current_job_id (same worker holds the lock)
     const workerId = agent.metadata && typeof agent.metadata.worker_id === 'string' ? agent.metadata.worker_id : null;
@@ -280,9 +333,10 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       success: true,
       data: {
         acknowledged: true,
+        disabled: agent.status === 'DISABLED',
+        draining: agent.status === 'DRAINING',
         config_changed: configChanged,
         profile: profile?.config,
-        // Return portals agent should work on
         desired_portals: updated?.desired_portals ?? [],
         desired_concurrency: updated?.desired_concurrency ?? 1,
       },
@@ -501,4 +555,17 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       },
     };
   });
+
+  // Every 10s: set DRAINING agents with no current job to OFFLINE (cleanup)
+  setInterval(async () => {
+    try {
+      if (typeof agentRepo.setDrainingWithNoJobToOffline !== 'function') return;
+      const n = await agentRepo.setDrainingWithNoJobToOffline();
+      if (n > 0) {
+        app.log.info({ count: n }, 'Set DRAINING agents with no job to OFFLINE');
+      }
+    } catch (err) {
+      app.log.warn({ err }, 'Draining reaper error');
+    }
+  }, 10_000);
 };

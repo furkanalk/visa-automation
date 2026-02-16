@@ -8,29 +8,45 @@ import { Badge } from "@/components/ui/badge";
 import { cpApi, type Agent, type PortalConfig } from "@/lib/api";
 import { DragDropPortal } from "@/components/ui/drag-drop-portal";
 import { PortalConfigModal } from "@/components/portals/portal-config-modal";
-import { Globe, Settings, Power, PowerOff, ArrowLeftRight, Loader2 } from "lucide-react";
+import { Globe, Settings, Power, PowerOff, ArrowLeftRight, Loader2, ChevronDown, ChevronRight, Link2, Users } from "lucide-react";
 
 export default function PortalsPage() {
   const queryClient = useQueryClient();
   const [showDragDrop, setShowDragDrop] = useState(false);
   const [configModalOpen, setConfigModalOpen] = useState(false);
   const [selectedPortal, setSelectedPortal] = useState<PortalConfig | null>(null);
+  const [assignError, setAssignError] = useState<string | null>(null);
+  const [expandedPortalId, setExpandedPortalId] = useState<string | null>(null);
 
-  const { data: portals, isLoading } = useQuery({
+  const { data: portalsData, isLoading: portalsLoading, isError: portalsError } = useQuery({
     queryKey: ["portals"],
     queryFn: () => cpApi.getPortals(),
   });
 
-  const { data: agents } = useQuery({
+  const { data: agentsData } = useQuery({
     queryKey: ["agents"],
     queryFn: () => cpApi.getAgents(),
   });
+
+  const { data: fullPortal, isLoading: fullPortalLoading } = useQuery({
+    queryKey: ["portal", selectedPortal?.id],
+    queryFn: () => cpApi.getPortal(selectedPortal!.id),
+    enabled: configModalOpen && !!selectedPortal?.id,
+  });
+
+  const portals = portalsData?.items ?? [];
+  const agents = agentsData?.items ?? [];
+  const portalForModal = fullPortal ?? selectedPortal;
 
   const updateAgent = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Partial<Agent> }) =>
       cpApi.updateAgent(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["agents"] });
+      setAssignError(null);
+    },
+    onError: (err) => {
+      setAssignError(err instanceof Error ? err.message : "Failed to update assignment");
     },
   });
 
@@ -102,53 +118,109 @@ export default function PortalsPage() {
       </div>
 
       {/* Drag & Drop Assignment Panel */}
-      {showDragDrop && agents?.items && portals?.items && (
+      {showDragDrop && agents.length > 0 && portals.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">Agent-Portal Assignment</CardTitle>
             <CardDescription>Drag agents to portals to assign them</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
+            {assignError && (
+              <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 text-sm">
+                {assignError}
+              </div>
+            )}
             <DragDropPortal
-              agents={agents.items}
-              portals={portals.items}
+              agents={agents}
+              portals={portals}
               onAssign={handleAssignPortals}
             />
           </CardContent>
         </Card>
       )}
 
-      {isLoading ? (
+      {portalsLoading ? (
         <div className="text-center py-12 text-gray-500 dark:text-gray-400">Loading portals...</div>
+      ) : portalsError ? (
+        <div className="text-center py-12 text-red-500 dark:text-red-400">Failed to load portals</div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {portals?.items?.map((portal) => {
-            const assignedAgentCount = agents?.items?.filter((a) =>
-              a.desired_portals?.includes(portal.portal_id)
-            ).length ?? 0;
+          {portals.map((portal) => {
+            const assignedAgents = agents.filter((a) =>
+              Array.isArray(a.desired_portals) && a.desired_portals.includes(portal.portal_id)
+            );
+            const assignedAgentCount = assignedAgents.length;
+            const isDetailsOpen = expandedPortalId === portal.id;
+            const config = (portal.config ?? {}) as Record<string, unknown>;
+            const rateLimit = (config.rateLimit ?? {}) as Record<string, unknown>;
+            const hitl = (config.hitl ?? {}) as Record<string, unknown>;
+            const rateLimitEnabled = Boolean(rateLimit.enabled);
+            const otpMode = typeof hitl.otpMode === "string" ? hitl.otpMode : "";
+            const captchaMode = typeof hitl.captchaMode === "string" ? hitl.captchaMode : "";
 
             return (
-              <Card key={portal.id}>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Globe className="h-5 w-5 text-gray-400 dark:text-gray-500" />
-                      <CardTitle className="text-base text-gray-900 dark:text-white">{portal.name}</CardTitle>
+              <Card key={portal.id} className="border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 overflow-hidden">
+                <CardHeader className="pb-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/80 dark:bg-slate-800/80 shadow-sm">
+                        <Globe className="h-5 w-5 text-gray-600 dark:text-gray-400" />
+                      </div>
+                      <div className="min-w-0">
+                        <CardTitle className="text-base text-gray-900 dark:text-white truncate">{portal.name}</CardTitle>
+                        <CardDescription className="font-mono text-xs mt-0.5 text-gray-500 dark:text-gray-400">
+                          {portal.portal_id}
+                        </CardDescription>
+                      </div>
                     </div>
-                    <Badge variant={portal.enabled ? "success" : "secondary"}>
+                    <Badge variant={portal.enabled ? "success" : "secondary"} className="shrink-0">
                       {portal.enabled ? "Enabled" : "Disabled"}
                     </Badge>
                   </div>
-                  <CardDescription className="font-mono text-xs">
-                    {portal.portal_id}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3 text-sm">
-                    <div className="flex justify-between text-gray-500 dark:text-gray-400">
-                      <span>Assigned Agents</span>
-                      <span className="font-medium text-gray-900 dark:text-white">{assignedAgentCount}</span>
+                  {portal.base_url && (
+                    <div className="flex items-center gap-1.5 mt-2 text-xs text-gray-600 dark:text-gray-400">
+                      <Link2 className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                      <span className="truncate font-mono" title={portal.base_url}>{portal.base_url}</span>
                     </div>
+                  )}
+                  {portal.config && typeof (portal.config as Record<string, unknown>)?.selectorsVersion === 'string' && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Selectors: {(portal.config as Record<string, unknown>).selectorsVersion as string}
+                    </p>
+                  )}
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <div className="space-y-3 text-sm">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedPortalId(isDetailsOpen ? null : portal.id)}
+                      className="flex w-full items-center justify-between rounded-lg py-2 px-2 -mx-2 text-left text-gray-600 dark:text-gray-400 hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                    >
+                      <span className="flex items-center gap-2">
+                        <Users className="h-4 w-4 text-gray-400" />
+                        Assigned Agents
+                      </span>
+                      <span className="flex items-center gap-1 font-semibold text-gray-900 dark:text-white">
+                        {assignedAgentCount}
+                        {assignedAgentCount > 0 ? (
+                          isDetailsOpen ? (
+                            <ChevronDown className="h-4 w-4" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4" />
+                          )
+                        ) : null}
+                      </span>
+                    </button>
+                    {isDetailsOpen && assignedAgentCount > 0 && (
+                      <ul className="list-none space-y-1 pl-6 text-gray-700 dark:text-gray-300">
+                        {assignedAgents.map((a) => (
+                          <li key={a.id} className="relative before:content-['•'] before:absolute before:-left-3 before:text-gray-400">{a.name}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {isDetailsOpen && assignedAgentCount === 0 && (
+                      <p className="text-gray-500 dark:text-gray-400 pl-1">No agents assigned</p>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 mt-4 pt-4 border-t border-gray-100 dark:border-slate-700">
                     <Button
@@ -189,7 +261,7 @@ export default function PortalsPage() {
         </div>
       )}
 
-      {!isLoading && portals?.items?.length === 0 && (
+      {!portalsLoading && portals.length === 0 && (
         <div className="text-center py-12">
           <Globe className="h-12 w-12 text-gray-300 dark:text-gray-600 mx-auto mb-4" />
           <p className="text-gray-500 dark:text-gray-400">No portals configured</p>
@@ -202,7 +274,8 @@ export default function PortalsPage() {
           setConfigModalOpen(false);
           setSelectedPortal(null);
         }}
-        portal={selectedPortal}
+        portal={portalForModal}
+        portalLoading={fullPortalLoading}
         onSave={handleSavePortalConfig}
         isSubmitting={updatePortal.isPending}
       />

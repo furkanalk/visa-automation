@@ -4,6 +4,7 @@ import { db, JobRepository, JobEventRepository } from '@visa-automation/db';
 import { runFSM } from './core/fsm/runner.js';
 import { createHitlTask } from './core/hitl/handler.js';
 import { JOB_STATES } from '@visa-automation/shared';
+import type { AgentProfileConfig } from '@visa-automation/shared';
 import type { PortalId, DeepPartial } from './config/types.js';
 import type { PortalConfig } from './config/types.js';
 import { resolvePortalConfig } from './config/loader.js';
@@ -76,7 +77,8 @@ import { metrics } from './core/observability/metrics.js';
 export async function processJob(
   payload: JobQueuePayload,
   workerId: string,
-  logger: Logger
+  logger: Logger,
+  profileConfig?: AgentProfileConfig | null
 ): Promise<void> {
   const jobRepo = new JobRepository(db.instance);
   const eventRepo = new JobEventRepository(db.instance);
@@ -131,9 +133,12 @@ export async function processJob(
       );
     }
     const jobOverride = (payload.config as Record<string, unknown> | undefined)?.portal as DeepPartial<PortalConfig> | undefined;
+    const configPriority = profileConfig?.config_priority ?? 'portal_over_profile';
     const portalConfig = resolvePortalConfig({
       portalId,
       primaryFromCP,
+      profileConfig: profileConfig ?? undefined,
+      configPriority,
       jobOverride,
     });
     const portal = getPortal(portalConfig.portalId);

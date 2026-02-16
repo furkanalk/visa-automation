@@ -1,21 +1,21 @@
 /**
- * BullMQ Queue Names
+ * BullMQ Queue Names (no colons - BullMQ disallows ":" in queue names)
  */
 export const QUEUE_NAMES = {
   /** Main job processing queue */
-  JOB_PROCESSING: 'visa:jobs',
-  
+  JOB_PROCESSING: 'visa-jobs',
+
   /** HITL task notifications */
-  HITL_NOTIFICATIONS: 'visa:hitl:notifications',
-  
+  HITL_NOTIFICATIONS: 'visa-hitl-notifications',
+
   /** General notifications (email, webhook, SMS) */
-  NOTIFICATIONS: 'visa:notifications',
-  
+  NOTIFICATIONS: 'visa-notifications',
+
   /** Evidence pack generation */
-  EVIDENCE_PACKS: 'visa:evidence',
-  
+  EVIDENCE_PACKS: 'visa-evidence',
+
   /** Scheduled/delayed jobs */
-  SCHEDULED: 'visa:scheduled',
+  SCHEDULED: 'visa-scheduled',
 } as const;
 
 export type QueueName = typeof QUEUE_NAMES[keyof typeof QUEUE_NAMES];

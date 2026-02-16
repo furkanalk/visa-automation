@@ -1,0 +1,30 @@
+# Test-only overrides. Use: docker compose -f compose.yml -f test-override.yml up -d
+# env_file: .env.test (bu klasördeki .env.test)
+services:
+  postgres:
+    env_file: .env.test
+  redis:
+    env_file: .env.test
+  cp:
+    env_file: .env.test
+    working_dir: /app
+    volumes:
+      - ../../..:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+  dp:
+    env_file: .env.test
+    working_dir: /app
+    volumes:
+      - ../../..:/app
+  admin-portal:
+    env_file: .env.test
+  staff-portal:
+    env_file: .env.test
+  mock-portal:
+    env_file: .env.test

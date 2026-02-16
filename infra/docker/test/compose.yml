@@ -1,4 +1,6 @@
-# Test (CI E2E / local) – run from infra/docker/test:  cp .env.example .env  &&  docker compose up -d
+# Test (CI E2E / local) – run from infra/docker/test:
+#   cp .env.test.example .env.test
+#   ./up.sh   # pull+run, no build: docker compose --env-file .env.test -f compose.yml -f test-override.yml up -d --no-build
 # Order: Postgres → bootstrap (migrate) → CP → DP.
 name: visa-automation-test
 
@@ -15,26 +17,3 @@ include:
 networks:
   visa-network:
     name: visa-network-test
-
-services:
-  postgres:
-    env_file: .env
-  redis:
-    env_file: .env
-  cp:
-    env_file: .env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      bootstrap:
-        condition: service_completed_successfully
-  dp:
-    env_file: .env
-  admin-portal:
-    env_file: .env
-  staff-portal:
-    env_file: .env
-  mock-portal:
-    env_file: .env

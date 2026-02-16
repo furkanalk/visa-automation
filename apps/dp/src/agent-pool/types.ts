@@ -63,6 +63,7 @@ export interface AgentRegistrationResponse {
  */
 export interface HeartbeatResponse {
   acknowledged: boolean;
+  disabled?: boolean;
   config_changed: boolean;
   profile?: AgentProfileConfig;
   desired_portals: string[];

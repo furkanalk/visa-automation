@@ -143,9 +143,10 @@ export const notifyRoutes: FastifyPluginAsync = async (app) => {
     }
 
     try {
-      // Send test message via Telegram API
-      const message = request.body.message ?? '🔔 Test notification from Visa Automation Control Plane';
-      
+      // Send test message via Telegram API (include timestamp so recipient can verify it's the test)
+      const defaultMessage = `🔔 <b>Visa Automation – Test</b>\n\nThis is a test from the Admin Portal.\nSent at: ${new Date().toISOString()}`;
+      const message = request.body.message ?? defaultMessage;
+
       const response = await fetch(
         `https://api.telegram.org/bot${settings.telegram_bot_token}/sendMessage`,
         {
@@ -197,68 +198,72 @@ export const notifyRoutes: FastifyPluginAsync = async (app) => {
   /**
    * Test Email notification
    * POST /cp/notify/test/email
+   * Body may include smtp_* overrides (current form values) so test works before Save.
    */
   app.post<{ Body: TestEmailRequest }>('/test/email', async (request, reply) => {
+    const body = request.body ?? {};
     const settings = await notifyRepo.findByTenantId(request.tenantId);
 
-    if (!settings?.email_enabled) {
+    const useOverrides = Boolean(body.smtp_host && body.smtp_from);
+    const host = useOverrides ? body.smtp_host! : settings?.smtp_host;
+    const from = useOverrides ? body.smtp_from! : settings?.smtp_from;
+    const port = useOverrides && body.smtp_port != null ? body.smtp_port : (settings?.smtp_port ?? 587);
+    const user = useOverrides ? body.smtp_user : settings?.smtp_user;
+    const pass = useOverrides ? body.smtp_pass : settings?.smtp_pass;
+    const secure = useOverrides && body.smtp_secure !== undefined ? body.smtp_secure : (settings?.smtp_secure ?? false);
+
+    if (!useOverrides && !settings?.email_enabled) {
       return reply.status(400).send({
         success: false,
         error: {
           code: 'EMAIL_DISABLED',
-          message: 'Email notifications are disabled for this tenant',
+          message: 'Email notifications are disabled. Enable Email (SMTP) and fill SMTP Host and From, then Save or Test.',
         },
       });
     }
 
-    if (!settings.smtp_host || !settings.smtp_from) {
+    if (!host || !from) {
       return reply.status(400).send({
         success: false,
         error: {
           code: 'EMAIL_NOT_CONFIGURED',
-          message: 'SMTP settings are not fully configured',
+          message: 'SMTP Host and From are required. Fill them in the form and click Save, or fill them and click Test to try without saving.',
         },
       });
     }
 
-    const to = request.body.to ?? settings.fallback_email ?? settings.email_override;
+    const to = body.to ?? settings?.fallback_email ?? settings?.email_override ?? (useOverrides ? from : null);
     if (!to) {
       return reply.status(400).send({
         success: false,
         error: {
           code: 'NO_RECIPIENT',
-          message: 'No recipient email provided and no default/override email configured',
+          message: 'No recipient email. Configure Fallback email and Save, or send "to" in the test request.',
         },
       });
     }
 
     try {
-      // For MVP, we'll use nodemailer if available
-      // This is a simplified implementation
       const nodemailer = await import('nodemailer');
-      
       const transporter = nodemailer.createTransport({
-        host: settings.smtp_host,
-        port: settings.smtp_port,
-        secure: settings.smtp_secure,
-        auth: settings.smtp_user && settings.smtp_pass ? {
-          user: settings.smtp_user,
-          pass: settings.smtp_pass,
-        } : undefined,
+        host,
+        port,
+        secure,
+        auth: user && pass ? { user, pass } : undefined,
       });
 
-      const subject = request.body.subject ?? 'Test Email from Visa Automation';
-      const body = request.body.body ?? 'This is a test email from the Control Plane.';
+      const subject = body.subject ?? 'Test Email from Visa Automation';
+      const textBody = body.body ?? 'This is a test email from the Control Plane.';
 
       const info = await transporter.sendMail({
-        from: settings.smtp_from,
+        from,
         to,
         subject,
-        text: body,
-        html: `<p>${body}</p>`,
+        text: textBody,
+        html: `<p>${textBody}</p>`,
       });
 
-      return {
+      return reply.send({
         success: true,
         data: {
           channel: 'email',
@@ -268,15 +273,24 @@ export const notifyRoutes: FastifyPluginAsync = async (app) => {
             message_id: info.messageId,
           },
         },
-      };
+      });
     } catch (err) {
       request.log.error({ err }, 'Failed to send test email');
+      if (reply.sent) return;
+      const e = err as Error & { code?: string; response?: string };
+      let message = e.message;
+      if (e.code === 'EAUTH') {
+        if (e.response?.includes('SmtpClientAuthentication is disabled')) {
+          message =
+            'SMTP authentication is disabled for this mailbox. For Microsoft 365 work accounts, enable "Authenticated SMTP" in the admin center (https://aka.ms/smtp_auth_disabled).';
+        } else {
+          message =
+            'SMTP login failed. Personal Outlook: use Host smtp-mail.outlook.com, Port 587, STARTTLS (secure off). Work/Office 365: use smtp.office365.com and enable SMTP AUTH for the mailbox. For automation, Microsoft Graph + OAuth2 is more reliable than SMTP.';
+        }
+      }
       return reply.status(500).send({
         success: false,
-        error: {
-          code: 'EMAIL_ERROR',
-          message: (err as Error).message,
-        },
+        error: { code: 'EMAIL_ERROR', message },
       });
     }
   });
@@ -328,7 +342,7 @@ export const notifyRoutes: FastifyPluginAsync = async (app) => {
         body: JSON.stringify(payload),
       });
 
-      return {
+      return reply.send({
         success: true,
         data: {
           channel: 'webhook',
@@ -339,9 +353,10 @@ export const notifyRoutes: FastifyPluginAsync = async (app) => {
             ok: response.ok,
           },
         },
-      };
+      });
     } catch (err) {
       request.log.error({ err }, 'Failed to send test webhook');
+      if (reply.sent) return;
       return reply.status(500).send({
         success: false,
         error: {

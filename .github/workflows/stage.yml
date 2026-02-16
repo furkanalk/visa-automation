@@ -1,3 +1,5 @@
+# Stage: build and push Docker images only. No .env used here.
+# Deploy (deploy.yml) runs on the server and uses prod/.env.prod (see deploy step summary).
 name: Stage
 
 on:

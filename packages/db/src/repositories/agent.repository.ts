@@ -19,6 +19,19 @@ export class AgentRepository {
   }
 
   /**
+   * Find agent by tenant and name (for upsert on register)
+   */
+  async findByTenantAndName(tenantId: string, name: string): Promise<Agent | undefined> {
+    return this.db
+      .selectFrom('agents')
+      .selectAll()
+      .where('tenant_id', '=', tenantId)
+      .where('name', '=', name)
+      .orderBy('updated_at', 'desc')
+      .executeTakeFirst();
+  }
+
+  /**
    * Find agents by tenant with optional filters
    */
   async findByTenantId(tenantId: string, query: ListAgentsQuery = {}): Promise<Agent[]> {
@@ -34,6 +47,11 @@ export class AgentRepository {
 
     if (query.mode) {
       qb = qb.where('mode', '=', query.mode);
+    }
+
+    const name = (query as ListAgentsQuery & { name?: string }).name;
+    if (name) {
+      qb = qb.where('name', '=', name);
     }
 
     if (query.profile_id) {
@@ -70,25 +88,60 @@ export class AgentRepository {
 
   /**
    * Create a new agent
+   * Serialize JSONB columns so pg driver sends valid JSON to Postgres.
    */
   async create(agent: NewAgent): Promise<Agent> {
+    const values: Record<string, unknown> = { ...agent };
+    if (Array.isArray(values.desired_portals)) {
+      const arr = values.desired_portals;
+      values.desired_portals =
+        arr.length === 0
+          ? sql`'[]'::jsonb`
+          : sql`jsonb_build_array(${sql.join(arr.map((item) => sql`${item}::text`), sql`, `)})`;
+    }
+    if (values.metadata !== undefined && typeof values.metadata === 'object' && values.metadata !== null && !Array.isArray(values.metadata)) {
+      values.metadata = sql`${JSON.stringify(values.metadata)}::jsonb`;
+    }
     return this.db
       .insertInto('agents')
-      .values(agent)
+      .values(values as NewAgent)
       .returningAll()
       .executeTakeFirstOrThrow();
   }
 
   /**
    * Update agent with tenant isolation
+   * Serialize JSONB columns (desired_portals, metadata) so pg driver sends valid JSON to Postgres.
    */
   async update(tenantId: string, id: string, updates: AgentUpdate): Promise<Agent | undefined> {
+    const setObj: Record<string, unknown> = {
+      ...updates,
+      updated_at: new Date(),
+    };
+    if (setObj.desired_portals !== undefined) {
+      const arr = Array.isArray(setObj.desired_portals)
+        ? setObj.desired_portals
+        : typeof setObj.desired_portals === 'string'
+          ? (() => {
+              try {
+                const p = JSON.parse(setObj.desired_portals as string);
+                return Array.isArray(p) ? p : [];
+              } catch {
+                return [];
+              }
+            })()
+          : [];
+      setObj.desired_portals =
+        arr.length === 0
+          ? sql`'[]'::jsonb`
+          : sql`jsonb_build_array(${sql.join(arr.map((item) => sql`${item}::text`), sql`, `)})`;
+    }
+    if (setObj.metadata !== undefined && typeof setObj.metadata === 'object' && setObj.metadata !== null && !Array.isArray(setObj.metadata)) {
+      setObj.metadata = sql`${JSON.stringify(setObj.metadata)}::jsonb`;
+    }
     return this.db
       .updateTable('agents')
-      .set({
-        ...updates,
-        updated_at: new Date(),
-      })
+      .set(setObj as AgentUpdate)
       .where('id', '=', id)
       .where('tenant_id', '=', tenantId)
       .returningAll()
@@ -137,6 +190,32 @@ export class AgentRepository {
         ...updates,
         updated_at: new Date(),
       })
+      .where('id', '=', id)
+      .where('tenant_id', '=', tenantId)
+      .returningAll()
+      .executeTakeFirst();
+  }
+
+  /**
+   * Update heartbeat metadata only (no status). Used when agent is DISABLED so admin-set status is preserved.
+   */
+  async updateHeartbeatMetadataOnly(
+    tenantId: string,
+    id: string,
+    currentJobId?: string | null,
+    metadata?: Record<string, unknown>
+  ): Promise<Agent | undefined> {
+    const updates: AgentUpdate = {
+      last_heartbeat_at: new Date(),
+      current_job_id: currentJobId ?? null,
+      updated_at: new Date(),
+    };
+    if (metadata) {
+      updates.metadata = metadata;
+    }
+    return this.db
+      .updateTable('agents')
+      .set(updates)
       .where('id', '=', id)
       .where('tenant_id', '=', tenantId)
       .returningAll()
@@ -281,7 +360,7 @@ export class AgentRepository {
    */
   async findStaleAgents(tenantId: string, staleSinceMs: number): Promise<Agent[]> {
     const staleThreshold = new Date(Date.now() - staleSinceMs);
-    
+
     return this.db
       .selectFrom('agents')
       .selectAll()
@@ -289,5 +368,22 @@ export class AgentRepository {
       .where('status', '=', 'ONLINE')
       .where('last_heartbeat_at', '<', staleThreshold)
       .execute();
+  }
+
+  /**
+   * Set agents that are DRAINING with no current job to OFFLINE (cleanup stuck draining).
+   * Returns the number of rows updated.
+   */
+  async setDrainingWithNoJobToOffline(): Promise<number> {
+    const result = await this.db
+      .updateTable('agents')
+      .set({
+        status: 'OFFLINE',
+        updated_at: new Date(),
+      })
+      .where('status', '=', 'DRAINING')
+      .where('current_job_id', 'is', null)
+      .executeTakeFirst();
+    return Number(result?.numUpdatedRows ?? 0);
   }
 }

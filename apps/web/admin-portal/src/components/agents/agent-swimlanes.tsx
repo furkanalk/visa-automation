@@ -24,22 +24,22 @@ interface AgentSwimlanesProps {
   agents: Agent[];
   portals: PortalConfig[];
   jobStatuses?: Record<string, string>;
+  getProfileName?: (profileId: string | null) => string | null;
   onEditAgent: (agent: Agent) => void;
   onToggleStatus: (agent: Agent) => void;
   onDeleteAgent: (id: string) => void;
   onMoveAgent: (agentId: string, newPortals: string[]) => void;
 }
 
-// Status dot component
+// Status dot: ONLINE = green, DRAINING = yellow, OFFLINE/DISABLED = gray
 function StatusDot({ status }: { status: string }) {
   return (
     <span
       className={cn(
         "inline-block h-2 w-2 rounded-full",
         status === "ONLINE" && "bg-green-500",
-        status === "OFFLINE" && "bg-gray-400",
-        status === "DISABLED" && "bg-red-400",
-        status === "DRAINING" && "bg-yellow-500"
+        status === "DRAINING" && "bg-yellow-500",
+        (status === "OFFLINE" || status === "DISABLED") && "bg-gray-400"
       )}
     />
   );
@@ -49,6 +49,7 @@ function StatusDot({ status }: { status: string }) {
 function AgentCard({
   agent,
   jobStatus,
+  profileName,
   onEdit,
   onToggle,
   onDelete,
@@ -57,6 +58,7 @@ function AgentCard({
 }: {
   agent: Agent;
   jobStatus?: string;
+  profileName?: string | null;
   onEdit: () => void;
   onToggle: () => void;
   onDelete: () => void;
@@ -80,13 +82,14 @@ function AgentCard({
                 {agent.name}
               </span>
             </div>
-            <div className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+            <div className="flex items-center gap-1 flex-wrap text-xs text-gray-500 dark:text-gray-400">
               <span className={cn(
                 "px-1.5 py-0.5 rounded text-xs",
                 agent.mode === "ASYNC" ? "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
               )}>
                 {agent.mode}
               </span>
+              <span className="text-gray-400 dark:text-gray-500">• {profileName ?? "Default"}</span>
               {agent.current_job_id && (
                 <span className="text-green-600 dark:text-green-400">• Working</span>
               )}
@@ -146,7 +149,8 @@ function AgentCard({
                   {showMoveMenu && (
                     <div className="absolute left-full top-0 ml-1 w-48 bg-white dark:bg-slate-800 rounded-lg shadow-lg border border-gray-200 dark:border-slate-700 py-1 z-30 max-h-64 overflow-y-auto">
                       {allPortals.map((portal) => {
-                        const isCurrentPortal = agent.desired_portals.includes(portal.id);
+                        const desired = Array.isArray(agent.desired_portals) ? agent.desired_portals : [];
+                        const isCurrentPortal = desired.includes(portal.id);
                         return (
                           <button
                             key={portal.id}
@@ -220,15 +224,17 @@ function PortalSwimlane({
   portal,
   agents,
   jobStatuses,
+  getProfileName,
   onEditAgent,
   onToggleStatus,
   onDeleteAgent,
   onMoveAgent,
   allPortals,
 }: {
-  portal: PortalConfig | null; // null means unassigned
+  portal: PortalConfig | null;
   agents: Agent[];
   jobStatuses?: Record<string, string>;
+  getProfileName?: (profileId: string | null) => string | null;
   onEditAgent: (agent: Agent) => void;
   onToggleStatus: (agent: Agent) => void;
   onDeleteAgent: (id: string) => void;
@@ -272,6 +278,7 @@ function PortalSwimlane({
               key={agent.id}
               agent={agent}
               jobStatus={agent.current_job_id ? jobStatuses?.[agent.current_job_id] : undefined}
+              profileName={getProfileName?.(agent.profile_id ?? null) ?? "Default"}
               onEdit={() => onEditAgent(agent)}
               onToggle={() => onToggleStatus(agent)}
               onDelete={() => onDeleteAgent(agent.id)}
@@ -289,26 +296,26 @@ export function AgentSwimlanes({
   agents,
   portals,
   jobStatuses,
+  getProfileName,
   onEditAgent,
   onToggleStatus,
   onDeleteAgent,
   onMoveAgent,
 }: AgentSwimlanesProps) {
-  // Group agents by primary portal
+  // Group agents by primary portal (desired_portals contains portal_id strings, e.g. "as-visa")
   const agentsByPortal = new Map<string | null, Agent[]>();
   
-  // Initialize with all portals
   for (const portal of portals) {
-    agentsByPortal.set(portal.id, []);
+    agentsByPortal.set(portal.portal_id, []);
   }
   agentsByPortal.set(null, []); // Unassigned
 
-  // Assign agents to their primary portal (first in desired_portals)
   for (const agent of agents) {
-    const primaryPortal = agent.desired_portals[0] || null;
-    const existing = agentsByPortal.get(primaryPortal) || [];
+    const desired = Array.isArray(agent.desired_portals) ? agent.desired_portals : [];
+    const primaryPortalId = desired[0] || null;
+    const existing = agentsByPortal.get(primaryPortalId) || [];
     existing.push(agent);
-    agentsByPortal.set(primaryPortal, existing);
+    agentsByPortal.set(primaryPortalId, existing);
   }
 
   return (
@@ -318,8 +325,9 @@ export function AgentSwimlanes({
         <PortalSwimlane
           key={portal.id}
           portal={portal}
-          agents={agentsByPortal.get(portal.id) || []}
+          agents={agentsByPortal.get(portal.portal_id) || []}
           jobStatuses={jobStatuses}
+          getProfileName={getProfileName}
           onEditAgent={onEditAgent}
           onToggleStatus={onToggleStatus}
           onDeleteAgent={onDeleteAgent}
@@ -328,12 +336,12 @@ export function AgentSwimlanes({
         />
       ))}
 
-      {/* Unassigned swimlane */}
       {(agentsByPortal.get(null)?.length ?? 0) > 0 && (
         <PortalSwimlane
           portal={null}
           agents={agentsByPortal.get(null) || []}
           jobStatuses={jobStatuses}
+          getProfileName={getProfileName}
           onEditAgent={onEditAgent}
           onToggleStatus={onToggleStatus}
           onDeleteAgent={onDeleteAgent}

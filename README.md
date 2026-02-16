@@ -17,7 +17,7 @@ packages/
 ├── db/              # Postgres client, schema, migrations, repos
 └── shared/          # Types, FSM, queue payloads, constants
 
-infra/docker/        # dev | test | prod – each has compose.yml + .env.example
+infra/docker/        # dev | test | prod – her klasörde compose + override + .env.dev / .env.prod / .env.test (+ .example)
 scripts/             # db/migrate.sh, db/seed.sh, certs/gen-dev-mtls.sh
 docs/                # REFERENCE, ENDPOINTS
 ```
@@ -64,12 +64,13 @@ Services: Postgres 5432, Redis 6379, **CP 3001**, Admin 3002, Staff 3003, Mock 3
 **Option B – Local (CP + DP; Postgres/Redis in Docker)**
 
 ```bash
-# 1) Start DB and Redis
-cd infra/docker/dev && cp .env.example .env && docker compose up -d postgres redis
+# 1) Start DB and Redis (env: dev/.env.dev)
+cd infra/docker/dev && cp .env.dev.example .env.dev
+docker compose -f compose.yml -f dev-override.yml up -d postgres redis
 cd ../..
 
 # 2) From repo root: env for local runs (migrate + dev:cp/dev:dp read this)
-cp infra/docker/dev/.env.example .env
+cp infra/docker/dev/.env.dev.example .env
 # Edit .env: NOTIFY_ACTION_TOKEN, DB_HOST=localhost, REDIS_HOST=localhost, TELEGRAM_* as needed
 
 npm run db:migrate
@@ -115,14 +116,14 @@ E2E tests live in `tests/e2e/`. From repo root: `npm run e2e:claim` runs the job
 
 ## Configuration
 
-Env template: **infra/docker/dev/.env.example** (dev) or **infra/docker/prod/.env.example** (prod). For local runs copy to `.env` at repo root; for Docker copy to `infra/docker/dev/.env` (or prod). Key variables:
+Env: **infra/docker/dev/.env.example**, **prod/.env.example**, **test/.env.example**. Her ortamda `cp .env.example .env` yap; repo root’ta lokal çalıştırırken `.env` kopyala. Key variables:
 
 - **Required for notifications:** `NOTIFY_ACTION_TOKEN` (e.g. `openssl rand -base64 32`), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_IDS_OPS`
 - **DB:** `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`
 - **CP/DP:** `CP_API_URL`, `PUBLIC_API_URL` (same host as CP); DP: `USE_MOCK_PORTAL=true` to target mock portal
 - **Frontends:** `NEXT_PUBLIC_CP_API_URL`, `NEXT_PUBLIC_API_URL`
 
-Full list and details: **docs/REFERENCE.md** and `infra/docker/dev/.env.example`.
+Full list and details: **docs/REFERENCE.md** and `infra/docker/dev/.env.dev.example`.
 
 ## License
 

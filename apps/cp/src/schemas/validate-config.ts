@@ -80,12 +80,20 @@ export function validatePortalSelectors(selectors: unknown): void {
   }
 }
 
+const CONFIG_PRIORITY_VALUES = ['profile_over_portal', 'portal_over_profile'] as const;
+
 /** Validate profile config JSON (partial allowed; same shape as portal for merged keys). */
 export function validateProfileConfig(config: unknown): void {
   if (!config || !isPlainObject(config)) {
     throw new Error('profile config is required and must be an object');
   }
   const c = config as Record<string, unknown>;
+
+  if (c.config_priority !== undefined) {
+    if (typeof c.config_priority !== 'string' || !CONFIG_PRIORITY_VALUES.includes(c.config_priority as any)) {
+      throw new Error('profile config.config_priority must be "profile_over_portal" or "portal_over_profile"');
+    }
+  }
 
   if (c.timeouts !== undefined) {
     if (!isPlainObject(c.timeouts)) throw new Error('profile config.timeouts must be an object');

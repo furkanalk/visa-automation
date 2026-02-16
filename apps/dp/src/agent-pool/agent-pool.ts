@@ -51,14 +51,15 @@ export class AgentPool extends EventEmitter {
 
   /**
    * Hydrate local agent map from CP (restart recovery)
-   * Only hydrates agents that belong to this worker
+   * Only hydrates agents that belong to this worker (metadata.worker_id).
    */
   private async hydrateFromCP(): Promise<void> {
     try {
       const existingAgents = await this.cpClient.listAgents({ status: ['ONLINE', 'DRAINING'] });
-      const workerAgents = existingAgents.filter(a => 
-        a.name.startsWith(this.config.workerId)
-      );
+      const workerAgents = existingAgents.filter(a => {
+        const meta = a.metadata as { worker_id?: string } | undefined;
+        return meta?.worker_id === this.config.workerId;
+      });
 
       this.logger.info({ count: workerAgents.length }, 'Hydrating existing agents from CP');
 
@@ -105,13 +106,19 @@ export class AgentPool extends EventEmitter {
     }
     this.logger.info({ name: params.name, mode: params.mode }, 'Creating agent');
 
-    const registration = await this.cpClient.registerAgent({
-      name: params.name,
-      mode: params.mode,
-      desiredPortals: params.portals,
-      desiredConcurrency: params.concurrency,
-      metadata: { worker_id: this.config.workerId, worker_pid: process.pid, started_at: new Date().toISOString() },
-    });
+    // Reuse existing agent by name (e.g. after DP restart); updates go via PATCH, POST is create-only
+    let registration = await this.cpClient.getAgentByName(params.name);
+    if (registration) {
+      this.logger.info({ agentId: registration.id, name: params.name }, 'Reusing existing agent');
+    } else {
+      registration = await this.cpClient.registerAgent({
+        name: params.name,
+        mode: params.mode,
+        desiredPortals: params.portals,
+        desiredConcurrency: params.concurrency,
+        metadata: { worker_id: this.config.workerId, worker_pid: process.pid, started_at: new Date().toISOString() },
+      });
+    }
 
     let profile: AgentProfileConfig | null = null;
     if (registration.profile_id) {
@@ -128,12 +135,12 @@ export class AgentPool extends EventEmitter {
       profileId: registration.profile_id,
       assignedPortals: registration.desired_portals,
       desiredConcurrency: registration.desired_concurrency,
-      currentJobId: null,
+      currentJobId: registration.current_job_id ?? null,
       lastHeartbeatAt: null,
-      metadata: registration.metadata ?? { 
-        worker_id: this.config.workerId, 
-        worker_pid: process.pid, 
-        started_at: new Date().toISOString() 
+      metadata: registration.metadata ?? {
+        worker_id: this.config.workerId,
+        worker_pid: process.pid,
+        started_at: new Date().toISOString(),
       },
     };
 
@@ -192,7 +199,17 @@ export class AgentPool extends EventEmitter {
     agent.status = wasDraining ? 'STOPPED' : 'IDLE';
     this.emit('agent:job:completed', agent, jobId);
     this.logger.info({ agentId, jobId }, 'Job completed');
-    if (wasDraining) this.emit('agent:stopped', agent);
+    if (wasDraining) {
+      this.emit('agent:stopped', agent);
+      this.logger.info({ agentId }, 'Draining cooldown 5s, then setting OFFLINE in CP');
+      await new Promise((r) => setTimeout(r, 5000));
+      try {
+        await this.cpClient.updateAgentStatus(agentId, 'OFFLINE');
+        this.logger.info({ agentId }, 'Draining complete, agent set to OFFLINE in CP');
+      } catch (err) {
+        this.logger.warn({ agentId, err }, 'Failed to set agent OFFLINE in CP after drain');
+      }
+    }
   }
 
   async failJob(agentId: string, jobId: string, error: Error): Promise<void> {
@@ -206,7 +223,17 @@ export class AgentPool extends EventEmitter {
     agent.status = wasDraining ? 'STOPPED' : 'IDLE';
     this.emit('agent:job:failed', agent, jobId, error);
     this.logger.error({ agentId, jobId, err: error }, 'Job failed');
-    if (wasDraining) this.emit('agent:stopped', agent);
+    if (wasDraining) {
+      this.emit('agent:stopped', agent);
+      this.logger.info({ agentId }, 'Draining cooldown 5s (job failed), then setting OFFLINE in CP');
+      await new Promise((r) => setTimeout(r, 5000));
+      try {
+        await this.cpClient.updateAgentStatus(agentId, 'OFFLINE');
+        this.logger.info({ agentId }, 'Draining complete (job failed), agent set to OFFLINE in CP');
+      } catch (err) {
+        this.logger.warn({ agentId, err }, 'Failed to set agent OFFLINE in CP after drain');
+      }
+    }
   }
 
   updateAgentStatus(agentId: string, status: AgentRuntimeStatus): void {
@@ -291,7 +318,12 @@ export class AgentPool extends EventEmitter {
               metadata: agent.metadata,
             });
             agent.lastHeartbeatAt = new Date();
-            if (response.config_changed) await this.handleConfigChange(agent, response);
+            if (response.disabled) {
+              agent.status = 'STOPPED';
+              this.logger.info({ agentId: agent.id }, 'Agent disabled by admin, marked STOPPED');
+            } else if (response.config_changed) {
+              await this.handleConfigChange(agent, response);
+            }
           } catch (err) {
             this.logger.warn({ agentId: agent.id, err }, 'Heartbeat failed');
           }

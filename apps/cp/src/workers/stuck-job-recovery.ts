@@ -7,7 +7,7 @@ let intervalId: ReturnType<typeof setInterval> | null = null;
 
 /**
  * Start a background loop that:
- * - Resets RUNNING jobs with expired lock to QUEUED.
+ * - Resets non-terminal jobs with expired lock to QUEUED (reclaimable again).
  * - Clears expired lock on QUEUED jobs (claimable again).
  * Call the returned stop() on shutdown.
  */
@@ -26,7 +26,7 @@ export function startStuckJobRecovery(
     try {
       const runningCount = await jobRepo.resetStuckRunningJobs();
       if (runningCount > 0) {
-        logger.info({ resetCount: runningCount }, 'Stuck-job recovery: reset RUNNING jobs with expired lock to QUEUED');
+        logger.info({ resetCount: runningCount }, 'Stuck-job recovery: reset jobs with expired lock to QUEUED');
       }
       const queuedCount = await jobRepo.clearExpiredLockOnQueuedJobs();
       if (queuedCount > 0) {

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { cpApi, NotifySettings } from "@/lib/api";
+import { useAuthStore } from "@/stores/auth";
 import {
   Send,
   Mail,
@@ -17,11 +18,20 @@ import {
   Loader2,
   Globe,
   RefreshCw,
+  Eye,
+  EyeOff,
 } from "lucide-react";
+
+const REDACTED = "********";
 
 export default function NotificationsPage() {
   const queryClient = useQueryClient();
+  const user = useAuthStore((s) => s.user);
+  const isSuperAdmin = user?.role === "super_admin";
   const [saveMessage, setSaveMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [showTelegramToken, setShowTelegramToken] = useState(false);
+  const [showSmtpPass, setShowSmtpPass] = useState(false);
+  const [showWebhookSecret, setShowWebhookSecret] = useState(false);
 
   // Form state
   const [telegramEnabled, setTelegramEnabled] = useState(false);
@@ -78,9 +88,13 @@ export default function NotificationsPage() {
     },
   });
 
-  // Test mutations
+  // Test mutations (send explicit message so we can verify data is really sent)
   const testTelegramMutation = useMutation({
-    mutationFn: () => cpApi.testTelegram(),
+    mutationFn: () =>
+      cpApi.testTelegram(
+        undefined,
+        `🔔 Visa Automation – Test\n\nThis is a test from the Admin Portal.\nSent at: ${new Date().toISOString()}`
+      ),
     onSuccess: () => {
       setSaveMessage({ type: "success", text: "Telegram test message sent!" });
       setTimeout(() => setSaveMessage(null), 3000);
@@ -92,7 +106,16 @@ export default function NotificationsPage() {
   });
 
   const testEmailMutation = useMutation({
-    mutationFn: () => cpApi.testEmail(),
+    mutationFn: () =>
+      cpApi.testEmail({
+        smtp_host: smtpHost || undefined,
+        smtp_port: smtpPort ? parseInt(smtpPort, 10) : undefined,
+        smtp_user: smtpUser || undefined,
+        smtp_pass: isSuperAdmin && smtpPass ? smtpPass : undefined,
+        smtp_from: smtpFrom || undefined,
+        smtp_secure: smtpSecure,
+        to: settings?.fallback_email || settings?.email_override || smtpFrom || undefined,
+      }),
     onSuccess: () => {
       setSaveMessage({ type: "success", text: "Test email sent!" });
       setTimeout(() => setSaveMessage(null), 3000);
@@ -110,25 +133,24 @@ export default function NotificationsPage() {
       .map((id) => id.trim())
       .filter((id) => id);
 
-    // Always send all fields to support clearing values when disabled or emptied
+    // Build updates; only super_admin may send secret fields (otherwise we'd overwrite with REDACTED)
     const updates: Parameters<typeof cpApi.updateNotifySettings>[0] = {
       telegram_enabled: telegramEnabled,
       email_enabled: emailEnabled,
       webhook_enabled: webhookEnabled,
-      // Telegram fields - send empty values when disabled or cleared
-      telegram_bot_token: telegramEnabled ? telegramToken : null,
       telegram_chat_ids: telegramEnabled ? (parsedChatIds.length > 0 ? parsedChatIds : []) : [],
-      // Email fields - send empty values when disabled or cleared
       smtp_host: emailEnabled ? (smtpHost || null) : null,
       smtp_port: emailEnabled && smtpPort ? parseInt(smtpPort, 10) : null,
       smtp_user: emailEnabled ? (smtpUser || null) : null,
-      smtp_pass: emailEnabled ? (smtpPass || null) : null,
       smtp_from: emailEnabled ? (smtpFrom || null) : null,
       smtp_secure: smtpSecure,
-      // Webhook fields - send empty values when disabled or cleared
       webhook_url: webhookEnabled ? (webhookUrl || null) : null,
-      webhook_secret: webhookEnabled ? (webhookSecret || null) : null,
     };
+    if (isSuperAdmin) {
+      if (telegramEnabled) updates.telegram_bot_token = telegramToken || null;
+      if (emailEnabled && smtpPass !== REDACTED) updates.smtp_pass = smtpPass || null;
+      if (webhookEnabled && webhookSecret !== REDACTED) updates.webhook_secret = webhookSecret || null;
+    }
 
     saveMutation.mutate(updates);
   };
@@ -206,14 +228,29 @@ export default function NotificationsPage() {
           <CardContent className="space-y-4">
             <div>
               <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Bot Token</label>
-              <Input
-                type="password"
-                placeholder={settings?.telegram_bot_token ? "••••••••" : "Enter bot token"}
-                value={telegramToken}
-                onChange={(e) => setTelegramToken(e.target.value)}
-                className="mt-1"
-                disabled={!telegramEnabled}
-              />
+              <div className="relative flex items-center gap-1 mt-1">
+                <Input
+                  type={isSuperAdmin && showTelegramToken ? "text" : "password"}
+                  placeholder={settings?.telegram_bot_token && !isSuperAdmin ? REDACTED : "Enter bot token"}
+                  value={isSuperAdmin ? telegramToken : (telegramToken ? REDACTED : "")}
+                  onChange={(e) => setTelegramToken(e.target.value)}
+                  disabled={!telegramEnabled || !isSuperAdmin}
+                  className="pr-9"
+                />
+                {isSuperAdmin && (
+                  <button
+                    type="button"
+                    className="absolute right-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                    onClick={() => setShowTelegramToken((v) => !v)}
+                    title={showTelegramToken ? "Hide" : "Show"}
+                  >
+                    {showTelegramToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                )}
+              </div>
+              {!isSuperAdmin && (settings?.telegram_bot_token || telegramToken) && (
+                <p className="text-xs text-gray-500 mt-1">Only super_admin can view or edit the token.</p>
+              )}
             </div>
             <div>
               <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Chat IDs</label>
@@ -224,7 +261,7 @@ export default function NotificationsPage() {
                 className="mt-1"
                 disabled={!telegramEnabled}
               />
-              <p className="text-xs text-gray-500 mt-1">Comma-separated list of chat IDs</p>
+              <p className="text-xs text-gray-500 mt-1">Comma-separated chat IDs (e.g. for Ops and Booking). Add IDs here; they can be chosen when editing customers.</p>
             </div>
             <Button
               variant="outline"
@@ -260,13 +297,16 @@ export default function NotificationsPage() {
               </label>
             </div>
             <CardDescription>Send notifications via email</CardDescription>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              Outlook personal: smtp-mail.outlook.com, port 587, TLS off (STARTTLS). Office 365 work: smtp.office365.com, enable SMTP AUTH for the mailbox. For automation, Microsoft Graph + OAuth2 is more reliable than SMTP.
+            </p>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-3 gap-4">
               <div className="col-span-2">
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300">SMTP Host</label>
                 <Input
-                  placeholder="smtp.gmail.com"
+                  placeholder="smtp.gmail.com, smtp-mail.outlook.com, smtp.office365.com"
                   value={smtpHost}
                   onChange={(e) => setSmtpHost(e.target.value)}
                   className="mt-1"
@@ -297,14 +337,29 @@ export default function NotificationsPage() {
               </div>
               <div>
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Password</label>
-                <Input
-                  type="password"
-                  placeholder={settings?.smtp_pass ? "••••••••" : "Enter password"}
-                  value={smtpPass}
-                  onChange={(e) => setSmtpPass(e.target.value)}
-                  className="mt-1"
-                  disabled={!emailEnabled}
-                />
+                <div className="relative flex items-center gap-1 mt-1">
+                  <Input
+                    type={isSuperAdmin && showSmtpPass ? "text" : "password"}
+                    placeholder={settings?.smtp_pass && !isSuperAdmin ? REDACTED : "Enter password"}
+                    value={isSuperAdmin ? smtpPass : (smtpPass ? REDACTED : "")}
+                    onChange={(e) => setSmtpPass(e.target.value)}
+                    disabled={!emailEnabled || !isSuperAdmin}
+                    className="pr-9"
+                  />
+                  {isSuperAdmin && (
+                    <button
+                      type="button"
+                      className="absolute right-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                      onClick={() => setShowSmtpPass((v) => !v)}
+                      title={showSmtpPass ? "Hide" : "Show"}
+                    >
+                      {showSmtpPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  )}
+                </div>
+                {!isSuperAdmin && (settings?.smtp_pass || smtpPass) && (
+                  <p className="text-xs text-gray-500 mt-1">Only super_admin can view or edit the password.</p>
+                )}
               </div>
             </div>
             <div>
@@ -330,7 +385,8 @@ export default function NotificationsPage() {
             <Button
               variant="outline"
               onClick={() => testEmailMutation.mutate()}
-              disabled={!emailEnabled || testEmailMutation.isPending}
+              disabled={!emailEnabled || !smtpHost?.trim() || !smtpFrom?.trim() || testEmailMutation.isPending}
+              title={emailEnabled && (!smtpHost?.trim() || !smtpFrom?.trim()) ? "Fill SMTP Host and From to test" : undefined}
             >
               {testEmailMutation.isPending ? (
                 <Loader2 className="h-4 w-4 mr-1 animate-spin" />
@@ -376,14 +432,29 @@ export default function NotificationsPage() {
               </div>
               <div>
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Secret (optional)</label>
-                <Input
-                  type="password"
-                  placeholder={settings?.webhook_secret ? "••••••••" : "Enter secret for signature"}
-                  value={webhookSecret}
-                  onChange={(e) => setWebhookSecret(e.target.value)}
-                  className="mt-1"
-                  disabled={!webhookEnabled}
-                />
+                <div className="relative flex items-center gap-1 mt-1">
+                  <Input
+                    type={isSuperAdmin && showWebhookSecret ? "text" : "password"}
+                    placeholder={settings?.webhook_secret && !isSuperAdmin ? REDACTED : "Enter secret for signature"}
+                    value={isSuperAdmin ? webhookSecret : (webhookSecret ? REDACTED : "")}
+                    onChange={(e) => setWebhookSecret(e.target.value)}
+                    disabled={!webhookEnabled || !isSuperAdmin}
+                    className="pr-9"
+                  />
+                  {isSuperAdmin && (
+                    <button
+                      type="button"
+                      className="absolute right-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                      onClick={() => setShowWebhookSecret((v) => !v)}
+                      title={showWebhookSecret ? "Hide" : "Show"}
+                    >
+                      {showWebhookSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  )}
+                </div>
+                {!isSuperAdmin && (settings?.webhook_secret || webhookSecret) && (
+                  <p className="text-xs text-gray-500 mt-1">Only super_admin can view or edit the secret.</p>
+                )}
               </div>
             </div>
           </CardContent>

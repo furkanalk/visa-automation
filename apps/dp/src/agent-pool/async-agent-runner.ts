@@ -182,18 +182,15 @@ export class AsyncAgentRunner {
    * Process job with periodic abort check
    */
   private async processJobWithAbortCheck(
-    _agent: AgentRuntime,
+    agent: AgentRuntime,
     payload: JobQueuePayload
   ): Promise<void> {
-    // Check for abort before starting
     const shouldAbort = await this.agentPool.shouldAbortJob(payload.job_id);
     if (shouldAbort) {
       this.logger.info({ jobId: payload.job_id }, 'Job aborted before start');
       return;
     }
-
-    // Execute the job (agent info could be used for agent-specific logging/config)
-    await this.processJob(payload, this.workerId, this.logger);
+    await this.processJob(payload, this.workerId, this.logger, agent.profile ?? undefined);
   }
 
   /**

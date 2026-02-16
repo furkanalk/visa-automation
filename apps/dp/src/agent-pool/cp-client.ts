@@ -97,6 +97,23 @@ export class CPClient {
     return result.data ?? null;
   }
 
+  /** Find existing agent by name (for reuse on DP restart). Returns null if none. */
+  async getAgentByName(name: string): Promise<AgentRegistrationResponse | null> {
+    const response = await fetch(`${this.baseUrl}/cp/agents?name=${encodeURIComponent(name)}&limit=1`, {
+      method: 'GET',
+      headers: this.getHeaders(),
+    });
+
+    if (!response.ok) {
+      const msg = await this.parseError(response);
+      throw new Error(`Failed to list agents by name: ${msg}`);
+    }
+
+    const result = await response.json() as ApiResponse<{ items: AgentRegistrationResponse[] }>;
+    const items = result.data?.items ?? [];
+    return items[0] ?? null;
+  }
+
   async sendHeartbeat(params: {
     agentId: string;
     status: AgentStatus;

@@ -1,5 +1,16 @@
+/**
+ * AS-VISA Make Appointment sayfası selektörleri (Ankara Bireysel / randevu formu).
+ * Mock / canlı site ile uyumlu; .bin/as-visa.html ve as-visa.js referans alındı.
+ *
+ * Form: #apForm
+ * Önemli id/name: NationalityTabID, AppointmentTabID, TravelSubject, TravelDate, datepicker,
+ * AppointmentTime, PassaportNumber, Name, Surname, TcKimlikNo, reTCKN, DogumYili, Phone, Email, reEmail, enteredCode.
+ */
+
 export const AS_VISA_SELECTORS = {
   form: '#apForm',
+
+  submit: '#apForm button[type="submit"]',
 
   loaders: {
     pageRing: '.lds-ring',

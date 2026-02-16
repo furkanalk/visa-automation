@@ -43,11 +43,16 @@ export default function WatcherPage() {
   });
 
   // Run watcher mutation
+  const [runError, setRunError] = useState<string | null>(null);
   const runMutation = useMutation({
     mutationFn: () => cpApi.runWatcher(),
     onSuccess: () => {
+      setRunError(null);
       queryClient.invalidateQueries({ queryKey: ["watcher-status"] });
       queryClient.invalidateQueries({ queryKey: ["watcher-snapshots"] });
+    },
+    onError: (err) => {
+      setRunError(err instanceof Error ? err.message : "Run failed");
     },
   });
 
@@ -144,7 +149,7 @@ export default function WatcherPage() {
             Configure
           </Button>
           <Button
-            onClick={() => runMutation.mutate()}
+            onClick={() => { setRunError(null); runMutation.mutate(); }}
             disabled={runMutation.isPending}
           >
             {runMutation.isPending ? (
@@ -156,6 +161,20 @@ export default function WatcherPage() {
           </Button>
         </div>
       </div>
+
+      {runError && (
+        <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/30 px-4 py-3 flex items-center gap-2 text-red-700 dark:text-red-300">
+          <AlertTriangle className="h-5 w-5 shrink-0" />
+          <span>{runError}</span>
+          <button
+            type="button"
+            className="ml-auto text-red-600 dark:text-red-400 hover:underline"
+            onClick={() => setRunError(null)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Status Cards */}
       <div className="grid gap-4 md:grid-cols-4">
@@ -173,8 +192,8 @@ export default function WatcherPage() {
               />
               <div>
                 <p className="text-sm text-gray-500 dark:text-gray-400">Status</p>
-                <p className="font-medium text-gray-900 dark:text-white capitalize">
-                  {isLoading ? "Loading..." : isError ? "Unavailable" : (status?.status ?? "Unknown")}
+                <p className="font-medium text-gray-900 dark:text-white">
+                  {isLoading ? "Loading..." : isError ? "Unavailable" : status?.status === "not_configured" ? "Not Configured" : (status?.status ? status.status.charAt(0).toUpperCase() + status.status.slice(1) : "Unknown")}
                 </p>
               </div>
             </div>

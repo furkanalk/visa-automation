@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Modal, FormField } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
@@ -52,11 +52,14 @@ function defaultConfigFromSettings(settings: SettingsGrouped | undefined): Profi
   };
 }
 
+type ConfigPriority = "profile_over_portal" | "portal_over_profile";
+
 interface ProfileFormData {
   name: string;
   description: string;
   is_default: boolean;
   config: {
+    config_priority?: ConfigPriority;
     rateLimit: {
       rpm: number;
       burstLimit: number;
@@ -90,6 +93,7 @@ interface ProfileFormData {
 }
 
 const defaultConfig: ProfileFormData["config"] = {
+  config_priority: "portal_over_profile",
   rateLimit: {
     rpm: 60,
     burstLimit: 10,
@@ -155,33 +159,41 @@ export function ProfileModal({
     staleTime: 60_000,
   });
 
-  const profileDefaults = defaultConfigFromSettings(settingsData) ?? defaultConfig;
+  // Memoize so effect doesn't run every render (would overwrite user input)
+  const profileDefaults = useMemo(
+    () => defaultConfigFromSettings(settingsData) ?? defaultConfig,
+    [settingsData]
+  );
 
-  // Reset form when opening/closing or profile changes
+  // Reset tab only when modal opens (so Configuration tab stays when profileDefaults loads later)
   useEffect(() => {
-    if (open) {
-      if (profile) {
-        setFormData({
-          name: profile.name,
-          description: profile.description || "",
-          is_default: profile.is_default,
-          config: {
-            ...profileDefaults,
-            ...(profile.config as ProfileFormData["config"]),
-          },
-        });
-      } else {
-        setFormData({
-          name: "",
-          description: "",
-          is_default: false,
-          config: profileDefaults,
-        });
-      }
-      setErrors({});
-      setActiveTab("basic");
+    if (open) setActiveTab("basic");
+  }, [open]);
+
+  // Reset form only when modal opens, profile id changes, or profileDefaults (settings) first loads.
+  // Use profile?.id so parent re-renders with new object ref don't wipe user input.
+  useEffect(() => {
+    if (!open) return;
+    if (profile) {
+      setFormData({
+        name: profile.name,
+        description: profile.description || "",
+        is_default: profile.is_default,
+        config: {
+          ...profileDefaults,
+          ...(profile.config as ProfileFormData["config"]),
+        },
+      });
+    } else {
+      setFormData({
+        name: "",
+        description: "",
+        is_default: false,
+        config: profileDefaults,
+      });
     }
-  }, [open, profile, profileDefaults]);
+    setErrors({});
+  }, [open, profile?.id, profileDefaults]);
 
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -210,10 +222,14 @@ export function ProfileModal({
     await onSubmit(formData);
   };
 
-  const updateConfig = <K extends keyof ProfileFormData["config"]>(
-    section: K,
-    field: keyof ProfileFormData["config"][K],
-    value: number | boolean | string
+  type Config = ProfileFormData["config"];
+  const updateConfig = <
+    S extends keyof NonNullable<Config>,
+    K extends keyof NonNullable<NonNullable<Config>[S]>
+  >(
+    section: S,
+    key: K,
+    value: NonNullable<NonNullable<Config>[S]>[K]
   ) => {
     setFormData((prev) => ({
       ...prev,
@@ -221,7 +237,7 @@ export function ProfileModal({
         ...prev.config,
         [section]: {
           ...(prev.config[section] as object),
-          [field]: value,
+          [key]: value,
         },
       },
     }));
@@ -279,6 +295,30 @@ export function ProfileModal({
       <form onSubmit={handleSubmit} className="space-y-4">
         {activeTab === "basic" && (
           <>
+            {/* Config priority: profile vs portal when both define same key */}
+            <FormField
+              label="Config priority"
+              htmlFor="config_priority"
+              hint="When this profile and the portal both define the same setting (e.g. rate limit, pacing), which value is used?"
+            >
+              <select
+                id="config_priority"
+                value={formData.config.config_priority ?? "portal_over_profile"}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    config: {
+                      ...prev.config,
+                      config_priority: e.target.value as ConfigPriority,
+                    },
+                  }))
+                }
+                className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+              >
+                <option value="portal_over_profile">Portal wins (portal over profile)</option>
+                <option value="profile_over_portal">Profile wins (profile over portal)</option>
+              </select>
+            </FormField>
             {/* Name */}
             <FormField label="Name" htmlFor="name" error={errors.name} required>
               <Input

@@ -3,7 +3,7 @@ import { JOB_STATES } from '@visa-automation/shared';
 import { FSMHalt } from '../../../core/fsm/runner.js';
 import type { StateHandler } from '../../../core/fsm/runner.js';
 import { slotHunt } from '../steps/slot-hunt.js';
-import { AS_VISA_SELECTORS as S } from '../selectors.js';
+import { AS_VISA_SELECTORS as S } from '../pages/make-appointment/index.js';
 import { notifySlotFound, notifySlotClosed } from '../../../core/notify/index.js';
 import { getSlotStatus, setSlotStatus } from '../../../core/notify/status.js';
 import { db, JobRepository } from '@visa-automation/db';

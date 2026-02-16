@@ -69,15 +69,16 @@ export default function AuditPage() {
     if (!logs?.items) return;
 
     const csvContent = [
-      ["Time", "Actor Type", "Actor ID", "Action", "Resource Type", "Resource ID", "Changes"].join(","),
+      ["Time", "Actor Type", "Actor ID", "Actor Name", "Action", "Resource Type", "Resource ID", "Changes"].join(","),
       ...logs.items.map((log) =>
         [
           new Date(log.created_at).toISOString(),
           log.actor_type,
-          log.actor_id,
+          log.actor_id ?? "",
+          log.actor_name ?? "",
           log.action,
           log.resource_type,
-          log.resource_id,
+          log.resource_id ?? "",
           JSON.stringify(log.changes || {}).replace(/"/g, '""'),
         ]
           .map((v) => `"${v}"`)
@@ -317,8 +318,14 @@ export default function AuditPage() {
                           <Badge variant="outline" className="mr-2">
                             {log.actor_type}
                           </Badge>
-                          <span className="text-sm text-gray-900 dark:text-white font-mono">
-                            {log.actor_id.slice(0, 8)}...
+                          <span className="text-sm text-gray-900 dark:text-white">
+                            {log.actor_name?.trim()
+                              ? log.actor_name
+                              : log.actor_id != null
+                                ? String(log.actor_id).length > 12
+                                  ? `${String(log.actor_id).slice(0, 12)}…`
+                                  : String(log.actor_id)
+                                : "—"}
                           </span>
                         </td>
                         <td className="p-4">
@@ -332,7 +339,7 @@ export default function AuditPage() {
                           </span>
                           <span className="text-gray-400 mx-1">/</span>
                           <span className="text-gray-900 dark:text-white font-mono">
-                            {log.resource_id.slice(0, 8)}...
+                            {log.resource_id != null ? `${String(log.resource_id).slice(0, 8)}...` : "—"}
                           </span>
                         </td>
                         <td className="p-4">

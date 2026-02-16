@@ -5,7 +5,7 @@ export interface StaffUser {
   id: string;
   name: string;
   email: string;
-  role: "staff" | "senior_staff";
+  role: "staff" | "admin";
   tenant_id: string;
 }
 
@@ -34,7 +34,7 @@ const MOCK_STAFF: Record<string, { password: string; user: StaffUser }> = {
       id: "staff-2",
       name: "Jane Senior",
       email: "senior@example.com",
-      role: "senior_staff",
+      role: "staff",
       tenant_id: "default",
     },
   },

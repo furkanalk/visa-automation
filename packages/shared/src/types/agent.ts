@@ -43,7 +43,12 @@ export interface AgentProfile {
   updated_at: Date;
 }
 
+/** When both profile and portal define the same config key, which wins. */
+export type ConfigPriority = 'profile_over_portal' | 'portal_over_profile';
+
 export interface AgentProfileConfig {
+  /** When merging with portal config: profile wins vs portal wins on overlapping keys. Default: portal_over_portal. */
+  config_priority?: ConfigPriority;
   rateLimit?: {
     rpm?: number;
     rph?: number;
@@ -168,6 +173,7 @@ export interface UpdateProfileRequest {
 export interface ListAgentsQuery {
   status?: AgentStatus | AgentStatus[];
   mode?: AgentMode;
+  name?: string;
   portal_id?: string;
   profile_id?: string;
   limit?: number;

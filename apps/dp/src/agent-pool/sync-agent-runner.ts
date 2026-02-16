@@ -115,7 +115,7 @@ export class SyncAgentRunner {
         attempt_number: jobData.attempt_number ?? 1,
       };
 
-      await this.processJob(payload, this.workerId, this.logger);
+      await this.processJob(payload, this.workerId, this.logger, agent.profile ?? undefined);
 
       await this.agentPool.completeJob(agent.id, jobId);
       this.logger.info({ agentId: agent.id, jobId }, 'Sync job completed');
