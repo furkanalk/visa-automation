@@ -1,7 +1,12 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { getDb, ProfileRepository } from '@visa-automation/db';
-import type { CreateProfileRequest, UpdateProfileRequest } from '@visa-automation/shared';
+import { getDb, ProfileRepository, type AgentProfile } from '@visa-automation/db';
+import type { CreateProfileRequest, UpdateProfileRequest, AgentProfileConfig } from '@visa-automation/shared';
 import { validateProfileConfig } from '../schemas/validate-config.js';
+
+/** Merge is_scout from row into config so DP and other consumers get it in profile config */
+function configForAgent(profile: AgentProfile): AgentProfileConfig {
+  return { ...profile.config, is_scout: profile.is_scout ?? false };
+}
 
 export const profileRoutes: FastifyPluginAsync = async (app) => {
   const db = getDb();
@@ -26,43 +31,38 @@ export const profileRoutes: FastifyPluginAsync = async (app) => {
 
     return {
       success: true,
-      data: profile,
+      data: { ...profile, config: configForAgent(profile) },
     };
   });
 
   /**
    * List profiles for tenant
    * GET /cp/profiles
+   * Query: is_scout=true to return only scout profiles (for DP when creating scout agents)
    */
   app.get<{
-    Querystring: { limit?: string; offset?: string };
+    Querystring: { limit?: string; offset?: string; is_scout?: string };
   }>('/', async (request) => {
     const limit = Math.min(parseInt(request.query.limit ?? '100', 10), 500);
     const offset = parseInt(request.query.offset ?? '0', 10);
+    const isScoutOnly = request.query.is_scout === 'true';
 
-    const profiles = await profileRepo.findByTenantId(request.tenantId, limit, offset);
+    const scoutProfile = isScoutOnly ? await profileRepo.findScout(request.tenantId) : undefined;
+    const profiles = isScoutOnly
+      ? scoutProfile ? [scoutProfile] : []
+      : await profileRepo.findByTenantId(request.tenantId, limit, offset);
 
-    // Get agent counts for each profile
     const profilesWithCounts = await Promise.all(
       profiles.map(async (profile) => {
         const agentCount = await profileRepo.countAgentsUsingProfile(request.tenantId, profile.id);
-        return {
-          ...profile,
-          agent_count: agentCount,
-        };
+        return { ...profile, agent_count: agentCount };
       })
     );
 
     return {
       success: true,
-      data: {
-        items: profilesWithCounts,
-        total: profiles.length,
-      },
-      meta: {
-        request_id: request.id,
-        timestamp: new Date().toISOString(),
-      },
+      data: { items: profilesWithCounts, total: profiles.length },
+      meta: { request_id: request.id, timestamp: new Date().toISOString() },
     };
   });
 
@@ -89,6 +89,7 @@ export const profileRoutes: FastifyPluginAsync = async (app) => {
       success: true,
       data: {
         ...profile,
+        config: configForAgent(profile),
         agent_count: agentCount,
       },
     };
@@ -123,12 +124,14 @@ export const profileRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
+    const { is_scout } = request.body;
     const profile = await profileRepo.create({
       tenant_id: request.tenantId,
       name,
       description: description ?? null,
       config,
       is_default: is_default ?? false,
+      is_scout: is_scout ?? false,
     });
 
     return reply.status(201).send({
@@ -154,7 +157,7 @@ export const profileRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    const { name, description, config, is_default } = request.body;
+    const { name, description, config, is_default, is_scout } = request.body;
     if (config !== undefined) {
       try {
         validateProfileConfig(config);
@@ -174,6 +177,7 @@ export const profileRoutes: FastifyPluginAsync = async (app) => {
     if (description !== undefined) updates.description = description;
     if (config !== undefined) updates.config = config;
     if (is_default !== undefined) updates.is_default = is_default;
+    if (is_scout !== undefined) updates.is_scout = is_scout;
 
     const updated = await profileRepo.update(request.tenantId, request.params.id, updates);
 

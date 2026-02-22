@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "cheerio": "^1.0.0",
     "@fastify/cors": "^8.4.0",
     "@fastify/helmet": "^11.1.0",
     "@visa-automation/db": "*",
@@ -23,6 +24,7 @@
     "pino": "^8.16.0"
   },
   "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
     "@types/node": "^20.10.0",
     "@types/nodemailer": "^6.4.14",
     "pino-pretty": "^10.2.0",

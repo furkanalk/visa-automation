@@ -34,6 +34,7 @@ const TASK_TYPE_ICONS: Record<HitlTaskType, React.ElementType> = {
   TURNSTILE: Shield,
   CAPTCHA: Image,
   OTP: Key,
+  SECURITY_CODE: Key,
   DOCUMENT_CLARIFICATION: FileQuestion,
   MANUAL_REVIEW: Eye,
   CUSTOM_INPUT: Keyboard,
@@ -150,6 +151,7 @@ export default function HistoryPage() {
               <option value="TURNSTILE">Turnstile</option>
               <option value="CAPTCHA">Captcha</option>
               <option value="OTP">OTP</option>
+              <option value="SECURITY_CODE">Security Code</option>
               <option value="DOCUMENT_CLARIFICATION">Document</option>
               <option value="MANUAL_REVIEW">Manual Review</option>
               <option value="CUSTOM_INPUT">Custom Input</option>

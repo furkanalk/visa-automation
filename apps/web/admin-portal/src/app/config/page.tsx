@@ -7,20 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { settingsApi, type SystemSetting } from "@/lib/api";
-import {
-  Save,
-  CheckCircle,
-  Loader2,
-  Settings,
-  ChevronDown,
-  ChevronRight,
-  Edit2,
-  RotateCcw,
-  AlertCircle,
-  Globe,
-  Building,
-  RefreshCw,
-} from "lucide-react";
+import { Save, Loader2, Settings, ChevronDown, ChevronRight, Edit2, RotateCcw, AlertCircle, Globe, Building, RefreshCw } from "lucide-react";
+import { SaveBanner } from "@/components/ui/save-banner";
 
 interface EditedValue {
   category: string;
@@ -59,7 +47,8 @@ export default function ConfigPage() {
       setTimeout(() => setSaveMessage(null), 3000);
     },
     onError: (error) => {
-      setSaveMessage({ type: "error", text: `Failed to save: ${error}` });
+      setSaveMessage({ type: "error", text: error instanceof Error ? error.message : "Failed to save." });
+      setTimeout(() => setSaveMessage(null), 5000);
     },
   });
 
@@ -282,23 +271,7 @@ export default function ConfigPage() {
         </div>
       </div>
 
-      {/* Save Message */}
-      {saveMessage && (
-        <div
-          className={`p-3 rounded-md flex items-center gap-2 ${
-            saveMessage.type === "success"
-              ? "bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
-              : "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400"
-          }`}
-        >
-          {saveMessage.type === "success" ? (
-            <CheckCircle className="h-4 w-4" />
-          ) : (
-            <AlertCircle className="h-4 w-4" />
-          )}
-          {saveMessage.text}
-        </div>
-      )}
+      <SaveBanner message={saveMessage} onDismiss={() => setSaveMessage(null)} />
 
       {/* Categories */}
       <div className="space-y-4">

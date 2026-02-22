@@ -1,6 +1,8 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { getDb, CustomerRepository, AuditRepository } from '@visa-automation/db';
 import type { CustomerStatus, CustomerPreferences, CustomerFlags, SlotCheckPolicy } from '@visa-automation/db';
+import { JobService } from '../services/job.service.js';
+import type { ApplicantData } from '@visa-automation/shared';
 
 interface CustomerParams {
   id: string;
@@ -537,8 +539,32 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    // TODO: Create a job for this customer via the queue and return job_id
-    // For now we only audit and return success (no job is created yet)
+    const prefs = (customer.preferences ?? {}) as Record<string, unknown>;
+    const applicant: ApplicantData = {
+      ...prefs,
+      name: (typeof prefs.name === 'string' ? prefs.name : null) || customer.display_name,
+    };
+
+    let result: { job_id: string };
+    try {
+      const jobService = new JobService();
+      result = await jobService.createJob({
+        tenant_id: request.tenantId,
+        portal_id: customer.portal_id,
+        visa_type: 'SCHENGEN',
+        priority: customer.priority,
+        applicant,
+      });
+    } catch (err) {
+      request.log.error({ err, customerId: customer.id }, 'Failed to create job for customer');
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'JOB_CREATE_FAILED',
+          message: err instanceof Error ? err.message : 'Failed to create job',
+        },
+      });
+    }
 
     await auditRepo.create({
       tenant_id: request.tenantId,
@@ -549,13 +575,15 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
       resource_type: 'customer',
       resource_id: request.params.id,
       ip_address: request.ip,
+      metadata: { job_id: result.job_id },
     });
 
     return {
       success: true,
       data: {
-        message: 'Slot check requested. Job creation is not yet implemented; only the action was logged.',
+        message: 'Slot check started.',
         customer_id: customer.id,
+        job_id: result.job_id,
       },
     };
   });

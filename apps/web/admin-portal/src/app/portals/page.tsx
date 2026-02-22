@@ -8,7 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { cpApi, type Agent, type PortalConfig } from "@/lib/api";
 import { DragDropPortal } from "@/components/ui/drag-drop-portal";
 import { PortalConfigModal } from "@/components/portals/portal-config-modal";
-import { Globe, Settings, Power, PowerOff, ArrowLeftRight, Loader2, ChevronDown, ChevronRight, Link2, Users } from "lucide-react";
+import { SaveBanner } from "@/components/ui/save-banner";
+import { Globe, Settings, Power, PowerOff, ArrowLeftRight, Loader2, ChevronDown, ChevronRight, Link2, Users, AlertCircle } from "lucide-react";
 
 export default function PortalsPage() {
   const queryClient = useQueryClient();
@@ -16,9 +17,14 @@ export default function PortalsPage() {
   const [configModalOpen, setConfigModalOpen] = useState(false);
   const [selectedPortal, setSelectedPortal] = useState<PortalConfig | null>(null);
   const [assignError, setAssignError] = useState<string | null>(null);
+  const [banner, setBanner] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const showBanner = (type: "success" | "error", text: string) => {
+    setBanner({ type, text });
+    setTimeout(() => setBanner(null), 5000);
+  };
   const [expandedPortalId, setExpandedPortalId] = useState<string | null>(null);
 
-  const { data: portalsData, isLoading: portalsLoading, isError: portalsError } = useQuery({
+  const { data: portalsData, isLoading: portalsLoading, isError: portalsError, error: portalsErrorDetail, refetch: refetchPortals } = useQuery({
     queryKey: ["portals"],
     queryFn: () => cpApi.getPortals(),
   });
@@ -26,6 +32,12 @@ export default function PortalsPage() {
   const { data: agentsData } = useQuery({
     queryKey: ["agents"],
     queryFn: () => cpApi.getAgents(),
+  });
+
+  const { data: liveness } = useQuery({
+    queryKey: ["portal-liveness"],
+    queryFn: () => cpApi.getPortalLiveness(),
+    refetchInterval: 60 * 1000,
   });
 
   const { data: fullPortal, isLoading: fullPortalLoading } = useQuery({
@@ -44,9 +56,12 @@ export default function PortalsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["agents"] });
       setAssignError(null);
+      showBanner("success", "Saved.");
     },
     onError: (err) => {
-      setAssignError(err instanceof Error ? err.message : "Failed to update assignment");
+      const msg = err instanceof Error ? err.message : "Failed to update assignment";
+      setAssignError(msg);
+      showBanner("error", msg);
     },
   });
 
@@ -55,17 +70,27 @@ export default function PortalsPage() {
       cpApi.updatePortal(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["portals"] });
+      showBanner("success", "Saved.");
     },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to save."),
   });
 
   const enablePortal = useMutation({
     mutationFn: (id: string) => cpApi.enablePortal(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["portals"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["portals"] });
+      showBanner("success", "Saved.");
+    },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to update."),
   });
 
   const disablePortal = useMutation({
     mutationFn: (id: string) => cpApi.disablePortal(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["portals"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["portals"] });
+      showBanner("success", "Saved.");
+    },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to update."),
   });
 
   const handleAssignPortals = async (agentId: string, portalIds: string[]) => {
@@ -103,6 +128,7 @@ export default function PortalsPage() {
 
   return (
     <div className="space-y-6">
+      <SaveBanner message={banner} onDismiss={() => setBanner(null)} />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Portals</h1>
@@ -142,7 +168,18 @@ export default function PortalsPage() {
       {portalsLoading ? (
         <div className="text-center py-12 text-gray-500 dark:text-gray-400">Loading portals...</div>
       ) : portalsError ? (
-        <div className="text-center py-12 text-red-500 dark:text-red-400">Failed to load portals</div>
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <AlertCircle className="h-12 w-12 text-red-400 mb-4" />
+            <p className="text-gray-500 dark:text-gray-400 font-medium">Failed to load portals</p>
+            <p className="text-sm text-gray-400 dark:text-gray-500 mt-1">
+              {portalsErrorDetail instanceof Error ? portalsErrorDetail.message : "Check your connection and try again."}
+            </p>
+            <Button variant="outline" className="mt-4" onClick={() => refetchPortals()}>
+              Try again
+            </Button>
+          </CardContent>
+        </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {portals.map((portal) => {
@@ -157,6 +194,8 @@ export default function PortalsPage() {
             const rateLimitEnabled = Boolean(rateLimit.enabled);
             const otpMode = typeof hitl.otpMode === "string" ? hitl.otpMode : "";
             const captchaMode = typeof hitl.captchaMode === "string" ? hitl.captchaMode : "";
+            const livenessItem = liveness?.items?.find((p) => p.portal_id === portal.portal_id);
+            const statusUp = livenessItem?.status === "up";
 
             return (
               <Card key={portal.id} className="border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 overflow-hidden">
@@ -173,9 +212,16 @@ export default function PortalsPage() {
                         </CardDescription>
                       </div>
                     </div>
-                    <Badge variant={portal.enabled ? "success" : "secondary"} className="shrink-0">
-                      {portal.enabled ? "Enabled" : "Disabled"}
-                    </Badge>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {portal.enabled && livenessItem !== undefined && (
+                        <Badge variant={statusUp ? "success" : "destructive"} className="text-[10px]">
+                          {statusUp ? "Up" : "Down"}
+                        </Badge>
+                      )}
+                      <Badge variant={portal.enabled ? "success" : "secondary"} className="shrink-0">
+                        {portal.enabled ? "Enabled" : "Disabled"}
+                      </Badge>
+                    </div>
                   </div>
                   {portal.base_url && (
                     <div className="flex items-center gap-1.5 mt-2 text-xs text-gray-600 dark:text-gray-400">

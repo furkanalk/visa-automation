@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { cpApi } from "@/lib/api";
 import {
   LayoutDashboard,
   Bot,
@@ -20,6 +22,7 @@ import {
   Users,
   Sliders,
   UserCog,
+  Loader2,
 } from "lucide-react";
 
 const navigation = [
@@ -43,17 +46,98 @@ export function Sidebar() {
   const router = useRouter();
   const { user, logout } = useAuthStore();
 
+  const { data: mockSettings, isLoading: mockLoading } = useQuery({
+    queryKey: ["settings", "mock"],
+    queryFn: () => cpApi.settings.getCategory("mock"),
+  });
+  const mockEnabled = mockSettings?.enabled === true || mockSettings?.enabled === "true";
+
+  const { data: systemStatus, isError: systemStatusError } = useQuery({
+    queryKey: ["system-status"],
+    queryFn: () => cpApi.getSystemStatus(),
+    retry: false,
+    refetchInterval: 30 * 1000,
+  });
+  const { data: healthData } = useQuery({
+    queryKey: ["health"],
+    queryFn: () => cpApi.getHealth(),
+    retry: false,
+    refetchInterval: 30 * 1000,
+  });
+
+  type LivenessLabel = "Healthy" | "Unstable" | "Down";
+  const online = systemStatus?.agent_stats?.online ?? 0;
+  const total = systemStatus?.agent_stats?.total ?? 0;
+  const healthOk = healthData?.status === "healthy";
+  let liveness: LivenessLabel = "Healthy";
+  if (systemStatusError || !systemStatus) {
+    liveness = "Down";
+  } else if (total > 0 && online === 0) {
+    liveness = "Down";
+  } else if (!healthOk || (total > 0 && online < total)) {
+    liveness = "Unstable";
+  }
+  const dotColorClass =
+    liveness === "Healthy"
+      ? "bg-emerald-400"
+      : liveness === "Unstable"
+        ? "bg-amber-400"
+        : "bg-red-400";
+
   const handleLogout = () => {
     logout();
     router.push("/login");
   };
 
   return (
-    <div className="flex h-full w-64 flex-col bg-[var(--bg-sidebar)] dark:bg-slate-950 transition-colors duration-300">
-      <div className="flex h-16 shrink-0 items-center justify-between px-6">
+    <div
+      className={cn(
+        "flex h-full w-64 flex-col bg-[var(--bg-sidebar)] dark:bg-slate-950 transition-colors duration-300",
+        mockEnabled && "border-l-2 border-amber-500/80"
+      )}
+    >
+      <div className="flex h-16 shrink-0 items-center justify-between px-4">
         <span className="text-xl font-bold text-white">Visor Manager</span>
         <ThemeToggle size="sm" />
       </div>
+      {/* Live | Mock: subtle pill with liveness (Healthy / Unstable / Down) */}
+      <Link
+        href="/settings?tab=mock"
+        className={cn(
+          "flex items-center justify-between gap-2 px-3 py-2 mx-3 mb-2 rounded-lg border transition-all duration-200",
+          "hover:brightness-110",
+          !mockEnabled
+            ? "bg-blue-500/15 border-blue-400/40 text-blue-200"
+            : "bg-amber-500/15 border-amber-400/40 text-amber-200"
+        )}
+        title="Change in Settings → Mock"
+      >
+        {mockLoading ? (
+          <Loader2 className="h-4 w-4 animate-spin flex-shrink-0" />
+        ) : (
+          <>
+            <div className="flex items-center gap-2 min-w-0">
+              {!mockEnabled && (
+                <span
+                  className={cn(
+                    "inline-block w-2 h-2 rounded-full flex-shrink-0 animate-live-blink",
+                    dotColorClass
+                  )}
+                  aria-hidden
+                />
+              )}
+              <span className="text-sm font-medium truncate">
+                {!mockEnabled ? "Live" : "Mock"}
+              </span>
+            </div>
+            {!mockEnabled && (
+              <span className="text-xs opacity-70 truncate flex-shrink-0" title={liveness}>
+                {liveness}
+              </span>
+            )}
+          </>
+        )}
+      </Link>
       <nav className="flex flex-1 flex-col px-4 py-4">
         <ul role="list" className="flex flex-1 flex-col gap-y-1">
           {navigation.map((item) => {

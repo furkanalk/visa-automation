@@ -31,4 +31,7 @@ export type {
   StaffMetrics,
   StaffSettings,
   SessionStatus,
+  AgentProfile,
+  NewAgentProfile,
+  AgentProfileUpdate,
 } from './schema.js';

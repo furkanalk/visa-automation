@@ -6,7 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { cpApi, HitlTask, HitlTaskStatus, HitlTaskType, Job } from "@/lib/api";
+import { cpApi, fetchScreenshotBlob, HitlTask, HitlTaskStatus, HitlTaskType, Job } from "@/lib/api";
+import { SaveBanner } from "@/components/ui/save-banner";
 import {
   Hand,
   RefreshCw,
@@ -34,12 +35,14 @@ const statusColors: Record<HitlTaskStatus, "default" | "secondary" | "destructiv
   RESOLVED: "success",
   EXPIRED: "secondary",
   CANCELLED: "destructive",
+  ESCALATED: "destructive",
 };
 
 const typeIcons: Record<HitlTaskType, typeof KeyRound> = {
   TURNSTILE: Shield,
   CAPTCHA: ImageIcon,
   OTP: KeyRound,
+  SECURITY_CODE: KeyRound,
   DOCUMENT_CLARIFICATION: FileQuestion,
   MANUAL_REVIEW: Eye,
   CUSTOM_INPUT: MessageSquare,
@@ -49,6 +52,7 @@ const typeLabels: Record<HitlTaskType, string> = {
   TURNSTILE: "Turnstile",
   CAPTCHA: "CAPTCHA",
   OTP: "OTP Code",
+  SECURITY_CODE: "Security Code",
   DOCUMENT_CLARIFICATION: "Document",
   MANUAL_REVIEW: "Manual Review",
   CUSTOM_INPUT: "Custom Input",
@@ -58,8 +62,33 @@ export default function HITLPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("PENDING");
   const [selectedTask, setSelectedTask] = useState<HitlTask | null>(null);
+  const [screenshotModal, setScreenshotModal] = useState<{ open: boolean; blobUrl: string | null; loading: boolean; error: string | null }>({
+    open: false,
+    blobUrl: null,
+    loading: false,
+    error: null,
+  });
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
+
+  const openScreenshot = async (screenshotUrl: string) => {
+    setScreenshotModal({ open: true, blobUrl: null, loading: true, error: null });
+    try {
+      const blobUrl = await fetchScreenshotBlob(screenshotUrl);
+      if (blobUrl) {
+        setScreenshotModal((m) => ({ ...m, blobUrl, loading: false }));
+      } else {
+        setScreenshotModal((m) => ({ ...m, loading: false, error: "Screenshot not found" }));
+      }
+    } catch {
+      setScreenshotModal((m) => ({ ...m, loading: false, error: "Failed to load screenshot" }));
+    }
+  };
+
+  const closeScreenshot = () => {
+    if (screenshotModal.blobUrl) URL.revokeObjectURL(screenshotModal.blobUrl);
+    setScreenshotModal({ open: false, blobUrl: null, loading: false, error: null });
+  };
 
   const { data: tasks, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["hitl-tasks", statusFilter],
@@ -74,12 +103,20 @@ export default function HITLPage() {
     refetchInterval: 10000,
   });
 
+  const [banner, setBanner] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const showBanner = (type: "success" | "error", text: string) => {
+    setBanner({ type, text });
+    setTimeout(() => setBanner(null), 5000);
+  };
+
   const assignMutation = useMutation({
     mutationFn: (id: string) => cpApi.assignHitlTask(id, user?.name || "admin"),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["hitl-tasks"] });
       queryClient.invalidateQueries({ queryKey: ["hitl-pending-count"] });
+      showBanner("success", "Saved.");
     },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed."),
   });
 
   const cancelMutation = useMutation({
@@ -89,6 +126,7 @@ export default function HITLPage() {
       queryClient.invalidateQueries({ queryKey: ["hitl-pending-count"] });
       setSelectedTask(null);
     },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed."),
   });
 
   const filteredTasks = tasks?.items?.filter(
@@ -100,6 +138,7 @@ export default function HITLPage() {
 
   return (
     <div className="space-y-6">
+      <SaveBanner message={banner} onDismiss={() => setBanner(null)} />
       <div className="flex items-center justify-between">
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">HITL Tasks</h1>
@@ -137,6 +176,7 @@ export default function HITLPage() {
           <option value="all">All Status</option>
           <option value="PENDING">Pending</option>
           <option value="ASSIGNED">Assigned</option>
+          <option value="ESCALATED">Escalated</option>
           <option value="RESOLVED">Resolved</option>
           <option value="EXPIRED">Expired</option>
           <option value="CANCELLED">Cancelled</option>
@@ -199,9 +239,49 @@ export default function HITLPage() {
           onClose={() => setSelectedTask(null)}
           onAssign={() => assignMutation.mutate(selectedTask.id)}
           onCancel={() => cancelMutation.mutate(selectedTask.id)}
+          onViewScreenshot={openScreenshot}
           isAssigning={assignMutation.isPending}
           isCancelling={cancelMutation.isPending}
         />
+      )}
+
+      {/* Screenshot modal */}
+      {screenshotModal.open && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={closeScreenshot}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Screenshot"
+        >
+          <div
+            className="relative max-h-[90vh] max-w-[90vw] rounded-lg bg-white dark:bg-slate-900 shadow-xl overflow-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sticky top-0 right-0 flex justify-end p-2 bg-white dark:bg-slate-900">
+              <Button type="button" variant="ghost" size="icon" onClick={closeScreenshot} aria-label="Close">
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+            <div className="p-4 pt-0">
+              {screenshotModal.loading && (
+                <div className="flex items-center justify-center py-16">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+              )}
+              {screenshotModal.error && (
+                <p className="text-destructive py-8 text-center">{screenshotModal.error}</p>
+              )}
+              {screenshotModal.blobUrl && (
+                <img
+                  src={screenshotModal.blobUrl}
+                  alt="HITL task screenshot"
+                  className="max-h-[70vh] w-auto object-contain"
+                />
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -247,7 +327,7 @@ function TaskCard({
           <p className="text-gray-500 dark:text-gray-400">
             Job:{" "}
             <code className="bg-gray-100 dark:bg-slate-700 px-1 rounded">
-              {task.job_id.slice(0, 12)}...
+              {task.job_id.slice(0, 24)}…
             </code>
           </p>
           <p className="text-gray-500 dark:text-gray-400">
@@ -313,6 +393,7 @@ function TaskDetailModal({
   onClose,
   onAssign,
   onCancel,
+  onViewScreenshot,
   isAssigning,
   isCancelling,
 }: {
@@ -320,6 +401,7 @@ function TaskDetailModal({
   onClose: () => void;
   onAssign: () => void;
   onCancel: () => void;
+  onViewScreenshot?: (url: string) => void;
   isAssigning: boolean;
   isCancelling: boolean;
 }) {
@@ -347,7 +429,7 @@ function TaskDetailModal({
 
   const TypeIcon = task.type ? typeIcons[task.type] : Hand;
   const canResolve =
-    (task.status === "PENDING" || task.status === "ASSIGNED") && resolution.trim();
+    (task.status === "PENDING" || task.status === "ASSIGNED" || task.status === "ESCALATED") && resolution.trim();
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -387,7 +469,7 @@ function TaskDetailModal({
                 <div className="bg-gray-50 dark:bg-slate-900 rounded-md p-3">
                   <p className="text-xs text-gray-500 dark:text-gray-400">Job ID</p>
                   <code className="text-sm font-medium text-gray-900 dark:text-white">
-                    {task.job_id.slice(0, 16)}...
+                    {task.job_id.slice(0, 24)}…
                   </code>
                 </div>
                 <div className="bg-gray-50 dark:bg-slate-900 rounded-md p-3">
@@ -417,16 +499,18 @@ function TaskDetailModal({
                       <span>Input Type: {task.context.input_type}</span>
                     </div>
                     {task.context.screenshot_url && (
-                      <a
-                        href={task.context.screenshot_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const url = task.context?.screenshot_url;
+                          if (url) onViewScreenshot?.(url);
+                        }}
                         className="flex items-center gap-2 text-sm text-primary hover:underline"
                       >
                         <ImageIcon className="h-4 w-4" />
                         View Screenshot
                         <ExternalLink className="h-3 w-3" />
-                      </a>
+                      </button>
                     )}
                     {task.context.options && task.context.options.length > 0 && (
                       <div>
@@ -490,11 +574,27 @@ function TaskDetailModal({
                 </Card>
               )}
 
-              {/* Input Form (for pending/assigned tasks) */}
-              {(task.status === "PENDING" || task.status === "ASSIGNED") && (
+              {/* Escalation info (when staff escalated to admin) */}
+              {task.status === "ESCALATED" && task.escalation_reason && (
+                <Card className="border-orange-200 dark:border-orange-800">
+                  <CardHeader className="py-3">
+                    <CardTitle className="text-sm text-orange-600 dark:text-orange-400">Escalated for review</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-1">
+                    <p className="text-sm text-gray-900 dark:text-white">{task.escalation_reason}</p>
+                    <p className="text-xs text-gray-500">
+                      By {task.escalated_by ?? "staff"}
+                      {task.escalated_at && <> at {new Date(task.escalated_at).toLocaleString()}</>}
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Input Form (for pending/assigned/escalated tasks) */}
+              {(task.status === "PENDING" || task.status === "ASSIGNED" || task.status === "ESCALATED") && (
                 <Card>
                   <CardHeader className="py-3">
-                    <CardTitle className="text-sm">Resolve Task</CardTitle>
+                    <CardTitle className="text-sm">{task.status === "ESCALATED" ? "Review & resolve" : "Resolve Task"}</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3">
                     {task.context?.input_type === "select" && task.context.options ? (
@@ -515,6 +615,8 @@ function TaskDetailModal({
                         placeholder={
                           task.type === "OTP"
                             ? "Enter OTP code..."
+                            : task.type === "SECURITY_CODE"
+                            ? "Enter 6-digit security code..."
                             : task.type === "CAPTCHA"
                             ? "Enter CAPTCHA text..."
                             : "Enter resolution..."
@@ -536,7 +638,7 @@ function TaskDetailModal({
         </div>
 
         {/* Footer Actions */}
-        {(task.status === "PENDING" || task.status === "ASSIGNED") && (
+        {(task.status === "PENDING" || task.status === "ASSIGNED" || task.status === "ESCALATED") && (
           <div className="flex items-center justify-between p-4 border-t border-gray-200 dark:border-slate-700">
             <div className="flex items-center gap-2">
               {task.status === "PENDING" && (

@@ -50,6 +50,13 @@ export interface PortalHitl {
   maxWaitSeconds: number;
 }
 
+/** Portal-specific: how many availability polls and delay between them. */
+export interface PortalSlotHunt {
+  maxPolls: number;
+  pollDelayMinMs: number;
+  pollDelayMaxMs: number;
+}
+
 export interface PortalConfig {
   portalId: PortalId;
   baseUrl: string;
@@ -61,4 +68,20 @@ export interface PortalConfig {
   hitl: PortalHitl;
 
   selectorsVersion: string;
+
+  /** Optional: slot availability polling (portal-specific). Defaults applied in loader if missing. */
+  slotHunt?: PortalSlotHunt;
+
+  /** Optional: minimum total run duration in ms (e.g. 40500). If run finishes earlier, sleep until this. */
+  minRunDurationMs?: number;
+  /** Optional: interval in ms to perform a small mouse move (e.g. 10000). Keeps session "active". */
+  mouseMoveIntervalMs?: number;
+  /** Optional: human-like mouse – waypoint count min/max, jitter px, steps min/max, delay min/max. */
+  mouseMoveSegmentsMin?: number;
+  mouseMoveSegmentsMax?: number;
+  mouseMoveJitterPx?: number;
+  mouseMoveStepsMin?: number;
+  mouseMoveStepsMax?: number;
+  mouseMoveDelayMinMs?: number;
+  mouseMoveDelayMaxMs?: number;
 }

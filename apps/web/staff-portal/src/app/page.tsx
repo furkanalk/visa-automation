@@ -221,6 +221,8 @@ export default function MyTasksPage() {
         title={
           selectedTask?.type === "OTP"
             ? "Enter OTP Code"
+            : selectedTask?.type === "SECURITY_CODE"
+            ? "Enter Security Code"
             : selectedTask?.type === "CAPTCHA"
             ? "Solve CAPTCHA"
             : selectedTask?.type === "TURNSTILE"
@@ -308,10 +310,12 @@ export default function MyTasksPage() {
                   rows={4}
                 />
               </div>
-            ) : selectedTask.type === "OTP" ? (
+            ) : selectedTask.type === "OTP" || selectedTask.type === "SECURITY_CODE" ? (
               <div className="py-4">
                 <p className="text-center text-sm text-gray-500 dark:text-gray-400 mb-4">
-                  Enter the 6-digit code
+                  {selectedTask.type === "SECURITY_CODE"
+                    ? "Enter the 6-digit security code (6 Haneli Kod)"
+                    : "Enter the 6-digit code"}
                 </p>
                 <OtpInput
                   value={inputValue}

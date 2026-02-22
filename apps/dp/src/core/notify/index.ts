@@ -2,7 +2,7 @@ import type { Logger } from 'pino';
 import { getDb, NotifyDedupeRepository } from '@visa-automation/db';
 import { getConfigService } from '../../config/config-service.js';
 import { getNotifySettings } from './notify-settings.js';
-import { NOTIFY_EMOJI, TELEGRAM_EMOJI } from './severity.js';
+import { TELEGRAM_EMOJI } from './severity.js';
 import { formatTimeTR, formatDateTimeTR, maskApplicant } from './format.js';
 import { telegramSendMessage } from './telegram.js';
 import { dedupeOnce } from './dedupe.js';
@@ -21,6 +21,30 @@ function getCpNotifyContext(tenantId: string) {
     throw new Error('CP_API_URL and CP_INTERNAL_SECRET are required for notify. Set them in environment.');
   }
   return { cpApiUrl, tenantId, internalSecret };
+}
+
+/** Split saved [Ops, Bookings, Watcher] chat IDs. Index 0 = Ops, 1 = Bookings, 2 = Watcher. */
+function getOpsBookingsWatcherChatIds(telegramChatIds: string[]): { ops: string[]; bookings: string[]; watcher: string[] } {
+  const ids = telegramChatIds ?? [];
+  const ops = ids.length > 0 ? [ids[0]] : [];
+  const bookings = ids.length >= 2 ? [ids[1]] : ops;
+  const watcher = ids.length >= 3 && ids[2]?.trim() ? [ids[2].trim()] : [];
+  return { ops, bookings, watcher };
+}
+
+
+/** Telegram only allows HTTPS, non-localhost URLs in inline keyboard buttons. */
+function canUseTelegramActionButtons(actionBase: string): boolean {
+  if (!actionBase) return false;
+  try {
+    const u = new URL(actionBase);
+    if (u.protocol !== 'https:') return false;
+    const host = u.hostname.toLowerCase();
+    if (host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local')) return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function notifySlotFound(args: {
@@ -42,9 +66,9 @@ export async function notifySlotFound(args: {
   const actionToken = notifyConfig.notify_action_token ?? '';
 
   const token = settings.telegram_bot_token;
-  const chatIds = settings.telegram_chat_ids ?? [];
-  if (settings.telegram_enabled && (!token || chatIds.length === 0)) {
-    throw new Error('Telegram enabled but telegram_bot_token or telegram_chat_ids missing in CP notify settings');
+  const { watcher: watcherChatIds } = getOpsBookingsWatcherChatIds(settings.telegram_chat_ids ?? []);
+  if (settings.telegram_enabled && token && watcherChatIds.length === 0) {
+    args.logger.debug({ jobId: args.jobId }, 'SLOT OPEN: Watcher chat ID not configured, skipping Telegram');
   }
   if (!actionToken || actionToken === 'changeme') {
     throw new Error('notify_action_token not set in CP system_settings (notify category)');
@@ -53,9 +77,10 @@ export async function notifySlotFound(args: {
   const now = new Date();
   const datesText = args.dates.slice(0, 10).join(', ');
   const portalLine = args.portalLabel ? `${args.portalId} / ${args.portalLabel}` : args.portalId;
-  const next = args.nextStep ?? 'booking akışına geçiliyor';
+  const next = args.nextStep ?? 'proceeding to booking flow';
 
-  // DB dedupe: one send per (job_id, type, semantic_key)
+  // DB dedupe: one send per (job_id, type, semantic_key). Watcher creates a new job per run,
+  // so each slot-check job can produce one slot_open notify when an agent runs it and finds slots.
   try {
     const first = await notifyDedupe().tryRecordSend(args.jobId, 'slot_open', datesText);
     if (!first) {
@@ -79,15 +104,18 @@ export async function notifySlotFound(args: {
     `Job: <code>${args.jobId}</code>\n` +
     `Next: ${next}`;
 
-  if (token && chatIds.length > 0) {
+  if (token && watcherChatIds.length > 0) {
+    const buttons = canUseTelegramActionButtons(actionBase)
+      ? [
+          { text: '✅ ACK', url: `${actionBase}/api/jobs/${args.jobId}/ack?event=slot_open&token=${encodeURIComponent(actionToken)}` },
+          { text: '🛑 STOP', url: `${actionBase}/api/jobs/${args.jobId}/stop?token=${encodeURIComponent(actionToken)}` },
+        ]
+      : [];
     await telegramSendMessage({
       token,
-      chatIds,
+      chatIds: watcherChatIds,
       text,
-      buttons: [
-        { text: '✅ ACK', url: `${actionBase}/api/jobs/${args.jobId}/ack?event=slot_open&token=${encodeURIComponent(actionToken)}` },
-        { text: '🛑 STOP', url: `${actionBase}/api/jobs/${args.jobId}/stop?token=${encodeURIComponent(actionToken)}` },
-      ],
+      buttons: buttons.length > 0 ? buttons : undefined,
       logger: args.logger,
     });
   }
@@ -111,7 +139,7 @@ export async function notifySlotFound(args: {
   }
 }
 
-export async function notifySlotClosed(args: {
+export async function notifySlotClosed(_args: {
   jobId: string;
   jobRunId: string;
   portalId: string;
@@ -119,32 +147,18 @@ export async function notifySlotClosed(args: {
   baseUrl: string;
   logger: Logger;
 }): Promise<void> {
-  const { cpApiUrl, tenantId, internalSecret } = getCpNotifyContext(args.tenantId);
-  const settings = await getNotifySettings(cpApiUrl, tenantId, internalSecret);
-  const token = settings.telegram_bot_token;
-  const chatIds = settings.telegram_chat_ids ?? [];
-  if (!token || chatIds.length === 0) return;
-
-  const nowIso = new Date().toISOString();
-
-  const text =
-    `${NOTIFY_EMOJI.SLOT_CLOSED} <b>SLOT CLOSED</b>\n` +
-    `• job: <code>${args.jobId}</code>\n` +
-    `• portal: <code>${args.portalId}</code>\n` +
-    `• tenant: <code>${args.tenantId}</code>\n` +
-    `• time: <code>${nowIso}</code>\n` +
-    `• url: ${args.baseUrl}`;
-
-  try {
-    const first = await notifyDedupe().tryRecordSend(args.jobId, 'slot_closed', 'closed');
-    if (!first) return;
-  } catch (e) {
-    const isNew = await dedupeOnce({ key: `notify:slot_closed:${args.jobId}:${args.jobRunId}`, ttlSeconds: 1800 });
-    if (!isNew) return;
-  }
-
-  await telegramSendMessage({ token, chatIds, text, logger: args.logger });
+  // No longer sent to any Telegram channel (Ops = Agent started, HITL, Agent completed; Watcher = SLOT OPEN, HTML Drift)
 }
+
+/**
+ * No longer sent: Bookings channel only gets BOOKED (user requested).
+ */
+export async function notifySlotFoundBookingsSummary(_args: {
+  jobId: string;
+  tenantId: string;
+  portalId: string;
+  logger: Logger;
+}): Promise<void> {}
 
 export async function notifyBookingConfirmed(args: {
   jobId: string;
@@ -161,8 +175,8 @@ export async function notifyBookingConfirmed(args: {
   const { cpApiUrl, tenantId, internalSecret } = getCpNotifyContext(args.tenantId);
   const settings = await getNotifySettings(cpApiUrl, tenantId, internalSecret);
   const token = settings.telegram_bot_token;
-  const chatIds = settings.telegram_chat_ids ?? [];
-  if (!token || chatIds.length === 0) return;
+  const { bookings: bookingsChatIds } = getOpsBookingsWatcherChatIds(settings.telegram_chat_ids ?? []);
+  if (!token || bookingsChatIds.length === 0) return;
 
   try {
     const first = await notifyDedupe().tryRecordSend(args.jobId, 'booked', args.confirmationNumber);
@@ -184,13 +198,13 @@ export async function notifyBookingConfirmed(args: {
   const text =
     `<b>BOOKED</b> ${TELEGRAM_EMOJI.BOOKED}\n` +
     `Confirmation: <code>${args.confirmationNumber}</code>\n` +
-    `Tarih/Saat: ${bookedAt ? formatDateTimeTR(new Date(bookedAt)) : formatDateTimeTR()}\n` +
+    `Date/Time: ${bookedAt ? formatDateTimeTR(new Date(bookedAt)) : formatDateTimeTR()}\n` +
     `Applicant: ${applicantMasked}\n` +
     `Job: <code>${args.jobId}</code>`;
 
   await telegramSendMessage({
     token,
-    chatIds,
+    chatIds: bookingsChatIds,
     text,
     logger: args.logger,
   });
@@ -234,15 +248,15 @@ export async function notifyHitlRequired(args: {
   const panelUrl = `${panelBase}/hitl?job=${args.jobId}`;
 
   const token = settings.telegram_bot_token;
-  const chatIds = settings.telegram_chat_ids ?? [];
-  if (token && chatIds.length > 0) {
+  const { ops: opsChatIds } = getOpsBookingsWatcherChatIds(settings.telegram_chat_ids ?? []);
+  if (token && opsChatIds.length > 0) {
     const text =
       `<b>HITL REQUIRED</b> ${TELEGRAM_EMOJI.HITL_REQUIRED}\n` +
       `Type: <code>${args.hitlType}</code>\n` +
       `Link: ${panelUrl}\n` +
       `Expires: ${args.expiresSeconds}s\n` +
       `Job: <code>${args.jobId}</code>`;
-    await telegramSendMessage({ token, chatIds, text, logger: args.logger });
+    await telegramSendMessage({ token, chatIds: opsChatIds, text, logger: args.logger });
   }
 
   const smtp = smtpConfigFromNotifySettings(settings);
@@ -260,4 +274,79 @@ export async function notifyHitlRequired(args: {
       args.logger.warn({ jobId: args.jobId, err: e }, 'HITL required email failed');
     }
   }
+}
+
+/** Ops only: Agent started (detailed). */
+export async function notifyAgentStarted(args: {
+  jobId: string;
+  jobRunId: string;
+  tenantId: string;
+  portalId: string;
+  portalLabel?: string;
+  agentId: string | null;
+  agentName: string | null;
+  visaType?: string;
+  priority?: number;
+  logger: Logger;
+}): Promise<void> {
+  const { cpApiUrl, tenantId, internalSecret } = getCpNotifyContext(args.tenantId);
+  const settings = await getNotifySettings(cpApiUrl, tenantId, internalSecret);
+  const token = settings.telegram_bot_token;
+  const { ops: opsChatIds } = getOpsBookingsWatcherChatIds(settings.telegram_chat_ids ?? []);
+  if (!token || opsChatIds.length === 0) return;
+
+  const portalLine = args.portalLabel ? `${args.portalId} / ${args.portalLabel}` : args.portalId;
+  const agentLine = args.agentName ?? args.agentId ?? '—';
+  const visaLine = args.visaType != null ? `Visa: ${args.visaType}` : '';
+  const prioLine = args.priority != null ? `Priority: ${args.priority}` : '';
+  const extra = [visaLine, prioLine].filter(Boolean).join(' · ') || '—';
+
+  const text =
+    `<b>Agent başladı</b>\n` +
+    `Job: <code>${args.jobId}</code> · Run: <code>${args.jobRunId}</code>\n` +
+    `Portal: <code>${portalLine}</code>\n` +
+    `Agent: ${agentLine}\n` +
+    `${extra}`;
+
+  await telegramSendMessage({ token, chatIds: opsChatIds, text, logger: args.logger });
+}
+
+/** Ops only: Agent completed (detailed). */
+export async function notifyAgentCompleted(args: {
+  jobId: string;
+  jobRunId: string;
+  tenantId: string;
+  portalId: string;
+  portalLabel?: string;
+  agentId: string | null;
+  agentName: string | null;
+  status: 'completed' | 'failed' | 'cancelled' | 'slot_found' | 'waiting_hitl' | 'waiting_slot';
+  details?: string;
+  confirmationNumber?: string;
+  errorMessage?: string;
+  logger: Logger;
+}): Promise<void> {
+  const { cpApiUrl, tenantId, internalSecret } = getCpNotifyContext(args.tenantId);
+  const settings = await getNotifySettings(cpApiUrl, tenantId, internalSecret);
+  const token = settings.telegram_bot_token;
+  const { ops: opsChatIds } = getOpsBookingsWatcherChatIds(settings.telegram_chat_ids ?? []);
+  if (!token || opsChatIds.length === 0) return;
+
+  const portalLine = args.portalLabel ? `${args.portalId} / ${args.portalLabel}` : args.portalId;
+  const agentLine = args.agentName ?? args.agentId ?? '—';
+  const detailParts: string[] = [];
+  if (args.confirmationNumber) detailParts.push(`Conf: ${args.confirmationNumber}`);
+  if (args.errorMessage) detailParts.push(`Error: ${args.errorMessage}`);
+  if (args.details) detailParts.push(args.details);
+  const detailLine = detailParts.length > 0 ? detailParts.join(' · ') : '—';
+
+  const text =
+    `<b>Agent tamamlandı</b>\n` +
+    `Job: <code>${args.jobId}</code> · Run: <code>${args.jobRunId}</code>\n` +
+    `Portal: <code>${portalLine}</code>\n` +
+    `Agent: ${agentLine}\n` +
+    `Status: <code>${args.status}</code>\n` +
+    `${detailLine}`;
+
+  await telegramSendMessage({ token, chatIds: opsChatIds, text, logger: args.logger });
 }

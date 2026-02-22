@@ -33,6 +33,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       name?: string;
       portal_id?: string;
       profile_id?: string;
+      is_scout?: string;
       limit?: string;
       offset?: string;
     };
@@ -56,6 +57,17 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     }
     if (request.query.profile_id) {
       query.profile_id = request.query.profile_id;
+    }
+    if (request.query.is_scout === 'true') {
+      const scoutIds = await profileRepo.findScoutProfileIds(request.tenantId);
+      if (scoutIds.length === 0) {
+        return {
+          success: true,
+          data: { items: [], total: 0, async_count: 0, sync_count: 0 },
+          meta: { request_id: request.id, timestamp: new Date().toISOString() },
+        };
+      }
+      query.profile_ids = scoutIds;
     }
 
     const rawAgents = await agentRepo.findByTenantId(request.tenantId, query);
@@ -137,6 +149,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     }
 
     // Validate profile exists if provided
+    let profileIsScout = false;
     if (profile_id) {
       const profile = await profileRepo.findById(request.tenantId, profile_id);
       if (!profile) {
@@ -147,6 +160,32 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
             message: 'Profile not found or belongs to different tenant',
           },
         });
+      }
+      profileIsScout = profile.is_scout ?? false;
+    }
+
+    // Max one watcher (scout) per portal: if this agent would be a scout with portals, check no other scout has those portals
+    if (profileIsScout) {
+      const portals = Array.isArray(desired_portals) ? desired_portals : [];
+      if (portals.length > 0 && typeof agentRepo.findScoutAgentsWithPortals === 'function') {
+        const scoutIds = await profileRepo.findScoutProfileIds(request.tenantId);
+        const existing = await agentRepo.findScoutAgentsWithPortals(request.tenantId, scoutIds, portals);
+        if (existing.length > 0) {
+          const taken = new Set<string>();
+          for (const a of existing) {
+            for (const p of (a.desired_portals ?? []) as string[]) {
+              if (portals.includes(p)) taken.add(p);
+            }
+          }
+          return reply.status(400).send({
+            success: false,
+            error: {
+              code: 'PORTAL_ALREADY_HAS_WATCHER',
+              message: `Portal(s) ${[...taken].join(', ')} already have a watcher assigned. Max one watcher per portal.`,
+              portals: [...taken],
+            },
+          });
+        }
       }
     }
 
@@ -206,6 +245,42 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
           message: 'Draining can only be set when the agent has an active job',
         },
       });
+    }
+
+    // Resolve effective profile and portals after update (for watcher-per-portal check)
+    const effectiveProfileId = body.profile_id !== undefined ? body.profile_id : agent.profile_id;
+    const effectivePortals = body.desired_portals !== undefined
+      ? (Array.isArray(body.desired_portals) ? body.desired_portals : [])
+      : (agent.desired_portals ?? []);
+
+    // Max one watcher per portal: if this agent would be a scout with portals, ensure no other scout has those portals
+    if (effectiveProfileId && effectivePortals.length > 0 && typeof agentRepo.findScoutAgentsWithPortals === 'function') {
+      const profile = await profileRepo.findById(request.tenantId, effectiveProfileId);
+      if (profile?.is_scout) {
+        const scoutIds = await profileRepo.findScoutProfileIds(request.tenantId);
+        const existing = await agentRepo.findScoutAgentsWithPortals(
+          request.tenantId,
+          scoutIds,
+          effectivePortals,
+          request.params.id
+        );
+        if (existing.length > 0) {
+          const taken = new Set<string>();
+          for (const a of existing) {
+            for (const p of (a.desired_portals ?? []) as string[]) {
+              if (effectivePortals.includes(p)) taken.add(p);
+            }
+          }
+          return reply.status(400).send({
+            success: false,
+            error: {
+              code: 'PORTAL_ALREADY_HAS_WATCHER',
+              message: `Portal(s) ${[...taken].join(', ')} already have a watcher assigned. Max one watcher per portal.`,
+              portals: [...taken],
+            },
+          });
+        }
+      }
     }
 
     // Build update object
@@ -329,6 +404,10 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
+    const profileConfig = profile
+      ? { ...profile.config, is_scout: profile.is_scout ?? false }
+      : undefined;
+
     return {
       success: true,
       data: {
@@ -336,7 +415,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
         disabled: agent.status === 'DISABLED',
         draining: agent.status === 'DRAINING',
         config_changed: configChanged,
-        profile: profile?.config,
+        profile: profileConfig,
         desired_portals: updated?.desired_portals ?? [],
         desired_concurrency: updated?.desired_concurrency ?? 1,
       },

@@ -20,6 +20,14 @@ function requireEnv(name: string): string {
 
 const CP_API_URL = requireEnv('CP_API_URL');
 
+/** Thrown when job transitions to WAITING_HITL; runner must not release the agent (no completeJob/failJob). */
+export class HitlWaitingError extends Error {
+  constructor(public readonly jobId: string) {
+    super(`Job ${jobId} waiting for HITL`);
+    this.name = 'HitlWaitingError';
+  }
+}
+
 /**
  * Fetch full portal config from CP (Admin Portals). When the portal exists in DB with base_url
  * and config (timeouts, pacing, rateLimit, proxy, hitl, selectorsVersion), that becomes the
@@ -59,6 +67,24 @@ async function fetchPortalConfigFromCP(
         primary.hitl = data.config.hitl as PortalConfig['hitl'];
       if (typeof data.config.selectorsVersion === 'string')
         primary.selectorsVersion = data.config.selectorsVersion;
+      if (typeof data.config.minRunDurationMs === 'number' && data.config.minRunDurationMs >= 0)
+        primary.minRunDurationMs = data.config.minRunDurationMs;
+      if (typeof data.config.mouseMoveIntervalMs === 'number' && data.config.mouseMoveIntervalMs > 0)
+        primary.mouseMoveIntervalMs = data.config.mouseMoveIntervalMs;
+      if (typeof data.config.mouseMoveSegmentsMin === 'number' && data.config.mouseMoveSegmentsMin >= 0)
+        primary.mouseMoveSegmentsMin = data.config.mouseMoveSegmentsMin;
+      if (typeof data.config.mouseMoveSegmentsMax === 'number' && data.config.mouseMoveSegmentsMax > 0)
+        primary.mouseMoveSegmentsMax = data.config.mouseMoveSegmentsMax;
+      if (typeof data.config.mouseMoveJitterPx === 'number' && data.config.mouseMoveJitterPx >= 0)
+        primary.mouseMoveJitterPx = data.config.mouseMoveJitterPx;
+      if (typeof data.config.mouseMoveStepsMin === 'number' && data.config.mouseMoveStepsMin > 0)
+        primary.mouseMoveStepsMin = data.config.mouseMoveStepsMin;
+      if (typeof data.config.mouseMoveStepsMax === 'number' && data.config.mouseMoveStepsMax > 0)
+        primary.mouseMoveStepsMax = data.config.mouseMoveStepsMax;
+      if (typeof data.config.mouseMoveDelayMinMs === 'number' && data.config.mouseMoveDelayMinMs >= 0)
+        primary.mouseMoveDelayMinMs = data.config.mouseMoveDelayMinMs;
+      if (typeof data.config.mouseMoveDelayMaxMs === 'number' && data.config.mouseMoveDelayMaxMs >= 0)
+        primary.mouseMoveDelayMaxMs = data.config.mouseMoveDelayMaxMs;
     }
     return primary;
   } catch {
@@ -66,7 +92,12 @@ async function fetchPortalConfigFromCP(
   }
 }
 import { scheduleSlotRetry } from './core/queue/schedule-retry.js';
-import { notifyBookingConfirmed, notifyHitlRequired } from './core/notify/index.js';
+import {
+  notifyAgentStarted,
+  notifyAgentCompleted,
+  notifyBookingConfirmed,
+  notifyHitlRequired,
+} from './core/notify/index.js';
 import { notifyJobCompletedEmail } from './core/notify/email.js';
 import { classifyError } from './core/errors/classify.js';
 import { metrics } from './core/observability/metrics.js';
@@ -78,7 +109,9 @@ export async function processJob(
   payload: JobQueuePayload,
   workerId: string,
   logger: Logger,
-  profileConfig?: AgentProfileConfig | null
+  profileConfig?: AgentProfileConfig | null,
+  agentId?: string | null,
+  agentName?: string | null
 ): Promise<void> {
   const jobRepo = new JobRepository(db.instance);
   const eventRepo = new JobEventRepository(db.instance);
@@ -98,15 +131,17 @@ export async function processJob(
 
   let runStartMs = 0;
   let jobLogger: Logger = logger;
+  let jobRun: { id: string } | undefined;
 
   try {
-    // Create job run record
-    const jobRun = await db.instance
+    // Create job run record (agent_id for job details UI)
+    jobRun = await db.instance
       .insertInto('job_runs')
       .values({
         job_id,
         tenant_id,
         worker_id: workerId,
+        agent_id: agentId ?? null,
         attempt_number: payload.attempt_number,
         status: 'RUNNING',
       })
@@ -143,6 +178,22 @@ export async function processJob(
     });
     const portal = getPortal(portalConfig.portalId);
 
+    try {
+      await notifyAgentStarted({
+        jobId: job_id,
+        jobRunId: jobRun.id,
+        tenantId: tenant_id,
+        portalId: portalConfig.portalId,
+        agentId: agentId ?? null,
+        agentName: agentName ?? null,
+        visaType: (payload as unknown as Record<string, unknown>).visa_type as string | undefined,
+        priority: (payload as unknown as Record<string, unknown>).priority as number | undefined,
+        logger: jobLogger,
+      });
+    } catch (e) {
+      jobLogger.warn({ err: e }, 'Agent started notify failed');
+    }
+
     // Run portal automation (temporary hook; FSM integration coming next)
     const portalResult = await portal.run({
       jobId: job_id,
@@ -153,7 +204,27 @@ export async function processJob(
 
     // Run the FSM with this portal's registered handlers
     const handlers = getFSMHandlers(portalConfig.portalId);
-    const result = await runFSM(payload, workerId, jobRun.id, jobLogger, portal, portalConfig, handlers);
+    const result = await runFSM(
+      payload,
+      workerId,
+      jobRun.id,
+      jobLogger,
+      portal,
+      portalConfig,
+      handlers,
+      (profileConfig?.fingerprint as { enabled?: boolean } | undefined)
+    );
+
+    // Optional: enforce minimum run duration (human-like timing)
+    const minRunMs = portalConfig.minRunDurationMs;
+    if (minRunMs != null && minRunMs > 0) {
+      const elapsed = Date.now() - runStartMs;
+      if (elapsed < minRunMs) {
+        const waitMs = minRunMs - elapsed;
+        jobLogger.debug({ waitMs, minRunDurationMs: minRunMs }, 'Sleeping to meet min run duration');
+        await new Promise((r) => setTimeout(r, waitMs));
+      }
+    }
 
     // Confirmation number override (if portal produced one)
     if (portalResult.confirmationNumber) {
@@ -169,6 +240,21 @@ export async function processJob(
       metrics.gauge('dp_job_run_duration_ms').set(Date.now() - runStartMs);
       metrics.counter('dp_job_completions_total', { status: 'cancelled' }).inc(1);
       jobLogger.info({}, 'Job cancelled (STOP) - halted gracefully');
+      try {
+        await notifyAgentCompleted({
+          jobId: job_id,
+          jobRunId: jobRun.id,
+          tenantId: tenant_id,
+          portalId: portalConfig.portalId,
+          agentId: agentId ?? null,
+          agentName: agentName ?? null,
+          status: 'cancelled',
+          details: 'Stopped by user',
+          logger: jobLogger,
+        });
+      } catch (e) {
+        jobLogger.warn({ err: e }, 'Agent completed notify failed');
+      }
       return;
     }
 
@@ -194,12 +280,34 @@ export async function processJob(
       metrics.gauge('dp_job_run_duration_ms').set(Date.now() - runStartMs);
       metrics.counter('dp_job_completions_total', { status: 'slot_found' }).inc(1);
       jobLogger.info({}, 'Job halted at SLOT_FOUND (MVP)');
+      try {
+        await notifyAgentCompleted({
+          jobId: job_id,
+          jobRunId: jobRun.id,
+          tenantId: tenant_id,
+          portalId: portalConfig.portalId,
+          agentId: agentId ?? null,
+          agentName: agentName ?? null,
+          status: 'slot_found',
+          details: 'Halted at SLOT_FOUND (MVP)',
+          logger: jobLogger,
+        });
+      } catch (e) {
+        jobLogger.warn({ err: e }, 'Agent completed notify failed');
+      }
       return;
     }
 
     // Check if job is waiting for a slot
     if (result.lastState === JOB_STATES.WAITING_SLOT) {
-      const { delayMs, skipped } = await scheduleSlotRetry(payload);
+      const retryRaw = profileConfig?.retry as Record<string, unknown> | undefined;
+      const profileRetry: { maxRetries?: number; retryDelayMs?: number } | undefined = retryRaw
+        ? {
+            maxRetries: typeof retryRaw.maxRetries === 'number' ? retryRaw.maxRetries : typeof retryRaw.maxAttempts === 'number' ? retryRaw.maxAttempts : undefined,
+            retryDelayMs: typeof retryRaw.backoffMs === 'number' ? retryRaw.backoffMs : typeof retryRaw.delayMs === 'number' ? retryRaw.delayMs : undefined,
+          }
+        : undefined;
+      const { delayMs, skipped } = await scheduleSlotRetry(payload, profileRetry);
 
       if (skipped) {
         await jobRepo.updateStatus(job_id, JOB_STATES.FAILED_RETRYABLE, {
@@ -221,6 +329,21 @@ export async function processJob(
         metrics.counter('dp_job_errors_total', { kind: 'retryable' }).inc(1);
         metrics.counter('dp_job_retries_total').inc(1);
         jobLogger.warn({ attempt: payload.attempt_number }, 'Slot retry skipped: max_retries exceeded');
+        try {
+          await notifyAgentCompleted({
+            jobId: job_id,
+            jobRunId: jobRun.id,
+            tenantId: tenant_id,
+            portalId: portalConfig.portalId,
+            agentId: agentId ?? null,
+            agentName: agentName ?? null,
+            status: 'failed',
+            details: 'Max retries exceeded',
+            logger: jobLogger,
+          });
+        } catch (e) {
+          jobLogger.warn({ err: e }, 'Agent completed notify failed');
+        }
         return;
       }
 
@@ -241,25 +364,83 @@ export async function processJob(
 
       metrics.counter('dp_job_retries_total').inc(1);
       jobLogger.info({ delayMs }, 'Job scheduled for slot retry');
+      try {
+        await notifyAgentCompleted({
+          jobId: job_id,
+          jobRunId: jobRun.id,
+          tenantId: tenant_id,
+          portalId: portalConfig.portalId,
+          agentId: agentId ?? null,
+          agentName: agentName ?? null,
+          status: 'waiting_slot',
+          details: `Scheduled retry in ${delayMs}ms`,
+          logger: jobLogger,
+        });
+      } catch (e) {
+        jobLogger.warn({ err: e }, 'Agent completed notify failed');
+      }
       return;
     }
 
-    // Check if HITL was triggered
+    // Slot-check-only job aborted (e.g. security code on page): no HITL, just retry later
+    if (result.slotCheckAborted) {
+      const reason =
+        result.abortReason === 'security_code'
+          ? 'Slot check could not complete (security code on page); will retry'
+          : 'Slot check could not complete; will retry';
+      await jobRepo.updateStatus(job_id, JOB_STATES.FAILED_RETRYABLE);
+      await eventRepo.createStateTransition(
+        job_id,
+        tenant_id,
+        result.lastState,
+        JOB_STATES.FAILED_RETRYABLE,
+        { reason },
+        jobRun.id
+      );
+      await db.instance
+        .updateTable('job_runs')
+        .set({ status: 'FAILED', finished_at: new Date(), error_message: reason })
+        .where('id', '=', jobRun.id)
+        .execute();
+      jobLogger.info({ abortReason: result.abortReason }, 'Slot-check aborted; marked FAILED_RETRYABLE');
+      try {
+        await notifyAgentCompleted({
+          jobId: job_id,
+          jobRunId: jobRun.id,
+          tenantId: tenant_id,
+          portalId: portalConfig.portalId,
+          agentId: agentId ?? null,
+          agentName: agentName ?? null,
+          status: 'failed',
+          details: reason,
+          logger: jobLogger,
+        });
+      } catch (e) {
+        jobLogger.warn({ err: e }, 'Agent completed notify failed');
+      }
+      throw new Error(reason);
+    }
+
+    // Check if HITL was triggered (normal jobs only; slot-check jobs use slotCheckAborted above)
     if (result.hitlTriggered) {
       const hitlType = result.hitlType ?? 'CAPTCHA';
+      const hitlExpiresSeconds =
+        portalConfig.hitl.maxWaitSeconds > 0 ? portalConfig.hitl.maxWaitSeconds : undefined;
       const taskId = await createHitlTask({
         job_id,
         job_run_id: jobRun.id,
         tenant_id,
         type: hitlType,
         context: result.hitlContext ?? { prompt: 'Please solve the captcha', input_type: 'text' },
+        timeoutSeconds: hitlExpiresSeconds,
       });
 
+      const notifyExpiresSeconds = hitlExpiresSeconds ?? 180;
       await notifyHitlRequired({
         jobId: job_id,
         hitlType,
         taskId,
-        expiresSeconds: 180,
+        expiresSeconds: notifyExpiresSeconds,
         tenantId: tenant_id,
         logger: jobLogger,
       });
@@ -289,7 +470,7 @@ export async function processJob(
         .execute();
 
       jobLogger.info({ hitlType: result.hitlType }, 'Job waiting for HITL');
-      return;
+      throw new HitlWaitingError(job_id);
     }
 
     // Job completed successfully
@@ -349,6 +530,22 @@ export async function processJob(
       jobLogger.error({ err: e }, 'Booking notification failed');
     }
 
+    try {
+      await notifyAgentCompleted({
+        jobId: job_id,
+        jobRunId: jobRun.id,
+        tenantId: tenant_id,
+        portalId: portalConfig.portalId,
+        agentId: agentId ?? null,
+        agentName: agentName ?? null,
+        status: 'completed',
+        confirmationNumber: result.confirmationNumber,
+        logger: jobLogger,
+      });
+    } catch (e) {
+      jobLogger.warn({ err: e }, 'Agent completed notify failed');
+    }
+
   } catch (err) {
     const kind = classifyError(err);
     if (runStartMs > 0) {
@@ -371,6 +568,24 @@ export async function processJob(
       { error: (err as Error).message, error_kind: kind },
       undefined
     );
+
+    if (jobRun) {
+      try {
+        await notifyAgentCompleted({
+          jobId: job_id,
+          jobRunId: jobRun.id,
+          tenantId: tenant_id,
+          portalId: (payload.portal_id as string) ?? 'unknown',
+          agentId: agentId ?? null,
+          agentName: agentName ?? null,
+          status: 'failed',
+          errorMessage: (err as Error).message,
+          logger: jobLogger,
+        });
+      } catch (e) {
+        jobLogger.warn({ err: e }, 'Agent completed notify failed');
+      }
+    }
 
     throw err;
   } finally {

@@ -4,7 +4,7 @@ import { pino } from 'pino';
 import { closeDb } from '@visa-automation/db';
 import { closeBrowser } from './core/browser/browser-manager.js';
 import { closeQueue } from './core/queue/queue.js';
-import { AgentPool, AsyncAgentRunner, SyncAgentRunner } from './agent-pool/index.js';
+import { AgentPool, AsyncAgentRunner, SyncAgentRunner, ScoutAgentRunner } from './agent-pool/index.js';
 import { processJob } from './processor.js';
 import { getConfigService, type ConfigService } from './config/config-service.js';
 import { startHealthServer } from './core/observability/health-server.js';
@@ -40,6 +40,7 @@ let configService: ConfigService | null = null;
 let agentPool: AgentPool | null = null;
 let asyncRunner: AsyncAgentRunner | null = null;
 let syncRunner: SyncAgentRunner | null = null;
+let scoutRunner: ScoutAgentRunner | null = null;
 let redisConnection: RedisType | null = null;
 let healthServerClose: (() => Promise<void>) | null = null;
 
@@ -78,6 +79,7 @@ async function main() {
   const systemConfig = configService.get('system');
   const ASYNC_AGENT_COUNT = systemConfig.default_async_agent_count;
   const SYNC_AGENT_COUNT = systemConfig.default_sync_agent_count;
+  const SCOUT_AGENT_COUNT = systemConfig.default_scout_agent_count ?? 0;
   const HEARTBEAT_INTERVAL_MS = systemConfig.heartbeat_interval_ms;
   const CONFIG_REFRESH_INTERVAL_MS = systemConfig.config_refresh_interval_ms;
   const SYNC_POLL_INTERVAL_MS = systemConfig.sync_poll_interval_ms;
@@ -90,6 +92,7 @@ async function main() {
     publicApiUrl: PUBLIC_API_URL,
     asyncAgents: ASYNC_AGENT_COUNT,
     syncAgents: SYNC_AGENT_COUNT,
+    scoutAgents: SCOUT_AGENT_COUNT,
     heartbeatInterval: HEARTBEAT_INTERVAL_MS,
     configRefreshInterval: CONFIG_REFRESH_INTERVAL_MS,
     configSource: 'cp',
@@ -116,20 +119,24 @@ async function main() {
   const hydratedStats = agentPool.getStats();
   const needAsyncAgents = Math.max(0, ASYNC_AGENT_COUNT - hydratedStats.asyncCount);
   const needSyncAgents = Math.max(0, SYNC_AGENT_COUNT - hydratedStats.syncCount);
+  const needScoutAgents = Math.max(0, SCOUT_AGENT_COUNT - hydratedStats.scoutCount);
 
-  logger.info({ 
-    hydrated: hydratedStats, 
-    needAsync: needAsyncAgents, 
-    needSync: needSyncAgents 
+  logger.info({
+    hydrated: hydratedStats,
+    needAsync: needAsyncAgents,
+    needSync: needSyncAgents,
+    needScout: needScoutAgents,
   }, 'Agent counts after hydration');
 
-  // Default agent names: visor-agent-1, visor-agent-2, ... (worker-1); else visor-agent-{workerId}-1, ...
   const agentName = (index: number) =>
     WORKER_ID === 'worker-1'
       ? `visor-agent-${index}`
       : `visor-agent-${WORKER_ID}-${index}`;
+  const scoutAgentName = (index: number) =>
+    WORKER_ID === 'worker-1'
+      ? `visor-scout-${index}`
+      : `visor-scout-${WORKER_ID}-${index}`;
 
-  // Create additional ASYNC agents if needed
   for (let i = 0; i < needAsyncAgents; i++) {
     try {
       await agentPool.createAgent({
@@ -141,7 +148,6 @@ async function main() {
     }
   }
 
-  // Create additional SYNC agents if needed
   for (let i = 0; i < needSyncAgents; i++) {
     try {
       await agentPool.createAgent({
@@ -150,6 +156,26 @@ async function main() {
       });
     } catch (err) {
       logger.error({ err, agentNum: i + 1 }, 'Failed to create sync agent');
+    }
+  }
+
+  let scoutProfileId: string | null = null;
+  if (needScoutAgents > 0) {
+    scoutProfileId = await agentPool.getCPClient().getScoutProfileId();
+    if (!scoutProfileId) {
+      logger.warn('Scout agent count > 0 but no Scout profile found in CP; create a profile with is_scout=true and create scout agents');
+    }
+  }
+  for (let i = 0; i < needScoutAgents; i++) {
+    if (!scoutProfileId) break;
+    try {
+      await agentPool.createAgent({
+        name: scoutAgentName(hydratedStats.scoutCount + i + 1),
+        mode: 'ASYNC',
+        profileId: scoutProfileId,
+      });
+    } catch (err) {
+      logger.error({ err, scoutNum: i + 1 }, 'Failed to create scout agent');
     }
   }
 
@@ -185,6 +211,17 @@ async function main() {
     await syncRunner.start();
   }
 
+  // Slot-check queue is consumed only by scout agents; watcher is disabled when no scout agent (CP validates on enable)
+  scoutRunner = new ScoutAgentRunner({
+    agentPool,
+    redis: getRedisConnection(),
+    logger,
+    workerId: WORKER_ID,
+    processJob,
+    useFallbackToAsyncAgents: false,
+  });
+  await scoutRunner.start();
+
   logger.info('Worker started, waiting for jobs...');
 }
 
@@ -207,6 +244,10 @@ async function shutdown(signal: string) {
 
   if (syncRunner) {
     await syncRunner.stop();
+  }
+
+  if (scoutRunner) {
+    await scoutRunner.stop();
   }
 
   if (agentPool) {

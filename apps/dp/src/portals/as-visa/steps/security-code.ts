@@ -1,4 +1,4 @@
 /**
- * 6 haneli kod / CAPTCHA / Turnstile adımı.
- * İleride HITL veya otomatik çözüm ile kullanılacak; şu an stub.
+ * 6-digit code / CAPTCHA / Turnstile step.
+ * To be used with HITL or auto-solver later; currently a stub.
  */

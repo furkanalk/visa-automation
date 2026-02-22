@@ -23,6 +23,7 @@ const TASK_TYPE_CONFIG: Record<
   TURNSTILE: { icon: Shield, label: "Turnstile", color: "default" },
   CAPTCHA: { icon: Image, label: "CAPTCHA", color: "warning" },
   OTP: { icon: Key, label: "OTP Code", color: "destructive" },
+  SECURITY_CODE: { icon: Key, label: "Security Code", color: "destructive" },
   DOCUMENT_CLARIFICATION: { icon: FileQuestion, label: "Document", color: "secondary" },
   MANUAL_REVIEW: { icon: Eye, label: "Review", color: "secondary" },
   CUSTOM_INPUT: { icon: Keyboard, label: "Input", color: "default" },
@@ -53,7 +54,7 @@ export function TaskCard({ task, onSelect, isAssigned }: TaskCardProps) {
             <div
               className={cn(
                 "p-2 rounded-lg",
-                task.type === "OTP"
+                task.type === "OTP" || task.type === "SECURITY_CODE"
                   ? "bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400"
                   : task.type === "CAPTCHA"
                   ? "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-600 dark:text-yellow-400"

@@ -57,18 +57,22 @@ export class CPClient {
     mode: AgentMode;
     desiredPortals?: string[];
     desiredConcurrency?: number;
+    profileId?: string;
     metadata?: AgentMetadata;
   }): Promise<AgentRegistrationResponse> {
+    const body: Record<string, unknown> = {
+      name: params.name,
+      mode: params.mode,
+      desired_portals: params.desiredPortals ?? [],
+      desired_concurrency: params.desiredConcurrency ?? 1,
+      metadata: params.metadata ?? {},
+    };
+    if (params.profileId) body.profile_id = params.profileId;
+
     const response = await fetch(`${this.baseUrl}/cp/agents`, {
       method: 'POST',
       headers: this.getHeaders(),
-      body: JSON.stringify({
-        name: params.name,
-        mode: params.mode,
-        desired_portals: params.desiredPortals ?? [],
-        desired_concurrency: params.desiredConcurrency ?? 1,
-        metadata: params.metadata ?? {},
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
@@ -169,6 +173,18 @@ export class CPClient {
 
     const result = await response.json() as ApiResponse<{ config: AgentProfileConfig }>;
     return result.data?.config ?? null;
+  }
+
+  /** First scout profile id for this tenant (for creating scout agents). Returns null if none. */
+  async getScoutProfileId(): Promise<string | null> {
+    const response = await fetch(`${this.baseUrl}/cp/profiles?is_scout=true&limit=1`, {
+      method: 'GET',
+      headers: this.getHeaders(),
+    });
+    if (!response.ok) return null;
+    const result = await response.json() as ApiResponse<{ items: Array<{ id: string }> }>;
+    const first = result.data?.items?.[0];
+    return first?.id ?? null;
   }
 
   async getDefaultProfile(): Promise<{ id: string; config: AgentProfileConfig } | null> {

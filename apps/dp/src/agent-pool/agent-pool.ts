@@ -50,23 +50,34 @@ export class AgentPool extends EventEmitter {
   }
 
   /**
-   * Hydrate local agent map from CP (restart recovery)
-   * Only hydrates agents that belong to this worker (metadata.worker_id).
+   * Hydrate local agent map from CP (restart recovery).
+   * Only lists ONLINE and DRAINING agents (OFFLINE must not run).
+   * Includes agents that belong to this worker (metadata.worker_id) and unclaimed agents
+   * (no worker_id), e.g. created in Admin UI and set to ONLINE. Unclaimed get our worker_id
+   * on first heartbeat so they are claimed by this worker.
    */
   private async hydrateFromCP(): Promise<void> {
     try {
-      const existingAgents = await this.cpClient.listAgents({ status: ['ONLINE', 'DRAINING'] });
+      const existingAgents = await this.cpClient.listAgents({
+        status: ['ONLINE', 'DRAINING'],
+      });
+      const metaOf = (a: AgentRegistrationResponse) => (a.metadata as { worker_id?: string } | undefined) ?? {};
       const workerAgents = existingAgents.filter(a => {
-        const meta = a.metadata as { worker_id?: string } | undefined;
-        return meta?.worker_id === this.config.workerId;
+        const meta = metaOf(a);
+        const claimedByUs = meta.worker_id === this.config.workerId;
+        const unclaimed = meta.worker_id === undefined || meta.worker_id === null || meta.worker_id === '';
+        return claimedByUs || unclaimed;
       });
 
-      this.logger.info({ count: workerAgents.length }, 'Hydrating existing agents from CP');
+      this.logger.info(
+        { count: workerAgents.length, total: existingAgents.length },
+        'Hydrating existing agents from CP'
+      );
 
       for (const cpAgent of workerAgents) {
         const runtime = await this.hydrateAgent(cpAgent);
         this.agents.set(runtime.id, runtime);
-        this.logger.info({ agentId: runtime.id, mode: runtime.mode }, 'Agent hydrated');
+        this.logger.info({ agentId: runtime.id, mode: runtime.mode, isScout: !!runtime.profile?.is_scout }, 'Agent hydrated');
       }
     } catch (err) {
       this.logger.warn({ err }, 'Failed to hydrate agents from CP (will create new ones)');
@@ -78,6 +89,12 @@ export class AgentPool extends EventEmitter {
     if (cpAgent.profile_id) {
       profile = await this.getProfile(cpAgent.profile_id);
     }
+
+    const meta = (cpAgent.metadata as { worker_id?: string } | undefined) ?? {};
+    const unclaimed = meta.worker_id === undefined || meta.worker_id === null || meta.worker_id === '';
+    const metadata = unclaimed
+      ? { worker_id: this.config.workerId, worker_pid: process.pid, started_at: new Date().toISOString() }
+      : { ...meta };
 
     return {
       id: cpAgent.id,
@@ -91,7 +108,7 @@ export class AgentPool extends EventEmitter {
       desiredConcurrency: cpAgent.desired_concurrency,
       currentJobId: cpAgent.current_job_id ?? null,
       lastHeartbeatAt: null,
-      metadata: {},
+      metadata,
     };
   }
 
@@ -100,13 +117,13 @@ export class AgentPool extends EventEmitter {
     mode: 'ASYNC' | 'SYNC';
     portals?: string[];
     concurrency?: number;
+    profileId?: string;
   }): Promise<AgentRuntime> {
     if (this.agents.size >= this.config.maxAgents) {
       throw new Error(`Max agent limit reached (${this.config.maxAgents})`);
     }
-    this.logger.info({ name: params.name, mode: params.mode }, 'Creating agent');
+    this.logger.info({ name: params.name, mode: params.mode, profileId: params.profileId }, 'Creating agent');
 
-    // Reuse existing agent by name (e.g. after DP restart); updates go via PATCH, POST is create-only
     let registration = await this.cpClient.getAgentByName(params.name);
     if (registration) {
       this.logger.info({ agentId: registration.id, name: params.name }, 'Reusing existing agent');
@@ -116,6 +133,7 @@ export class AgentPool extends EventEmitter {
         mode: params.mode,
         desiredPortals: params.portals,
         desiredConcurrency: params.concurrency,
+        profileId: params.profileId,
         metadata: { worker_id: this.config.workerId, worker_pid: process.pid, started_at: new Date().toISOString() },
       });
     }
@@ -163,6 +181,16 @@ export class AgentPool extends EventEmitter {
     return this.getAllAgents().filter(a => a.mode === 'ASYNC' && a.status === 'IDLE');
   }
 
+  /** Idle ASYNC agents that are not scout (for main job queue) */
+  getIdleAsyncAgentsNonScout(): AgentRuntime[] {
+    return this.getIdleAsyncAgents().filter(a => !a.profile?.is_scout);
+  }
+
+  /** Idle ASYNC agents with scout profile (for slot-check queue) */
+  getIdleScoutAgents(): AgentRuntime[] {
+    return this.getIdleAsyncAgents().filter(a => a.profile?.is_scout === true);
+  }
+
   getIdleSyncAgents(): AgentRuntime[] {
     return this.getAllAgents().filter(a => a.mode === 'SYNC' && a.status === 'IDLE');
   }
@@ -208,6 +236,21 @@ export class AgentPool extends EventEmitter {
         this.logger.info({ agentId }, 'Draining complete, agent set to OFFLINE in CP');
       } catch (err) {
         this.logger.warn({ agentId, err }, 'Failed to set agent OFFLINE in CP after drain');
+      }
+    }
+  }
+
+  /**
+   * Release any agent that is holding this job (e.g. after HITL requeue).
+   * Call before finding an available agent so the same agent can pick the job up again.
+   */
+  releaseJobFromAgent(jobId: string): void {
+    for (const agent of this.agents.values()) {
+      if (agent.currentJobId === jobId) {
+        agent.currentJobId = null;
+        agent.status = agent.status === 'DRAINING' ? 'STOPPED' : 'IDLE';
+        this.logger.info({ agentId: agent.id, jobId }, 'Released job from agent (e.g. requeued after HITL)');
+        return;
       }
     }
   }
@@ -391,16 +434,19 @@ export class AgentPool extends EventEmitter {
     stopped: number;
     asyncCount: number;
     syncCount: number;
+    scoutCount: number;
   } {
     const agents = this.getAllAgents();
+    const asyncAgents = agents.filter(a => a.mode === 'ASYNC');
     return {
       total: agents.length,
       idle: agents.filter(a => a.status === 'IDLE').length,
       running: agents.filter(a => a.status === 'RUNNING').length,
       draining: agents.filter(a => a.status === 'DRAINING').length,
       stopped: agents.filter(a => a.status === 'STOPPED').length,
-      asyncCount: agents.filter(a => a.mode === 'ASYNC').length,
+      asyncCount: asyncAgents.length,
       syncCount: agents.filter(a => a.mode === 'SYNC').length,
+      scoutCount: asyncAgents.filter(a => a.profile?.is_scout === true).length,
     };
   }
 }

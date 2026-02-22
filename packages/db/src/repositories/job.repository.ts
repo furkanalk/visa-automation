@@ -1,10 +1,14 @@
-import type { Kysely } from 'kysely';
-import type { Database, Job, NewJob, JobUpdate } from '../schema.js';
+import { sql, type Kysely } from 'kysely';
+import type { Database, Job, JobRun, NewJob, JobUpdate } from '../schema.js';
+
+export type JobRunWithAgent = JobRun & { agent_name: string | null };
 
 export interface JobFilters {
   tenantId: string;
   status?: string;
   visaType?: string;
+  /** When true, exclude jobs where config.slot_check_only === true (scout/slot-check jobs) */
+  excludeSlotCheck?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -56,6 +60,8 @@ export class JobRepository {
   }
 
   async findWithFilters(filters: JobFilters): Promise<{ items: Job[]; total: number }> {
+    const excludeSlotCheckExpr = sql<boolean>`(coalesce(config, '{}'::jsonb)->>'slot_check_only') is distinct from 'true'`;
+
     let query = this.db
       .selectFrom('jobs')
       .selectAll()
@@ -69,14 +75,19 @@ export class JobRepository {
       query = query.where('visa_type', '=', filters.visaType);
     }
 
+    if (filters.excludeSlotCheck) {
+      query = query.where(excludeSlotCheckExpr);
+    }
+
     // Get total count
-    const countResult = await this.db
+    let countQuery = this.db
       .selectFrom('jobs')
       .select((eb) => eb.fn.countAll().as('count'))
       .where('tenant_id', '=', filters.tenantId)
       .$if(!!filters.status, (qb) => qb.where('status', '=', filters.status!))
       .$if(!!filters.visaType, (qb) => qb.where('visa_type', '=', filters.visaType!))
-      .executeTakeFirst();
+      .$if(!!filters.excludeSlotCheck, (qb) => qb.where(excludeSlotCheckExpr));
+    const countResult = await countQuery.executeTakeFirst();
 
     const total = Number(countResult?.count ?? 0);
 
@@ -264,5 +275,34 @@ export class JobRepository {
       .where((eb) => eb('locked_until', 'is', null).or('locked_until', '<', now))
       .executeTakeFirst();
     return Number(result.numUpdatedRows ?? 0n);
+  }
+
+  /**
+   * Get job runs for a job (for details UI), with agent name when agent_id is set.
+   */
+  async findJobRunsByJobId(jobId: string, tenantId: string): Promise<JobRunWithAgent[]> {
+    const rows = await this.db
+      .selectFrom('job_runs')
+      .leftJoin('agents', 'agents.id', 'job_runs.agent_id')
+      .select([
+        'job_runs.id',
+        'job_runs.job_id',
+        'job_runs.tenant_id',
+        'job_runs.worker_id',
+        'job_runs.agent_id',
+        'job_runs.attempt_number',
+        'job_runs.status',
+        'job_runs.started_at',
+        'job_runs.finished_at',
+        'job_runs.error_code',
+        'job_runs.error_message',
+        'job_runs.checkpoint_data',
+        'agents.name as agent_name',
+      ])
+      .where('job_runs.job_id', '=', jobId)
+      .where('job_runs.tenant_id', '=', tenantId)
+      .orderBy('job_runs.started_at', 'desc')
+      .execute();
+    return rows as JobRunWithAgent[];
   }
 }

@@ -5,6 +5,9 @@ export const QUEUE_NAMES = {
   /** Main job processing queue */
   JOB_PROCESSING: 'visa-jobs',
 
+  /** Slot-check (scout/watcher) queue; only agents with scout profile consume from this */
+  SLOT_CHECK: 'visa-slot-check',
+
   /** HITL task notifications */
   HITL_NOTIFICATIONS: 'visa-hitl-notifications',
 

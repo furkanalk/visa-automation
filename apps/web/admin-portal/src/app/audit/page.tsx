@@ -47,7 +47,7 @@ export default function AuditPage() {
     actor_id: "",
     from: "",
     to: "",
-    limit: "50",
+    limit: "10",
   });
   const [showFilters, setShowFilters] = useState(false);
   const [expandedLog, setExpandedLog] = useState<string | null>(null);
@@ -109,7 +109,7 @@ export default function AuditPage() {
       actor_id: "",
       from: "",
       to: "",
-      limit: "50",
+      limit: "10",
     });
   };
 
@@ -239,6 +239,7 @@ export default function AuditPage() {
                   onChange={(e) => setFilters((f) => ({ ...f, limit: e.target.value }))}
                   className="px-3 py-1 rounded-lg bg-blue-50 dark:bg-slate-700 text-gray-700 dark:text-gray-200 shadow-sm hover:shadow-md focus:shadow-md focus:ring-2 focus:ring-blue-400 dark:focus:ring-blue-500 outline-none cursor-pointer transition-all duration-200 text-sm"
                 >
+                  <option value="10">10</option>
                   <option value="25">25</option>
                   <option value="50">50</option>
                   <option value="100">100</option>
@@ -281,7 +282,7 @@ export default function AuditPage() {
       ) : logs?.items && logs.items.length > 0 ? (
         <Card>
           <CardContent className="p-0">
-            <div className="overflow-x-auto">
+            <div className="max-h-[32rem] overflow-auto overflow-x-auto">
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50">

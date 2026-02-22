@@ -1,20 +1,22 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { getDb, PortalConfigRepository, AgentRepository } from '@visa-automation/db';
+import { getDb, PortalConfigRepository, AgentRepository, SystemSettingsRepository } from '@visa-automation/db';
 import type {
   CreatePortalConfigRequest,
   UpdatePortalConfigRequest,
   AssignAgentsToPortalRequest,
 } from '@visa-automation/shared';
 import { validatePortalConfig, validatePortalSelectors } from '../schemas/validate-config.js';
+import { getLivenessForTenant } from '../services/portal-liveness.js';
 
 export const portalRoutes: FastifyPluginAsync = async (app) => {
   const db = getDb();
   const portalRepo = new PortalConfigRepository(db);
   const agentRepo = new AgentRepository(db);
+  const settingsRepo = new SystemSettingsRepository(db);
 
   /**
    * Get portal by portal_id (MUST be before /:id to avoid route conflict)
-   * GET /cp/portals/by-portal-id/:portalId
+   * When mock is enabled (Settings → Mock), base_url is overridden with mock URL for this portal.
    */
   app.get<{ Params: { portalId: string } }>('/by-portal-id/:portalId', async (request, reply) => {
     const portal = await portalRepo.findByPortalId(request.tenantId, request.params.portalId);
@@ -39,9 +41,25 @@ export const portalRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
+    const data = { ...portal };
+
+    const tenantId = request.tenantId ?? null;
+    const mockEnabled =
+      await settingsRepo.getBoolean(tenantId, 'mock', 'enabled', false) ||
+      (tenantId !== null ? await settingsRepo.getBoolean(null, 'mock', 'enabled', false) : false);
+    if (mockEnabled) {
+      const portalUrls =
+        (await settingsRepo.getJson<Record<string, string>>(tenantId, 'mock', 'portal_urls', {})) ||
+        (tenantId !== null ? await settingsRepo.getJson<Record<string, string>>(null, 'mock', 'portal_urls', {}) : {});
+      const mockUrl = portalUrls?.[request.params.portalId];
+      if (mockUrl && typeof mockUrl === 'string') {
+        data.base_url = mockUrl;
+      }
+    }
+
     return {
       success: true,
-      data: portal,
+      data,
     };
   });
 
@@ -85,6 +103,19 @@ export const portalRoutes: FastifyPluginAsync = async (app) => {
         timestamp: new Date().toISOString(),
       },
     };
+  });
+
+  /**
+   * Portal liveness check (HEAD then GET fallback, with mock override)
+   * GET /cp/portals/liveness
+   */
+  app.get('/liveness', async (request, reply) => {
+    const tenantId = request.tenantId;
+    if (!tenantId) {
+      return reply.status(401).send({ success: false, error: { code: 'UNAUTHORIZED', message: 'Tenant required' } });
+    }
+    const { items, checked_at } = await getLivenessForTenant(tenantId, { logger: request.log });
+    return { success: true, data: { items, checked_at } };
   });
 
   /**

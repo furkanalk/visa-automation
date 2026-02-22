@@ -53,6 +53,8 @@ export interface MockSession {
   formData: Record<string, string>;
   captchaSolved: boolean;
   currentStep: 'form' | 'slots' | 'booking' | 'confirmation';
+  /** Set after form submit for success page (agent scrape) */
+  confirmationNumber?: string;
 }
 
 // Default configuration for as-visa portal

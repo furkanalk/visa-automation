@@ -8,13 +8,12 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { cpApi, NotifySettings } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
+import { SaveBanner } from "@/components/ui/save-banner";
 import {
   Send,
   Mail,
   MessageCircle,
   Save,
-  CheckCircle,
-  AlertCircle,
   Loader2,
   Globe,
   RefreshCw,
@@ -36,7 +35,9 @@ export default function NotificationsPage() {
   // Form state
   const [telegramEnabled, setTelegramEnabled] = useState(false);
   const [telegramToken, setTelegramToken] = useState("");
-  const [telegramChatIds, setTelegramChatIds] = useState("");
+  const [telegramOpsChatId, setTelegramOpsChatId] = useState("");
+  const [telegramBookingsChatId, setTelegramBookingsChatId] = useState("");
+  const [telegramWatcherChatId, setTelegramWatcherChatId] = useState("");
   const [emailEnabled, setEmailEnabled] = useState(false);
   const [smtpHost, setSmtpHost] = useState("");
   const [smtpPort, setSmtpPort] = useState("587");
@@ -59,7 +60,10 @@ export default function NotificationsPage() {
     if (settings) {
       setTelegramEnabled(settings.telegram_enabled);
       setTelegramToken(settings.telegram_bot_token === "***REDACTED***" ? "" : settings.telegram_bot_token || "");
-      setTelegramChatIds(settings.telegram_chat_ids?.join(", ") || "");
+      const ids = settings.telegram_chat_ids ?? [];
+      setTelegramOpsChatId(ids[0] ?? "");
+      setTelegramBookingsChatId(ids[1] ?? "");
+      setTelegramWatcherChatId(ids[2] ?? "");
       setEmailEnabled(settings.email_enabled);
       setSmtpHost(settings.smtp_host || "");
       setSmtpPort(String(settings.smtp_port || 587));
@@ -79,7 +83,7 @@ export default function NotificationsPage() {
       cpApi.updateNotifySettings(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notify-settings"] });
-      setSaveMessage({ type: "success", text: "Settings saved successfully" });
+      setSaveMessage({ type: "success", text: "Saved." });
       setTimeout(() => setSaveMessage(null), 3000);
     },
     onError: (error: Error) => {
@@ -96,7 +100,7 @@ export default function NotificationsPage() {
         `🔔 Visa Automation – Test\n\nThis is a test from the Admin Portal.\nSent at: ${new Date().toISOString()}`
       ),
     onSuccess: () => {
-      setSaveMessage({ type: "success", text: "Telegram test message sent!" });
+      setSaveMessage({ type: "success", text: "Saved." });
       setTimeout(() => setSaveMessage(null), 3000);
     },
     onError: (error: Error) => {
@@ -117,7 +121,7 @@ export default function NotificationsPage() {
         to: settings?.fallback_email || settings?.email_override || smtpFrom || undefined,
       }),
     onSuccess: () => {
-      setSaveMessage({ type: "success", text: "Test email sent!" });
+      setSaveMessage({ type: "success", text: "Saved." });
       setTimeout(() => setSaveMessage(null), 3000);
     },
     onError: (error: Error) => {
@@ -127,18 +131,17 @@ export default function NotificationsPage() {
   });
 
   const handleSave = () => {
-    // Parse chat IDs, send empty array if cleared
-    const parsedChatIds = telegramChatIds
-      .split(",")
-      .map((id) => id.trim())
-      .filter((id) => id);
+    const ops = telegramOpsChatId.trim();
+    const bookings = telegramBookingsChatId.trim();
+    const watcher = telegramWatcherChatId.trim();
+    const parsedChatIds = [ops, bookings, watcher].filter(Boolean);
 
     // Build updates; only super_admin may send secret fields (otherwise we'd overwrite with REDACTED)
     const updates: Parameters<typeof cpApi.updateNotifySettings>[0] = {
       telegram_enabled: telegramEnabled,
       email_enabled: emailEnabled,
       webhook_enabled: webhookEnabled,
-      telegram_chat_ids: telegramEnabled ? (parsedChatIds.length > 0 ? parsedChatIds : []) : [],
+      telegram_chat_ids: telegramEnabled ? parsedChatIds : [],
       smtp_host: emailEnabled ? (smtpHost || null) : null,
       smtp_port: emailEnabled && smtpPort ? parseInt(smtpPort, 10) : null,
       smtp_user: emailEnabled ? (smtpUser || null) : null,
@@ -186,23 +189,7 @@ export default function NotificationsPage() {
         </div>
       </div>
 
-      {/* Save Message */}
-      {saveMessage && (
-        <div
-          className={`p-4 rounded-lg flex items-center gap-2 ${
-            saveMessage.type === "success"
-              ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300"
-              : "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300"
-          }`}
-        >
-          {saveMessage.type === "success" ? (
-            <CheckCircle className="h-5 w-5" />
-          ) : (
-            <AlertCircle className="h-5 w-5" />
-          )}
-          {saveMessage.text}
-        </div>
-      )}
+      <SaveBanner message={saveMessage} onDismiss={() => setSaveMessage(null)} />
 
       <div className="grid gap-6 md:grid-cols-2">
         {/* Telegram */}
@@ -231,8 +218,12 @@ export default function NotificationsPage() {
               <div className="relative flex items-center gap-1 mt-1">
                 <Input
                   type={isSuperAdmin && showTelegramToken ? "text" : "password"}
-                  placeholder={settings?.telegram_bot_token && !isSuperAdmin ? REDACTED : "Enter bot token"}
-                  value={isSuperAdmin ? telegramToken : (telegramToken ? REDACTED : "")}
+                  placeholder={!settings?.telegram_bot_token && !telegramToken ? "Enter bot token" : undefined}
+                  value={
+                    isSuperAdmin
+                      ? (telegramToken || (settings?.telegram_bot_token === "***REDACTED***" ? REDACTED : ""))
+                      : (settings?.telegram_bot_token === "***REDACTED***" || telegramToken ? REDACTED : "")
+                  }
                   onChange={(e) => setTelegramToken(e.target.value)}
                   disabled={!telegramEnabled || !isSuperAdmin}
                   className="pr-9"
@@ -252,16 +243,40 @@ export default function NotificationsPage() {
                 <p className="text-xs text-gray-500 mt-1">Only super_admin can view or edit the token.</p>
               )}
             </div>
-            <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Chat IDs</label>
-              <Input
-                placeholder="-1001234567890, -1009876543210"
-                value={telegramChatIds}
-                onChange={(e) => setTelegramChatIds(e.target.value)}
-                className="mt-1"
-                disabled={!telegramEnabled}
-              />
-              <p className="text-xs text-gray-500 mt-1">Comma-separated chat IDs (e.g. for Ops and Booking). Add IDs here; they can be chosen when editing customers.</p>
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Ops Chat ID</label>
+                <Input
+                  placeholder="-1003416093784:3"
+                  value={telegramOpsChatId}
+                  onChange={(e) => setTelegramOpsChatId(e.target.value)}
+                  className="mt-1"
+                  disabled={!telegramEnabled}
+                />
+                <p className="text-xs text-gray-500 mt-1">Telegram group/topic for ops (e.g. chat_id or chat_id:thread_id for topic).</p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Bookings Chat ID</label>
+                <Input
+                  placeholder="-1003416093784:5"
+                  value={telegramBookingsChatId}
+                  onChange={(e) => setTelegramBookingsChatId(e.target.value)}
+                  className="mt-1"
+                  disabled={!telegramEnabled}
+                />
+                <p className="text-xs text-gray-500 mt-1">Telegram group/topic for bookings (e.g. chat_id or chat_id:thread_id for topic).</p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Watcher Chat ID</label>
+                <Input
+                  placeholder="e.g. -1001234567890 or -1001234567890:95 (topic)"
+                  value={telegramWatcherChatId}
+                  onChange={(e) => setTelegramWatcherChatId(e.target.value)}
+                  className="mt-1"
+                  disabled={!telegramEnabled}
+                />
+                <p className="text-xs text-gray-500 mt-1">Telegram group/topic for watcher (slot-check jobs created, HTML drift).</p>
+              </div>
             </div>
             <Button
               variant="outline"

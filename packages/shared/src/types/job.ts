@@ -41,6 +41,8 @@ export interface JobConfig {
   };
   preferred_location?: string;
   simulate_hitl?: boolean;
+  /** When true, job only checks for slot; if found, calls CP to create customer jobs (no booking) */
+  slot_check_only?: boolean;
   [key: string]: unknown;
 }
 

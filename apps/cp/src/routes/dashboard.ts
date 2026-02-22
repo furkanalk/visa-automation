@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
 import { getDb } from '@visa-automation/db';
 import { sql } from 'kysely';
+import { getLivenessForTenant } from '../services/portal-liveness.js';
 
 const RECORD_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const RETENTION_DAYS = 7;
@@ -48,6 +49,27 @@ async function recordSnapshot(): Promise<void> {
     );
     const onlineAgents = agentsByStatus['ONLINE'] ?? 0;
     const completedJobs = jobsByStatus['COMPLETED'] ?? 0;
+    const failedJobs = (jobsByStatus['FAILED_TERMINAL'] ?? 0) + (jobsByStatus['FAILED_RETRYABLE'] ?? 0);
+    const cancelledJobs = jobsByStatus['CANCELLED'] ?? 0;
+
+    let portalUp = 0;
+    let portalDown = 0;
+    try {
+      const tenantRows = await db
+        .selectFrom('tenants')
+        .select('id')
+        .where('status', '=', 'ACTIVE')
+        .execute();
+      for (const row of tenantRows) {
+        const { items } = await getLivenessForTenant(row.id);
+        for (const item of items) {
+          if (item.status === 'up') portalUp += 1;
+          else portalDown += 1;
+        }
+      }
+    } catch (e) {
+      console.error('Portal liveness in snapshot failed:', e);
+    }
 
     await db
       .insertInto('dashboard_snapshots')
@@ -58,6 +80,10 @@ async function recordSnapshot(): Promise<void> {
         active_jobs: activeJobs,
         total_jobs: jobTotal,
         completed_jobs: completedJobs,
+        failed_jobs: failedJobs,
+        cancelled_jobs: cancelledJobs,
+        portal_up_count: portalUp,
+        portal_down_count: portalDown,
       })
       .execute();
 
@@ -107,6 +133,10 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
         'active_jobs',
         'total_jobs',
         'completed_jobs',
+        'failed_jobs',
+        'cancelled_jobs',
+        'portal_up_count',
+        'portal_down_count',
       ])
       .where('recorded_at', '>=', from)
       .orderBy('recorded_at', 'asc')
@@ -123,6 +153,10 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
           active_jobs: r.active_jobs,
           total_jobs: r.total_jobs,
           completed_jobs: r.completed_jobs,
+          failed_jobs: r.failed_jobs ?? 0,
+          cancelled_jobs: r.cancelled_jobs ?? 0,
+          portal_up_count: r.portal_up_count ?? 0,
+          portal_down_count: r.portal_down_count ?? 0,
         })),
       },
     });

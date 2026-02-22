@@ -175,6 +175,7 @@ export type HitlTaskType =
   | "TURNSTILE"
   | "CAPTCHA"
   | "OTP"
+  | "SECURITY_CODE"
   | "DOCUMENT_CLARIFICATION"
   | "MANUAL_REVIEW"
   | "CUSTOM_INPUT";

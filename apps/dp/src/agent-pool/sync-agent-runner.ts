@@ -1,5 +1,5 @@
 import type { Logger } from 'pino';
-import type { JobQueuePayload } from '@visa-automation/shared';
+import type { AgentProfileConfig, JobQueuePayload } from '@visa-automation/shared';
 import { AgentPool } from './agent-pool.js';
 import type { AgentRuntime } from './types.js';
 
@@ -10,7 +10,7 @@ import type { AgentRuntime } from './types.js';
 export class SyncAgentRunner {
   private agentPool: AgentPool;
   private logger: Logger;
-  private processJob: (payload: JobQueuePayload, workerId: string, logger: Logger) => Promise<void>;
+  private processJob: (payload: JobQueuePayload, workerId: string, logger: Logger, profile?: AgentProfileConfig | null, agentId?: string | null, agentName?: string | null) => Promise<void>;
   private workerId: string;
   private pollInterval: NodeJS.Timeout | null = null;
   private pollIntervalMs: number;
@@ -22,7 +22,7 @@ export class SyncAgentRunner {
     logger: Logger;
     workerId: string;
     pollIntervalMs: number;
-    processJob: (payload: JobQueuePayload, workerId: string, logger: Logger) => Promise<void>;
+    processJob: (payload: JobQueuePayload, workerId: string, logger: Logger, profile?: AgentProfileConfig | null, agentId?: string | null, agentName?: string | null) => Promise<void>;
   }) {
     this.agentPool = options.agentPool;
     this.logger = options.logger.child({ component: 'SyncAgentRunner' });
@@ -115,7 +115,7 @@ export class SyncAgentRunner {
         attempt_number: jobData.attempt_number ?? 1,
       };
 
-      await this.processJob(payload, this.workerId, this.logger, agent.profile ?? undefined);
+      await this.processJob(payload, this.workerId, this.logger, agent.profile ?? undefined, agent.id, agent.name ?? undefined);
 
       await this.agentPool.completeJob(agent.id, jobId);
       this.logger.info({ agentId: agent.id, jobId }, 'Sync job completed');

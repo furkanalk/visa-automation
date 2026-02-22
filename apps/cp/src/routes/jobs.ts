@@ -1,6 +1,8 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { getDb, JobRepository, JobEventRepository } from '@visa-automation/db';
 import { JOB_STATES, isTerminalState, canTransitionFromTo } from '@visa-automation/shared';
+import type { JobQueuePayload, ApplicantData, JobConfig, VisaType } from '@visa-automation/shared';
+import { enqueueJob } from '../queue/producer.js';
 
 interface JobParams {
   id: string;
@@ -9,6 +11,7 @@ interface JobParams {
 interface ListJobsQuery {
   status?: string;
   visa_type?: string;
+  exclude_slot_check?: string;
   limit?: string;
   offset?: string;
 }
@@ -23,12 +26,13 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
    * GET /cp/jobs
    */
   app.get<{ Querystring: ListJobsQuery }>('/', async (request, reply) => {
-    const { status, visa_type, limit = '20', offset = '0' } = request.query;
+    const { status, visa_type, exclude_slot_check, limit = '20', offset = '0' } = request.query;
 
     const result = await jobRepo.findWithFilters({
       tenantId: request.tenantId,
       status,
       visaType: visa_type,
+      excludeSlotCheck: exclude_slot_check === 'true' || exclude_slot_check === '1',
       limit: parseInt(limit, 10),
       offset: parseInt(offset, 10),
     });
@@ -149,7 +153,9 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
   });
 
   /**
-   * Retry a failed job
+   * Retry a failed or cancelled job.
+   * Use for: FAILED_RETRYABLE, FAILED_TERMINAL, CANCELLED.
+   * Increments retry_count (limited by max_retries). Job is set to QUEUED and re-enqueued.
    * POST /cp/jobs/:id/retry
    */
   app.post<{ Params: JobParams }>('/:id/retry', async (request, reply) => {
@@ -206,7 +212,33 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
       { reason: 'Retried by admin' }
     );
 
-    // TODO: Re-enqueue to BullMQ if needed
+    // Re-enqueue to BullMQ so DP workers pick up the job
+    const portalId =
+      (updatedJob.applicant_data as Record<string, unknown>)?.portal_id as string | undefined ??
+      (updatedJob.config as Record<string, unknown>)?.portal_id as string | undefined ??
+      'as-visa';
+    const queuePayload: JobQueuePayload = {
+      job_id: updatedJob.id,
+      tenant_id: updatedJob.tenant_id,
+      visa_type: updatedJob.visa_type as VisaType,
+      priority: updatedJob.priority ?? 50,
+      applicant_data: (updatedJob.applicant_data ?? {}) as ApplicantData,
+      config: (updatedJob.config ?? {}) as JobConfig,
+      portal_id: portalId,
+      attempt_number: (updatedJob.retry_count ?? 0) + 1,
+    };
+    try {
+      await enqueueJob(queuePayload, { useUniqueId: true });
+    } catch (err) {
+      request.log.error({ err, jobId: updatedJob.id }, 'Failed to enqueue job for retry');
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'ENQUEUE_FAILED',
+          message: 'Job set to QUEUED but failed to re-add to queue. Check Redis and try requeue.',
+        },
+      });
+    }
 
     return reply.send({
       success: true,
@@ -218,7 +250,10 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
   });
 
   /**
-   * Requeue a job (reset to QUEUED without incrementing retry count)
+   * Requeue a job: set to QUEUED and re-enqueue without incrementing retry_count.
+   * Use for: WAITING_HITL, PAUSED, CANCELLED, or other non-terminal states when you want
+   * the job to continue from where it left off (e.g. after HITL resolve if auto-requeue failed).
+   * Not allowed for COMPLETED or FAILED_TERMINAL.
    * POST /cp/jobs/:id/requeue
    */
   app.post<{ Params: JobParams }>('/:id/requeue', async (request, reply) => {
@@ -257,6 +292,34 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
       { reason: 'Requeued by admin' }
     );
 
+    // Re-enqueue to BullMQ so DP workers pick up the job
+    const portalIdRequeue =
+      (updatedJob.applicant_data as Record<string, unknown>)?.portal_id as string | undefined ??
+      (updatedJob.config as Record<string, unknown>)?.portal_id as string | undefined ??
+      'as-visa';
+    const queuePayloadRequeue: JobQueuePayload = {
+      job_id: updatedJob.id,
+      tenant_id: updatedJob.tenant_id,
+      visa_type: updatedJob.visa_type as VisaType,
+      priority: updatedJob.priority ?? 50,
+      applicant_data: (updatedJob.applicant_data ?? {}) as ApplicantData,
+      config: (updatedJob.config ?? {}) as JobConfig,
+      portal_id: portalIdRequeue,
+      attempt_number: (updatedJob.retry_count ?? 0) + 1,
+    };
+    try {
+      await enqueueJob(queuePayloadRequeue, { useUniqueId: true });
+    } catch (err) {
+      request.log.error({ err, jobId: updatedJob.id }, 'Failed to enqueue job for requeue');
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'ENQUEUE_FAILED',
+          message: 'Job set to QUEUED but failed to re-add to queue. Check Redis and try again.',
+        },
+      });
+    }
+
     return reply.send({
       success: true,
       data: {
@@ -293,7 +356,7 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
   });
 
   /**
-   * Get job runs (execution history)
+   * Get job runs (execution history from job_runs table, with agent name)
    * GET /cp/jobs/:id/runs
    */
   app.get<{ Params: JobParams }>('/:id/runs', async (request, reply) => {
@@ -306,17 +369,26 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    // Filter events to get only run-related events
-    const allEvents = await eventRepo.findByJobId(job.id, 100);
-    const runEvents = allEvents.filter(e => 
-      ['state_transition', 'job_started', 'job_completed', 'job_failed'].includes(e.event_type)
-    );
+    const runs = await jobRepo.findJobRunsByJobId(job.id, job.tenant_id);
 
     return reply.send({
       success: true,
       data: {
-        items: runEvents,
-        total: runEvents.length,
+        items: runs.map((r) => ({
+          id: r.id,
+          job_id: r.job_id,
+          tenant_id: r.tenant_id,
+          worker_id: r.worker_id,
+          agent_id: r.agent_id,
+          agent_name: r.agent_name ?? null,
+          attempt_number: r.attempt_number,
+          status: r.status,
+          started_at: r.started_at,
+          finished_at: r.finished_at,
+          error_code: r.error_code,
+          error_message: r.error_message,
+        })),
+        total: runs.length,
         retry_count: job.retry_count,
       },
     });

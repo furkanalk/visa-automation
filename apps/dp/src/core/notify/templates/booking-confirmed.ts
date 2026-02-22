@@ -17,10 +17,10 @@ export function renderBookingConfirmedEmail(args: {
   const subject = `[BOOKED] ${portalTitle} — ${dateTimeStr} — CONF ${args.confirmationNumber}`;
 
   const html =
-    `<p><b>Booking tamamlandı</b> — full detay (audit / paylaşılabilir)</p>` +
+    `<p><b>Booking completed</b> — full details (audit / shareable)</p>` +
     `<ul>` +
     `<li>Confirmation: <code>${args.confirmationNumber}</code></li>` +
-    `<li>Tarih/Saat: <code>${dateTimeStr}</code></li>` +
+    `<li>Date/Time: <code>${dateTimeStr}</code></li>` +
     `<li>Portal: <code>${args.portalId}${args.portalLabel ? ' / ' + args.portalLabel : ''}</code></li>` +
     `<li>Applicant: <code>${escapeHtml(args.applicantMasked)}</code> (masked)</li>` +
     `<li>Job: <code>${args.jobId}</code></li>` +

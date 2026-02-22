@@ -161,6 +161,21 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
 
     await settingsRepo.bulkUpdate(request.tenantId, updates, updatedBy);
 
+    // Sync mock category to global so DP (any tenant) sees it when tenant-specific is missing
+    const mockUpdates = updates.filter((u) => u.category === 'mock');
+    if (mockUpdates.length > 0) {
+      await settingsRepo.bulkUpdate(null, mockUpdates, updatedBy);
+    }
+
+    // Sync notify action token/URL to global so all DP workers see it regardless of tenant
+    const notifyActionKeys = ['notify_action_token', 'notify_action_base_url'];
+    const notifyActionUpdates = updates.filter(
+      (u) => u.category === 'notify' && notifyActionKeys.includes(u.key)
+    );
+    if (notifyActionUpdates.length > 0) {
+      await settingsRepo.bulkUpdate(null, notifyActionUpdates, updatedBy);
+    }
+
     // Audit log
     await auditRepo.create({
       tenant_id: request.tenantId,

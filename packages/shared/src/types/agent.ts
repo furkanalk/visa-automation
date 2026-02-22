@@ -47,13 +47,25 @@ export interface AgentProfile {
 export type ConfigPriority = 'profile_over_portal' | 'portal_over_profile';
 
 export interface AgentProfileConfig {
+  /** When true, this profile is for scout/watcher agents; they only consume from the slot-check queue. */
+  is_scout?: boolean;
+  /** When true (default for scout), watcher-created jobs are slot-check only (no booking). Only applies to scout profiles. */
+  slot_check_only?: boolean;
   /** When merging with portal config: profile wins vs portal wins on overlapping keys. Default: portal_over_portal. */
   config_priority?: ConfigPriority;
+  /** Same shape as portal for merge: enabled, actionsPerMinute, burst. Legacy: rpm (maps to actionsPerMinute). */
   rateLimit?: {
+    enabled?: boolean;
+    actionsPerMinute?: number;
+    burst?: number;
     rpm?: number;
     rph?: number;
   };
+  /** Same shape as portal for merge: minDelayMs, maxDelayMs, jitter. Legacy: minMs, maxMs. */
   pacing?: {
+    minDelayMs?: number;
+    maxDelayMs?: number;
+    jitter?: number;
     minMs?: number;
     maxMs?: number;
   };
@@ -67,11 +79,21 @@ export interface AgentProfileConfig {
     actionMs?: number;
     pageLoadMs?: number;
   };
+  /** Same shape as portal: otpMode, captchaMode, maxWaitSeconds. */
+  hitl?: {
+    otpMode?: string;
+    captchaMode?: string;
+    maxWaitSeconds?: number;
+  };
   retry?: {
     maxAttempts?: number;
     delayMs?: number;
     backoffMultiplier?: number;
   };
+  /** Optional min run duration (ms); same as portal. */
+  minRunDurationMs?: number;
+  /** Optional mouse move interval (ms); same as portal. */
+  mouseMoveIntervalMs?: number;
   [key: string]: unknown;
 }
 
@@ -158,6 +180,7 @@ export interface CreateProfileRequest {
   description?: string;
   config: AgentProfileConfig;
   is_default?: boolean;
+  is_scout?: boolean;
 }
 
 export interface UpdateProfileRequest {
@@ -165,6 +188,7 @@ export interface UpdateProfileRequest {
   description?: string;
   config?: AgentProfileConfig;
   is_default?: boolean;
+  is_scout?: boolean;
 }
 
 /**
@@ -176,6 +200,8 @@ export interface ListAgentsQuery {
   name?: string;
   portal_id?: string;
   profile_id?: string;
+  /** When set, return agents whose profile_id is in this list (e.g. all scout profiles) */
+  profile_ids?: string[];
   limit?: number;
   offset?: number;
 }

@@ -14,12 +14,17 @@ export interface HitlTask {
   created_at: Date;
   resolved_at?: Date;
   resolved_by?: string;
+  /** Set when staff escalates to admin */
+  escalation_reason?: string | null;
+  escalated_at?: Date | null;
+  escalated_by?: string | null;
 }
 
 export type HitlTaskType =
   | 'TURNSTILE'
   | 'CAPTCHA'
   | 'OTP'
+  | 'SECURITY_CODE'
   | 'DOCUMENT_CLARIFICATION'
   | 'MANUAL_REVIEW'
   | 'CUSTOM_INPUT';
@@ -30,7 +35,8 @@ export type HitlTaskStatus =
   | 'ASSIGNED'
   | 'RESOLVED'
   | 'EXPIRED'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'ESCALATED';
 
 /**
  * Context passed to HITL resolver

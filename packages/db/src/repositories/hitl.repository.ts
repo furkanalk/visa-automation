@@ -125,7 +125,7 @@ export class HitlRepository {
         resolved_by: resolvedBy,
       })
       .where('id', '=', id)
-      .where('status', 'in', ['PENDING', 'ASSIGNED'])
+      .where('status', 'in', ['PENDING', 'ASSIGNED', 'ESCALATED'])
       .returningAll()
       .executeTakeFirst();
   }
@@ -147,6 +147,25 @@ export class HitlRepository {
         status: 'CANCELLED',
         resolved_at: new Date(),
         resolved_by: cancelledBy,
+      })
+      .where('id', '=', id)
+      .where('status', 'in', ['PENDING', 'ASSIGNED', 'ESCALATED'])
+      .returningAll()
+      .executeTakeFirst();
+  }
+
+  async escalate(
+    id: string,
+    reason: string,
+    escalatedBy: string
+  ): Promise<HitlTask | undefined> {
+    return this.db
+      .updateTable('hitl_tasks')
+      .set({
+        status: 'ESCALATED',
+        escalation_reason: reason,
+        escalated_at: new Date(),
+        escalated_by: escalatedBy,
       })
       .where('id', '=', id)
       .where('status', 'in', ['PENDING', 'ASSIGNED'])

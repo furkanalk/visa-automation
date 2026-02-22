@@ -6,7 +6,9 @@ import { Modal, FormField } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Profile, settingsApi, type SettingsGrouped } from "@/lib/api";
-import { Loader2 } from "lucide-react";
+import { Loader2, ChevronDown, ChevronRight } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 function num(v: unknown, fallback: number): number {
   if (typeof v === "number" && !Number.isNaN(v)) return v;
@@ -14,27 +16,35 @@ function num(v: unknown, fallback: number): number {
   return Number.isNaN(n) ? fallback : n;
 }
 
-/** Build profile form default config from system_settings (portal, job, hitl, browser). */
+/** Build profile form default config from system_settings (portal, job, hitl, browser). Portal-shaped keys. */
 function defaultConfigFromSettings(settings: SettingsGrouped | undefined): ProfileFormData["config"] | null {
   if (!settings) return null;
   const portal = settings.portal as Record<string, unknown> | undefined;
   const job = settings.job as Record<string, unknown> | undefined;
-  const hitl = settings.hitl as Record<string, unknown> | undefined;
+  const hitlSettings = settings.hitl as Record<string, unknown> | undefined;
   const browser = settings.browser as Record<string, unknown> | undefined;
   if (!portal || !job) return null;
+  const hitlMaxSec = hitlSettings ? num((hitlSettings.task_timeout_minutes as number) * 60, 300) : 300;
   return {
+    config_priority: "portal_over_profile",
     rateLimit: {
-      rpm: num(portal.rate_limit_actions_per_minute, 60),
-      burstLimit: num(portal.rate_limit_burst, 10),
+      enabled: true,
+      actionsPerMinute: num(portal.rate_limit_actions_per_minute, 30),
+      burst: num(portal.rate_limit_burst, 5),
     },
     pacing: {
-      minMs: num(portal.pacing_min_delay_ms, 1000),
-      maxMs: num(portal.pacing_max_delay_ms, 3000),
+      minDelayMs: num(portal.pacing_min_delay_ms, 500),
+      maxDelayMs: num(portal.pacing_max_delay_ms, 2000),
+      jitter: 0.2,
     },
     timeouts: {
       navigationMs: num(portal.navigation_timeout_ms, 30000),
       actionMs: num(portal.action_timeout_ms, 10000),
-      hitlMs: hitl ? num((hitl.task_timeout_minutes as number) * 60 * 1000, 300000) : 300000,
+    },
+    hitl: {
+      otpMode: "pause",
+      captchaMode: "hitl",
+      maxWaitSeconds: hitlMaxSec,
     },
     retry: {
       maxRetries: num(job.max_retries, 3),
@@ -58,20 +68,29 @@ interface ProfileFormData {
   name: string;
   description: string;
   is_default: boolean;
+  is_scout: boolean;
   config: {
     config_priority?: ConfigPriority;
+    /** When true (default for scout), watcher creates slot-check-only jobs. Only relevant when is_scout is true. */
+    slot_check_only?: boolean;
     rateLimit: {
-      rpm: number;
-      burstLimit: number;
+      enabled: boolean;
+      actionsPerMinute: number;
+      burst: number;
     };
     pacing: {
-      minMs: number;
-      maxMs: number;
+      minDelayMs: number;
+      maxDelayMs: number;
+      jitter: number;
     };
     timeouts: {
       navigationMs: number;
       actionMs: number;
-      hitlMs: number;
+    };
+    hitl: {
+      otpMode: string;
+      captchaMode: string;
+      maxWaitSeconds: number;
     };
     retry: {
       maxRetries: number;
@@ -89,23 +108,32 @@ interface ProfileFormData {
     fingerprint?: {
       enabled: boolean;
     };
+    minRunDurationMs?: number;
+    mouseMoveIntervalMs?: number;
   };
 }
 
 const defaultConfig: ProfileFormData["config"] = {
   config_priority: "portal_over_profile",
+  slot_check_only: false,
   rateLimit: {
-    rpm: 60,
-    burstLimit: 10,
+    enabled: true,
+    actionsPerMinute: 30,
+    burst: 5,
   },
   pacing: {
-    minMs: 1000,
-    maxMs: 3000,
+    minDelayMs: 500,
+    maxDelayMs: 2000,
+    jitter: 0.2,
   },
   timeouts: {
     navigationMs: 30000,
     actionMs: 10000,
-    hitlMs: 300000,
+  },
+  hitl: {
+    otpMode: "pause",
+    captchaMode: "hitl",
+    maxWaitSeconds: 300,
   },
   retry: {
     maxRetries: 3,
@@ -146,11 +174,19 @@ export function ProfileModal({
     name: "",
     description: "",
     is_default: false,
+    is_scout: false,
     config: defaultConfig, // replaced by profileDefaults when modal opens
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState<"basic" | "config">("basic");
+  const [pacingEnabled, setPacingEnabled] = useState(true);
+  const [pacingExpanded, setPacingExpanded] = useState(false);
+  const [rateLimitExpanded, setRateLimitExpanded] = useState(false);
+  const [timingEnabled, setTimingEnabled] = useState(false);
+  const [timingExpanded, setTimingExpanded] = useState(false);
+  const [mouseEnabled, setMouseEnabled] = useState(false);
+  const [mouseExpanded, setMouseExpanded] = useState(false);
 
   const { data: settingsData } = useQuery({
     queryKey: ["settings-grouped-for-profile-defaults"],
@@ -170,27 +206,70 @@ export function ProfileModal({
     if (open) setActiveTab("basic");
   }, [open]);
 
+  // Normalize profile config from API (may have legacy rpm/burstLimit/minMs or portal-shaped keys).
+  const normalizeProfileConfig = (raw: Record<string, unknown>, profile?: Profile | null): ProfileFormData["config"] => {
+    const base = { ...profileDefaults };
+    const r = raw.rateLimit as Record<string, unknown> | undefined;
+    const p = raw.pacing as Record<string, unknown> | undefined;
+    const t = raw.timeouts as Record<string, unknown> | undefined;
+    const h = raw.hitl as Record<string, unknown> | undefined;
+    return {
+      ...base,
+      ...raw,
+      config_priority: (raw.config_priority as ConfigPriority) ?? base.config_priority,
+      rateLimit: {
+        enabled: r?.enabled ?? base.rateLimit.enabled,
+        actionsPerMinute: r?.actionsPerMinute ?? r?.rpm ?? base.rateLimit.actionsPerMinute,
+        burst: r?.burst ?? r?.burstLimit ?? base.rateLimit.burst,
+      },
+      pacing: {
+        minDelayMs: p?.minDelayMs ?? p?.minMs ?? base.pacing.minDelayMs,
+        maxDelayMs: p?.maxDelayMs ?? p?.maxMs ?? base.pacing.maxDelayMs,
+        jitter: p?.jitter ?? base.pacing.jitter,
+      },
+      timeouts: {
+        navigationMs: t?.navigationMs ?? base.timeouts.navigationMs,
+        actionMs: t?.actionMs ?? base.timeouts.actionMs,
+      },
+      hitl: h
+        ? {
+            otpMode: (h.otpMode as string) || base.hitl.otpMode,
+            captchaMode: (h.captchaMode as string) || base.hitl.captchaMode,
+            maxWaitSeconds: num(h.maxWaitSeconds, base.hitl.maxWaitSeconds),
+          }
+        : base.hitl,
+      minRunDurationMs: (raw.minRunDurationMs as number) ?? base.minRunDurationMs,
+      mouseMoveIntervalMs: (raw.mouseMoveIntervalMs as number) ?? base.mouseMoveIntervalMs,
+      slot_check_only: (raw.slot_check_only as boolean) ?? (profile?.is_scout ? true : base.slot_check_only ?? false),
+    } as ProfileFormData["config"];
+  };
+
   // Reset form only when modal opens, profile id changes, or profileDefaults (settings) first loads.
-  // Use profile?.id so parent re-renders with new object ref don't wipe user input.
   useEffect(() => {
     if (!open) return;
     if (profile) {
+      const config = normalizeProfileConfig((profile.config || {}) as Record<string, unknown>, profile);
       setFormData({
         name: profile.name,
         description: profile.description || "",
         is_default: profile.is_default,
-        config: {
-          ...profileDefaults,
-          ...(profile.config as ProfileFormData["config"]),
-        },
+        is_scout: profile.is_scout ?? false,
+        config,
       });
+      setPacingEnabled(config.pacing.minDelayMs > 0 || config.pacing.maxDelayMs > 0);
+      setTimingEnabled((config.minRunDurationMs ?? 0) > 0);
+      setMouseEnabled((config.mouseMoveIntervalMs ?? 0) > 0);
     } else {
       setFormData({
         name: "",
         description: "",
         is_default: false,
+        is_scout: false,
         config: profileDefaults,
       });
+      setPacingEnabled(profileDefaults.pacing.minDelayMs > 0 || profileDefaults.pacing.maxDelayMs > 0);
+      setTimingEnabled((profileDefaults.minRunDurationMs ?? 0) > 0);
+      setMouseEnabled((profileDefaults.mouseMoveIntervalMs ?? 0) > 0);
     }
     setErrors({});
   }, [open, profile?.id, profileDefaults]);
@@ -204,12 +283,12 @@ export function ProfileModal({
       newErrors.name = "Name must be at least 3 characters";
     }
 
-    if (formData.config.rateLimit.rpm < 1) {
-      newErrors.rpm = "RPM must be at least 1";
+    if (formData.config.rateLimit.actionsPerMinute < 1) {
+      newErrors.rpm = "Actions per minute must be at least 1";
     }
 
-    if (formData.config.pacing.minMs > formData.config.pacing.maxMs) {
-      newErrors.pacing = "Min pacing must be less than max pacing";
+    if (formData.config.pacing.minDelayMs > formData.config.pacing.maxDelayMs) {
+      newErrors.pacing = "Min delay must be less than max delay";
     }
 
     setErrors(newErrors);
@@ -219,7 +298,17 @@ export function ProfileModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validate()) return;
-    await onSubmit(formData);
+    const configToSend = { ...formData.config };
+    if (!pacingEnabled) {
+      configToSend.pacing = { minDelayMs: 0, maxDelayMs: 0, jitter: 0 };
+    }
+    if (!timingEnabled) {
+      delete configToSend.minRunDurationMs;
+    }
+    if (!mouseEnabled) {
+      delete configToSend.mouseMoveIntervalMs;
+    }
+    await onSubmit({ ...formData, config: configToSend });
   };
 
   type Config = ProfileFormData["config"];
@@ -365,104 +454,61 @@ export function ProfileModal({
                 </span>
               </label>
             </FormField>
+
+            {/* Scout (Watcher) */}
+            <FormField label="Scout (Watcher) profile">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.is_scout}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setFormData((prev) => ({
+                      ...prev,
+                      is_scout: checked,
+                      config: { ...prev.config, slot_check_only: checked ? true : prev.config.slot_check_only },
+                    }));
+                  }}
+                  className="h-4 w-4 rounded border-gray-300"
+                />
+                <span className="text-sm text-gray-700 dark:text-gray-300">
+                  Agents with this profile only process the slot-check (watcher) queue
+                </span>
+              </label>
+            </FormField>
+
+            {formData.is_scout && (
+              <FormField label="Slot check only" hint="Watcher-created jobs only check availability; they do not book. Turn off for dry-run that still runs full flow (rare).">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formData.config.slot_check_only !== false}
+                    onChange={(e) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        config: { ...prev.config, slot_check_only: e.target.checked },
+                      }))
+                    }
+                    className="h-4 w-4 rounded border-gray-300"
+                  />
+                  <span className="text-sm text-gray-700 dark:text-gray-300">
+                    Create slot-check-only jobs (recommended for scout)
+                  </span>
+                </label>
+              </FormField>
+            )}
           </>
         )}
 
         {activeTab === "config" && (
           <div className="space-y-6">
-            {/* Rate Limiting */}
+            {/* Timeouts — same as portal */}
             <div>
-              <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-3">
-                Rate Limiting
-              </h4>
-              <div className="grid grid-cols-2 gap-4">
-                <FormField
-                  label="Requests per Minute"
-                  htmlFor="rpm"
-                  error={errors.rpm}
-                >
-                  <Input
-                    id="rpm"
-                    type="number"
-                    min={1}
-                    value={formData.config.rateLimit.rpm}
-                    onChange={(e) =>
-                      updateConfig(
-                        "rateLimit",
-                        "rpm",
-                        parseInt(e.target.value, 10) || 1
-                      )
-                    }
-                  />
-                </FormField>
-                <FormField label="Burst Limit" htmlFor="burstLimit">
-                  <Input
-                    id="burstLimit"
-                    type="number"
-                    min={1}
-                    value={formData.config.rateLimit.burstLimit}
-                    onChange={(e) =>
-                      updateConfig(
-                        "rateLimit",
-                        "burstLimit",
-                        parseInt(e.target.value, 10) || 1
-                      )
-                    }
-                  />
-                </FormField>
-              </div>
-            </div>
-
-            {/* Pacing */}
-            <div>
-              <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-3">
-                Action Pacing (ms)
-              </h4>
-              <div className="grid grid-cols-2 gap-4">
-                <FormField
-                  label="Min Delay"
-                  htmlFor="pacingMin"
-                  error={errors.pacing}
-                >
-                  <Input
-                    id="pacingMin"
-                    type="number"
-                    min={0}
-                    value={formData.config.pacing.minMs}
-                    onChange={(e) =>
-                      updateConfig(
-                        "pacing",
-                        "minMs",
-                        parseInt(e.target.value, 10) || 0
-                      )
-                    }
-                  />
-                </FormField>
-                <FormField label="Max Delay" htmlFor="pacingMax">
-                  <Input
-                    id="pacingMax"
-                    type="number"
-                    min={0}
-                    value={formData.config.pacing.maxMs}
-                    onChange={(e) =>
-                      updateConfig(
-                        "pacing",
-                        "maxMs",
-                        parseInt(e.target.value, 10) || 0
-                      )
-                    }
-                  />
-                </FormField>
-              </div>
-            </div>
-
-            {/* Timeouts */}
-            <div>
-              <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-3">
+              <h4 className="text-sm font-medium text-gray-900 dark:text-white border-b border-gray-200 dark:border-slate-600 pb-1 mb-3">
                 Timeouts (ms)
               </h4>
-              <div className="grid grid-cols-3 gap-4">
-                <FormField label="Navigation" htmlFor="navTimeout">
+              <div className="grid grid-cols-2 gap-4">
+                <FormField label="Navigation" htmlFor="navTimeout" hint="Page load timeout">
                   <Input
                     id="navTimeout"
                     type="number"
@@ -477,7 +523,7 @@ export function ProfileModal({
                     }
                   />
                 </FormField>
-                <FormField label="Action" htmlFor="actionTimeout">
+                <FormField label="Action" htmlFor="actionTimeout" hint="Single action timeout">
                   <Input
                     id="actionTimeout"
                     type="number"
@@ -492,22 +538,194 @@ export function ProfileModal({
                     }
                   />
                 </FormField>
-                <FormField label="HITL" htmlFor="hitlTimeout">
+              </div>
+            </div>
+
+            {/* HITL — same as portal (before Pacing) */}
+            <div>
+              <h4 className="text-sm font-medium text-gray-900 dark:text-white border-b border-gray-200 dark:border-slate-600 pb-1 mb-3">
+                HITL (human in the loop)
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField label="OTP mode" htmlFor="hitlOtp" hint="pause / auto / skip">
+                  <select
+                    id="hitlOtp"
+                    value={formData.config.hitl.otpMode}
+                    onChange={(e) =>
+                      updateConfig("hitl", "otpMode", e.target.value)
+                    }
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                  >
+                    <option value="pause">pause (wait for human)</option>
+                    <option value="auto">auto (use provider)</option>
+                    <option value="skip">skip</option>
+                  </select>
+                </FormField>
+                <FormField label="Captcha mode" htmlFor="hitlCaptcha" hint="hitl / solver / skip">
+                  <select
+                    id="hitlCaptcha"
+                    value={formData.config.hitl.captchaMode}
+                    onChange={(e) =>
+                      updateConfig("hitl", "captchaMode", e.target.value)
+                    }
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                  >
+                    <option value="hitl">hitl (human solves)</option>
+                    <option value="solver">solver (automated)</option>
+                    <option value="skip">skip</option>
+                  </select>
+                </FormField>
+                <FormField label="Max wait (seconds)" htmlFor="hitlMaxWait">
                   <Input
-                    id="hitlTimeout"
+                    id="hitlMaxWait"
                     type="number"
-                    min={1000}
-                    value={formData.config.timeouts.hitlMs}
+                    min={0}
+                    value={formData.config.hitl.maxWaitSeconds}
                     onChange={(e) =>
                       updateConfig(
-                        "timeouts",
-                        "hitlMs",
-                        parseInt(e.target.value, 10) || 300000
+                        "hitl",
+                        "maxWaitSeconds",
+                        parseInt(e.target.value, 10) || 300
                       )
                     }
                   />
                 </FormField>
               </div>
+            </div>
+
+            {/* Pacing — collapsible + enable (like portal) */}
+            <div className="rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50/50 dark:bg-slate-800/30 p-3 space-y-2">
+              <button
+                type="button"
+                onClick={() => setPacingExpanded(!pacingExpanded)}
+                className={cn(
+                  "flex items-center gap-2 text-sm font-medium w-full text-left",
+                  "text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
+                )}
+              >
+                {pacingExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                Pacing (delay between actions)
+                {pacingEnabled && <Badge variant="secondary" className="text-xs font-normal">On</Badge>}
+              </button>
+              {pacingExpanded && (
+                <div className="pl-6 pt-1 space-y-3 border-l-2 border-gray-200 dark:border-slate-600 ml-1">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="pacingEnabled"
+                      checked={pacingEnabled}
+                      onChange={(e) => setPacingEnabled(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500 bg-white dark:bg-slate-800"
+                    />
+                    <label htmlFor="pacingEnabled" className="text-sm text-gray-700 dark:text-gray-300">Enable delay between actions</label>
+                  </div>
+                  {pacingEnabled && (
+                    <div className="grid grid-cols-3 gap-4">
+                      <FormField label="Min delay (ms)" htmlFor="pacingMin" error={errors.pacing}>
+                        <Input id="pacingMin" type="number" min={0} value={formData.config.pacing.minDelayMs} onChange={(e) => updateConfig("pacing", "minDelayMs", parseInt(e.target.value, 10) || 0)} />
+                      </FormField>
+                      <FormField label="Max delay (ms)" htmlFor="pacingMax">
+                        <Input id="pacingMax" type="number" min={0} value={formData.config.pacing.maxDelayMs} onChange={(e) => updateConfig("pacing", "maxDelayMs", parseInt(e.target.value, 10) || 0)} />
+                      </FormField>
+                      <FormField label="Jitter" htmlFor="pacingJitter" hint="0–1">
+                        <Input id="pacingJitter" type="number" min={0} max={1} step={0.1} value={formData.config.pacing.jitter} onChange={(e) => updateConfig("pacing", "jitter", parseFloat(e.target.value) || 0)} />
+                      </FormField>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Rate limit — collapsible (like portal) */}
+            <div className="rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50/50 dark:bg-slate-800/30 p-3 space-y-2">
+              <button
+                type="button"
+                onClick={() => setRateLimitExpanded(!rateLimitExpanded)}
+                className={cn(
+                  "flex items-center gap-2 text-sm font-medium w-full text-left",
+                  "text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
+                )}
+              >
+                {rateLimitExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                Rate limit
+                {formData.config.rateLimit.enabled && <Badge variant="secondary" className="text-xs font-normal">On</Badge>}
+              </button>
+              {rateLimitExpanded && (
+                <div className="pl-6 pt-1 space-y-3 border-l-2 border-gray-200 dark:border-slate-600 ml-1">
+                  <div className="flex items-center gap-2">
+                    <input type="checkbox" id="rateLimitEnabled" checked={formData.config.rateLimit.enabled} onChange={(e) => updateConfig("rateLimit", "enabled", e.target.checked)} className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500 bg-white dark:bg-slate-800" />
+                    <label htmlFor="rateLimitEnabled" className="text-sm text-gray-700 dark:text-gray-300">Enable rate limit</label>
+                  </div>
+                  {formData.config.rateLimit.enabled && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormField label="Actions per minute" htmlFor="rpm" error={errors.rpm}>
+                        <Input id="rpm" type="number" min={1} value={formData.config.rateLimit.actionsPerMinute} onChange={(e) => updateConfig("rateLimit", "actionsPerMinute", parseInt(e.target.value, 10) || 1)} />
+                      </FormField>
+                      <FormField label="Burst" htmlFor="burst">
+                        <Input id="burst" type="number" min={1} value={formData.config.rateLimit.burst} onChange={(e) => updateConfig("rateLimit", "burst", parseInt(e.target.value, 10) || 1)} />
+                      </FormField>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Timing — collapsible + enable (like portal) */}
+            <div className="rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50/50 dark:bg-slate-800/30 p-3 space-y-2">
+              <button
+                type="button"
+                onClick={() => setTimingExpanded(!timingExpanded)}
+                className={cn(
+                  "flex items-center gap-2 text-sm font-medium w-full text-left",
+                  "text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
+                )}
+              >
+                {timingExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                Timing
+                {timingEnabled && <Badge variant="secondary" className="text-xs font-normal">On</Badge>}
+              </button>
+              {timingExpanded && (
+                <div className="pl-6 pt-1 space-y-3 border-l-2 border-gray-200 dark:border-slate-600 ml-1">
+                  <div className="flex items-center gap-2">
+                    <input type="checkbox" id="timingEnabled" checked={timingEnabled} onChange={(e) => setTimingEnabled(e.target.checked)} className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500 bg-white dark:bg-slate-800" />
+                    <label htmlFor="timingEnabled" className="text-sm text-gray-700 dark:text-gray-300">Enable min run duration</label>
+                  </div>
+                  {timingEnabled && (
+                    <FormField label="Min run duration (ms)" htmlFor="minRunDuration" hint="Same as portal">
+                      <Input id="minRunDuration" type="number" min={0} value={formData.config.minRunDurationMs ?? ""} onChange={(e) => { const v = e.target.value; setFormData((prev) => ({ ...prev, config: { ...prev.config, minRunDurationMs: v === "" ? undefined : parseInt(v, 10) || 0 } })); }} placeholder="Leave empty to disable" />
+                    </FormField>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Mouse — collapsible + enable (like portal) */}
+            <div className="rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50/50 dark:bg-slate-800/30 p-3 space-y-2">
+              <button
+                type="button"
+                onClick={() => setMouseExpanded(!mouseExpanded)}
+                className={cn(
+                  "flex items-center gap-2 text-sm font-medium w-full text-left",
+                  "text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
+                )}
+              >
+                {mouseExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                Mouse movement
+                {mouseEnabled && <Badge variant="secondary" className="text-xs font-normal">On</Badge>}
+              </button>
+              {mouseExpanded && (
+                <div className="pl-6 pt-1 space-y-3 border-l-2 border-gray-200 dark:border-slate-600 ml-1">
+                  <div className="flex items-center gap-2">
+                    <input type="checkbox" id="mouseEnabled" checked={mouseEnabled} onChange={(e) => setMouseEnabled(e.target.checked)} className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500 bg-white dark:bg-slate-800" />
+                    <label htmlFor="mouseEnabled" className="text-sm text-gray-700 dark:text-gray-300">Enable human-like mouse</label>
+                  </div>
+                  {mouseEnabled && (
+                    <FormField label="Mouse move interval (ms)" htmlFor="mouseMoveInterval" hint="Same as portal">
+                      <Input id="mouseMoveInterval" type="number" min={0} value={formData.config.mouseMoveIntervalMs ?? ""} onChange={(e) => { const v = e.target.value; setFormData((prev) => ({ ...prev, config: { ...prev.config, mouseMoveIntervalMs: v === "" ? undefined : parseInt(v, 10) || 0 } })); }} placeholder="Leave empty to disable" />
+                    </FormField>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Retry */}

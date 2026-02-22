@@ -1,7 +1,10 @@
 /**
- * Server-side validation for portal_config and profile config (API write path).
+ * Server-side validation for portal_config, profile config, and job config (API write path).
  * Config source of truth is Postgres; these validate shape before persist.
  * Merge order: defaults(code) < system_settings < profile < portal_config < job.config.
+ * - validatePortalConfig: used by portals API and by validateJobConfig for config.portal
+ * - validateProfileConfig: used by profiles API
+ * - validateJobConfig: used by job.service createJob (slot_check_only + optional portal override)
  */
 
 function isPlainObject(x: unknown): x is Record<string, unknown> {
@@ -70,7 +73,23 @@ export function validatePortalConfig(config: unknown): void {
     checkString(h.captchaMode, 'config.hitl.captchaMode');
     checkNumber(h.maxWaitSeconds, 'config.hitl.maxWaitSeconds');
   }
+  if (c.slotHunt !== undefined) {
+    if (!isPlainObject(c.slotHunt)) throw new Error('portal config.slotHunt must be an object');
+    const s = c.slotHunt as Record<string, unknown>;
+    checkNumber(s.maxPolls, 'config.slotHunt.maxPolls');
+    checkNumber(s.pollDelayMinMs, 'config.slotHunt.pollDelayMinMs');
+    checkNumber(s.pollDelayMaxMs, 'config.slotHunt.pollDelayMaxMs');
+  }
   if (c.selectorsVersion !== undefined) checkString(c.selectorsVersion, 'config.selectorsVersion');
+  if (c.minRunDurationMs !== undefined) checkNumber(c.minRunDurationMs, 'config.minRunDurationMs');
+  if (c.mouseMoveIntervalMs !== undefined) checkNumber(c.mouseMoveIntervalMs, 'config.mouseMoveIntervalMs');
+  if (c.mouseMoveSegmentsMin !== undefined) checkNumber(c.mouseMoveSegmentsMin, 'config.mouseMoveSegmentsMin');
+  if (c.mouseMoveSegmentsMax !== undefined) checkNumber(c.mouseMoveSegmentsMax, 'config.mouseMoveSegmentsMax');
+  if (c.mouseMoveJitterPx !== undefined) checkNumber(c.mouseMoveJitterPx, 'config.mouseMoveJitterPx');
+  if (c.mouseMoveStepsMin !== undefined) checkNumber(c.mouseMoveStepsMin, 'config.mouseMoveStepsMin');
+  if (c.mouseMoveStepsMax !== undefined) checkNumber(c.mouseMoveStepsMax, 'config.mouseMoveStepsMax');
+  if (c.mouseMoveDelayMinMs !== undefined) checkNumber(c.mouseMoveDelayMinMs, 'config.mouseMoveDelayMinMs');
+  if (c.mouseMoveDelayMaxMs !== undefined) checkNumber(c.mouseMoveDelayMaxMs, 'config.mouseMoveDelayMaxMs');
 }
 
 /** Validate selectors JSON (must be object if present). */
@@ -115,5 +134,46 @@ export function validateProfileConfig(config: unknown): void {
     checkNumber(r.actionsPerMinute, 'config.rateLimit.actionsPerMinute');
     checkNumber(r.burst, 'config.rateLimit.burst');
   }
-  checkString(c.portalId, 'config.portalId');
+  if (c.hitl !== undefined) {
+    if (!isPlainObject(c.hitl)) throw new Error('profile config.hitl must be an object');
+    const h = c.hitl as Record<string, unknown>;
+    checkString(h.otpMode, 'config.hitl.otpMode');
+    checkString(h.captchaMode, 'config.hitl.captchaMode');
+    checkNumber(h.maxWaitSeconds, 'config.hitl.maxWaitSeconds');
+  }
+  if (c.slotHunt !== undefined) {
+    if (!isPlainObject(c.slotHunt)) throw new Error('profile config.slotHunt must be an object');
+    const s = c.slotHunt as Record<string, unknown>;
+    checkNumber(s.maxPolls, 'config.slotHunt.maxPolls');
+    checkNumber(s.pollDelayMinMs, 'config.slotHunt.pollDelayMinMs');
+    checkNumber(s.pollDelayMaxMs, 'config.slotHunt.pollDelayMaxMs');
+  }
+  if (c.retry !== undefined) {
+    if (!isPlainObject(c.retry)) throw new Error('profile config.retry must be an object');
+    const r = c.retry as Record<string, unknown>;
+    checkNumber(r.maxAttempts, 'config.retry.maxAttempts');
+    checkNumber(r.delayMs, 'config.retry.delayMs');
+    checkNumber(r.backoffMultiplier, 'config.retry.backoffMultiplier');
+  }
+  if (c.is_scout !== undefined) checkBoolean(c.is_scout, 'config.is_scout');
+  if (c.slot_check_only !== undefined) checkBoolean(c.slot_check_only, 'config.slot_check_only');
+  if (c.minRunDurationMs !== undefined) checkNumber(c.minRunDurationMs, 'config.minRunDurationMs');
+  if (c.mouseMoveIntervalMs !== undefined) checkNumber(c.mouseMoveIntervalMs, 'config.mouseMoveIntervalMs');
+}
+
+/**
+ * Validate job config (create-job API). Allows slot_check_only and optional portal override.
+ * If config.portal is present, it must match portal config shape (partial allowed).
+ */
+export function validateJobConfig(config: unknown): void {
+  if (config === undefined || config === null) return;
+  if (!isPlainObject(config)) {
+    throw new Error('job config must be an object');
+  }
+  const c = config as Record<string, unknown>;
+  if (c.slot_check_only !== undefined) checkBoolean(c.slot_check_only, 'config.slot_check_only');
+  if (c.portal !== undefined) {
+    if (!isPlainObject(c.portal)) throw new Error('job config.portal must be an object');
+    validatePortalConfig(c.portal);
+  }
 }

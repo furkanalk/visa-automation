@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
+import { SaveBanner } from "@/components/ui/save-banner";
 import { customerApi, cpApi, type Customer, type CustomerStatus, type CustomerCounts, type PortalConfig, type CustomerFormFieldSchema } from "@/lib/api";
 import {
   Plus,
@@ -125,6 +126,11 @@ export default function CustomersPage() {
   const [deleteCustomerId, setDeleteCustomerId] = useState<string | null>(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelCustomerId, setCancelCustomerId] = useState<string | null>(null);
+  const [banner, setBanner] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const showBanner = (type: "success" | "error", text: string) => {
+    setBanner({ type, text });
+    setTimeout(() => setBanner(null), 5000);
+  };
 
   // Filters
   const [search, setSearch] = useState("");
@@ -216,7 +222,9 @@ export default function CustomersPage() {
       setViewMode("list");
       setFormData(initialFormData);
       setDynamicPreferences({});
+      showBanner("success", "Saved.");
     },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to save."),
   });
 
   // Update mutation
@@ -241,7 +249,9 @@ export default function CustomersPage() {
       setSelectedCustomer(null);
       setFormData(initialFormData);
       setDynamicPreferences({});
+      showBanner("success", "Saved.");
     },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to save."),
   });
 
   // Delete mutation (permanent/hard delete)
@@ -251,7 +261,9 @@ export default function CustomersPage() {
       queryClient.invalidateQueries({ queryKey: ["customers"] });
       setShowDeleteModal(false);
       setDeleteCustomerId(null);
+      showBanner("success", "Deleted.");
     },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to delete."),
   });
 
   // Cancel mutation (set status to cancelled)
@@ -261,23 +273,36 @@ export default function CustomersPage() {
       queryClient.invalidateQueries({ queryKey: ["customers"] });
       setShowCancelModal(false);
       setCancelCustomerId(null);
+      showBanner("success", "Saved.");
     },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to update."),
   });
 
-  // Pause/Resume mutations
   const pauseMutation = useMutation({
     mutationFn: (id: string) => customerApi.pause(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["customers"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["customers"] });
+      showBanner("success", "Saved.");
+    },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to update."),
   });
 
   const resumeMutation = useMutation({
     mutationFn: (id: string) => customerApi.resume(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["customers"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["customers"] });
+      showBanner("success", "Saved.");
+    },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to update."),
   });
 
   const reactivateMutation = useMutation({
     mutationFn: (id: string) => customerApi.update(id, { status: "active" }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["customers"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["customers"] });
+      showBanner("success", "Saved.");
+    },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to update."),
   });
 
   // Trigger slot check (currently only logs the action; job creation not yet implemented)
@@ -285,7 +310,7 @@ export default function CustomersPage() {
   const triggerSlotCheckMutation = useMutation({
     mutationFn: (id: string) => customerApi.triggerSlotCheck(id),
     onSuccess: (data) => {
-      setSlotCheckMessage(data.message);
+      setSlotCheckMessage(data.job_id ? `Job started. Job ID: ${data.job_id}` : data.message);
       setTimeout(() => setSlotCheckMessage(null), 6000);
     },
   });
@@ -372,6 +397,7 @@ export default function CustomersPage() {
   if (viewMode === "list") {
     return (
       <div className="space-y-6">
+        <SaveBanner message={banner} onDismiss={() => setBanner(null)} />
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
@@ -541,7 +567,7 @@ export default function CustomersPage() {
                             <Button
                               variant="outline"
                               size="sm"
-                              title="Start slot check (run once now)"
+                              title="Start slot check. Job is queued; an async agent assigned to this customer's portal will pick it up. (Sync agents do not auto-take queue jobs. In Portals, assign the customer's portal to at least one async agent.)"
                               onClick={() => triggerSlotCheckMutation.mutate(customer.id)}
                               disabled={triggerSlotCheckMutation.isPending}
                             >
@@ -699,6 +725,7 @@ export default function CustomersPage() {
   // Create/Edit Form
   return (
     <div className="space-y-6">
+      <SaveBanner message={banner} onDismiss={() => setBanner(null)} />
       <div className="flex items-center gap-4">
         <Button variant="ghost" onClick={handleCancel}>
           <ChevronLeft className="h-4 w-4 mr-2" />

@@ -58,10 +58,17 @@ ENV NODE_ENV=production
 
 CMD ["node", "apps/dp/dist/index.js"]
 
-# Stage 3: Development
-FROM node:20-alpine AS development
+# Stage 3: Development (Debian base so Playwright browsers can be installed)
+FROM node:20-bookworm-slim AS development
 
 WORKDIR /app
+
+# Install Playwright system deps (for Chromium)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+    libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+    libgbm1 libasound2 libpango-1.0-0 libcairo2 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy package files
 COPY package*.json ./
@@ -69,10 +76,17 @@ COPY packages/shared/package*.json ./packages/shared/
 COPY packages/db/package*.json ./packages/db/
 COPY apps/dp/package*.json ./apps/dp/
 
-# Install all dependencies (skip Playwright in dev mode for speed)
+# Install all dependencies
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN --mount=type=cache,target=/root/.npm \
   npm ci
+
+# Install Playwright Chromium at build time (in case no volume overwrites node_modules)
+RUN npx playwright install chromium
+
+# Entrypoint: ensure Chromium exists for current Playwright (e.g. after volume mount), then run command
+COPY apps/dp/docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
 # Copy source
 COPY tsconfig*.json ./
@@ -81,4 +95,5 @@ COPY apps/dp ./apps/dp
 
 ENV NODE_ENV=development
 
+ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["npm", "run", "dev", "--workspace=@visa-automation/dp"]

@@ -41,12 +41,18 @@ export const notifyRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    // Redact sensitive fields
+    const isSuperAdmin = (request as { roles?: string[] }).roles?.includes('super_admin');
     const safeSettings = {
       ...settings,
-      telegram_bot_token: settings.telegram_bot_token ? '***REDACTED***' : null,
-      smtp_pass: settings.smtp_pass ? '***REDACTED***' : null,
-      webhook_secret: settings.webhook_secret ? '***REDACTED***' : null,
+      telegram_bot_token: settings.telegram_bot_token
+        ? (isSuperAdmin ? settings.telegram_bot_token : '***REDACTED***')
+        : null,
+      smtp_pass: settings.smtp_pass
+        ? (isSuperAdmin ? settings.smtp_pass : '***REDACTED***')
+        : null,
+      webhook_secret: settings.webhook_secret
+        ? (isSuperAdmin ? settings.webhook_secret : '***REDACTED***')
+        : null,
     };
 
     return {
@@ -90,12 +96,18 @@ export const notifyRoutes: FastifyPluginAsync = async (app) => {
 
     const settings = await notifyRepo.upsert(request.tenantId, updates);
 
-    // Redact sensitive fields
+    const isSuperAdmin = (request as { roles?: string[] }).roles?.includes('super_admin');
     const safeSettings = {
       ...settings,
-      telegram_bot_token: settings.telegram_bot_token ? '***REDACTED***' : null,
-      smtp_pass: settings.smtp_pass ? '***REDACTED***' : null,
-      webhook_secret: settings.webhook_secret ? '***REDACTED***' : null,
+      telegram_bot_token: settings.telegram_bot_token
+        ? (isSuperAdmin ? settings.telegram_bot_token : '***REDACTED***')
+        : null,
+      smtp_pass: settings.smtp_pass
+        ? (isSuperAdmin ? settings.smtp_pass : '***REDACTED***')
+        : null,
+      webhook_secret: settings.webhook_secret
+        ? (isSuperAdmin ? settings.webhook_secret : '***REDACTED***')
+        : null,
     };
 
     return {
@@ -131,43 +143,72 @@ export const notifyRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    const chatId = request.body.chat_id ?? settings.telegram_chat_ids?.[0];
-    if (!chatId) {
+    const chatIds = request.body.chat_id
+      ? [request.body.chat_id]
+      : (settings.telegram_chat_ids ?? []);
+    if (chatIds.length === 0) {
       return reply.status(400).send({
         success: false,
         error: {
           code: 'NO_CHAT_ID',
-          message: 'No chat_id provided and no default chat IDs configured',
+          message: 'No chat_id provided and no Ops/Bookings chat IDs configured. Save Ops and Bookings Chat IDs first.',
         },
       });
     }
 
+    const defaultMessage = `🔔 <b>Visa Automation – Test</b>\n\nThis is a test from the Admin Portal.\nSent at: ${new Date().toISOString()}`;
+    const message = request.body.message ?? defaultMessage;
+    const token = settings.telegram_bot_token;
+
     try {
-      // Send test message via Telegram API (include timestamp so recipient can verify it's the test)
-      const defaultMessage = `🔔 <b>Visa Automation – Test</b>\n\nThis is a test from the Admin Portal.\nSent at: ${new Date().toISOString()}`;
-      const message = request.body.message ?? defaultMessage;
+      const results: Array<{ chat_id: string; message_thread_id?: number; message_id?: number; error?: string }> = [];
 
-      const response = await fetch(
-        `https://api.telegram.org/bot${settings.telegram_bot_token}/sendMessage`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: message,
-            parse_mode: 'HTML',
-          }),
+      for (const entry of chatIds) {
+        const [chatIdPart, threadIdStr] = entry.includes(':') ? entry.split(':') : [entry.trim(), ''];
+        const chat_id = chatIdPart.trim();
+        const message_thread_id = threadIdStr ? parseInt(threadIdStr, 10) : undefined;
+        const payload: Record<string, unknown> = {
+          chat_id,
+          text: message,
+          parse_mode: 'HTML',
+        };
+        if (message_thread_id != null && !Number.isNaN(message_thread_id)) {
+          payload.message_thread_id = message_thread_id;
         }
-      );
 
-      const result = await response.json() as { ok: boolean; description?: string; result?: { message_id: number } };
+        const response = await fetch(
+          `https://api.telegram.org/bot${token}/sendMessage`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          }
+        );
 
-      if (!result.ok) {
+        const result = await response.json() as { ok: boolean; description?: string; result?: { message_id: number } };
+
+        if (result.ok) {
+          results.push({
+            chat_id: entry,
+            ...(message_thread_id != null ? { message_thread_id } : {}),
+            message_id: result.result?.message_id,
+          });
+        } else {
+          results.push({
+            chat_id: entry,
+            ...(message_thread_id != null ? { message_thread_id } : {}),
+            error: result.description ?? `HTTP ${response.status}`,
+          });
+        }
+      }
+
+      const failed = results.filter((r) => r.error);
+      if (failed.length === results.length) {
         return reply.status(400).send({
           success: false,
           error: {
             code: 'TELEGRAM_SEND_FAILED',
-            message: result.description ?? 'Failed to send Telegram message',
+            message: failed[0]?.error ?? 'Failed to send Telegram message',
           },
         });
       }
@@ -176,10 +217,11 @@ export const notifyRoutes: FastifyPluginAsync = async (app) => {
         success: true,
         data: {
           channel: 'telegram',
-          message: 'Test message sent successfully',
+          message: 'Test message sent',
           details: {
-            chat_id: chatId,
-            message_id: result.result?.message_id,
+            sent: results.filter((r) => !r.error).length,
+            failed: failed.length,
+            results,
           },
         },
       };

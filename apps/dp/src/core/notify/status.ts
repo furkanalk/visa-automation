@@ -35,6 +35,6 @@ export async function getSlotStatus(jobId: string): Promise<SlotStatus | null> {
 }
 
 export async function setSlotStatus(jobId: string, status: SlotStatus): Promise<void> {
-  // 2 gün tutulması yeterli
+  // keep for 2 days
   await getRedis().set(`slot_status:${jobId}`, status, 'EX', 2 * 24 * 3600);
 }

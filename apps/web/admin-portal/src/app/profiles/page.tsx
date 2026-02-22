@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cpApi, Profile } from "@/lib/api";
 import { ProfileModal } from "@/components/profiles/profile-modal";
+import { SaveBanner } from "@/components/ui/save-banner";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Plus, Edit, Trash2, Star, Settings2 } from "lucide-react";
 
 // Helper to safely get nested config values
@@ -25,7 +27,14 @@ function getConfigValue(config: Record<string, unknown>, path: string[]): string
 export default function ProfilesPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
+  const [banner, setBanner] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [profileToDelete, setProfileToDelete] = useState<Profile | null>(null);
   const queryClient = useQueryClient();
+
+  const showBanner = (type: "success" | "error", text: string) => {
+    setBanner({ type, text });
+    setTimeout(() => setBanner(null), 5000);
+  };
 
   const { data: profiles, isLoading } = useQuery({
     queryKey: ["profiles"],
@@ -34,18 +43,31 @@ export default function ProfilesPage() {
 
   const createProfile = useMutation({
     mutationFn: (data: Parameters<typeof cpApi.createProfile>[0]) => cpApi.createProfile(data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["profiles"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["profiles"] });
+      showBanner("success", "Saved.");
+    },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to save."),
   });
 
   const updateProfile = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Partial<Profile> }) =>
       cpApi.updateProfile(id, data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["profiles"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["profiles"] });
+      showBanner("success", "Saved.");
+    },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to save."),
   });
 
   const deleteProfile = useMutation({
     mutationFn: (id: string) => cpApi.deleteProfile(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["profiles"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["profiles"] });
+      setProfileToDelete(null);
+      showBanner("success", "Deleted.");
+    },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to delete."),
   });
 
   const handleOpenCreateModal = () => {
@@ -67,6 +89,7 @@ export default function ProfilesPage() {
     name: string;
     description: string;
     is_default: boolean;
+    is_scout: boolean;
     config: Record<string, unknown>;
   }) => {
     if (editingProfile) {
@@ -76,6 +99,7 @@ export default function ProfilesPage() {
           name: data.name,
           description: data.description,
           is_default: data.is_default,
+          is_scout: data.is_scout,
           config: data.config,
         },
       });
@@ -84,20 +108,25 @@ export default function ProfilesPage() {
         name: data.name,
         description: data.description,
         is_default: data.is_default,
+        is_scout: data.is_scout,
         config: data.config,
       });
     }
     handleCloseModal();
   };
 
-  const handleDelete = async (id: string) => {
-    if (confirm("Are you sure you want to delete this profile?")) {
-      await deleteProfile.mutateAsync(id);
-    }
+  const handleDeleteClick = (profile: Profile) => {
+    if (profile.is_default) return;
+    setProfileToDelete(profile);
+  };
+
+  const handleDeleteConfirm = () => {
+    if (profileToDelete) deleteProfile.mutate(profileToDelete.id);
   };
 
   return (
     <div className="space-y-6">
+      <SaveBanner message={banner} onDismiss={() => setBanner(null)} />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Profiles</h1>
@@ -114,11 +143,11 @@ export default function ProfilesPage() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {profiles?.items?.map((profile) => {
-            const rateLimit = getConfigValue(profile.config, ["rateLimit", "rpm"]);
-            const pacingMin = getConfigValue(profile.config, ["pacing", "minMs"]);
-            const pacingMax = getConfigValue(profile.config, ["pacing", "maxMs"]);
+            const rateLimit = getConfigValue(profile.config, ["rateLimit", "actionsPerMinute"]) ?? getConfigValue(profile.config, ["rateLimit", "rpm"]);
+            const pacingMin = getConfigValue(profile.config, ["pacing", "minDelayMs"]) ?? getConfigValue(profile.config, ["pacing", "minMs"]);
+            const pacingMax = getConfigValue(profile.config, ["pacing", "maxDelayMs"]) ?? getConfigValue(profile.config, ["pacing", "maxMs"]);
             const navTimeout = getConfigValue(profile.config, ["timeouts", "navigationMs"]);
-            const maxAttempts = getConfigValue(profile.config, ["retry", "maxAttempts"]);
+            const maxAttempts = getConfigValue(profile.config, ["retry", "maxRetries"]) ?? getConfigValue(profile.config, ["retry", "maxAttempts"]);
 
             return (
               <Card key={profile.id}>
@@ -175,7 +204,7 @@ export default function ProfilesPage() {
                       <Button
                         size="sm"
                         variant="destructive"
-                        onClick={() => handleDelete(profile.id)}
+                        onClick={() => handleDeleteClick(profile)}
                         disabled={profile.is_default}
                         title={profile.is_default ? "Default profile cannot be deleted." : "Delete profile"}
                       >
@@ -207,6 +236,18 @@ export default function ProfilesPage() {
         onSubmit={handleSubmitProfile}
         profile={editingProfile}
         isSubmitting={createProfile.isPending || updateProfile.isPending}
+      />
+
+      <ConfirmDialog
+        open={profileToDelete !== null}
+        onClose={() => setProfileToDelete(null)}
+        onConfirm={handleDeleteConfirm}
+        title="Delete profile"
+        message="Are you sure you want to delete this profile?"
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        variant="destructive"
+        isLoading={deleteProfile.isPending}
       />
     </div>
   );

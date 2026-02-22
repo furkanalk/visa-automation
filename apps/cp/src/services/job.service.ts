@@ -1,12 +1,14 @@
 import { getDb, JobRepository, JobEventRepository, TenantRepository, SystemSettingsRepository } from '@visa-automation/db';
-import { enqueueJob } from '../queue/producer.js';
+import { enqueueJob, enqueueSlotCheckJob } from '../queue/producer.js';
 import { JOB_STATES } from '@visa-automation/shared';
 import type {
+  ApplicantData,
   CreateJobRequest,
   CreateJobResponse,
   JobStatusResponse,
   JobQueuePayload,
 } from '@visa-automation/shared';
+import { validateJobConfig } from '../schemas/validate-config.js';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -37,16 +39,18 @@ export class JobService {
   }
 
   async createJob(request: CreateJobRequest): Promise<CreateJobResponse> {
+    validateJobConfig(request.config);
     const tenant_id = await this.resolveTenantId(request.tenant_id);
     const defaultPriority = await this.settingsRepo.getNumber(null, 'job', 'default_priority', 50);
     const maxRetries = await this.settingsRepo.getNumber(null, 'job', 'max_retries', 3);
+    const applicantData = { ...request.applicant, portal_id: request.portal_id } as Record<string, unknown>;
     const job = await this.jobRepo.create({
       tenant_id,
       external_ref: request.external_ref ?? null,
       visa_type: request.visa_type,
       status: JOB_STATES.QUEUED,
       priority: request.priority ?? defaultPriority,
-      applicant_data: request.applicant,
+      applicant_data: applicantData,
       config: request.config ?? {},
       retry_count: 0,
       max_retries: maxRetries,
@@ -57,13 +61,17 @@ export class JobService {
       tenant_id: job.tenant_id,
       visa_type: request.visa_type,
       priority: job.priority,
-      applicant_data: request.applicant,
+      applicant_data: applicantData as ApplicantData,
       config: request.config ?? {},
       portal_id: request.portal_id,
       attempt_number: 1,
     };
 
-    await enqueueJob(queuePayload);
+    if (request.config?.slot_check_only) {
+      await enqueueSlotCheckJob(queuePayload);
+    } else {
+      await enqueueJob(queuePayload);
+    }
 
     return {
       job_id: job.id,

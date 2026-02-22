@@ -1,4 +1,4 @@
 /**
- * Ödeme adımı (gerekirse).
- * İleride kullanılacak; şu an stub.
+ * Payment step (if needed).
+ * To be used later; currently a stub.
  */

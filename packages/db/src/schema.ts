@@ -26,6 +26,7 @@ export interface Database {
   jobs: JobsTable;
   job_runs: JobRunsTable;
   hitl_tasks: HitlTasksTable;
+  job_screenshots: JobScreenshotsTable;
   evidence_packs: EvidencePacksTable;
   job_events: JobEventsTable;
   job_status_summary: JobStatusSummaryTable;
@@ -36,6 +37,7 @@ export interface Database {
   notify_settings: NotifySettingsTable;
   notify_dedupe: NotifyDedupeTable;
   watcher_config: WatcherConfigTable;
+  watcher_run_history: WatcherRunHistoryTable;
   portal_snapshots: PortalSnapshotsTable;
   audit_logs: AuditLogsTable;
   system_settings: SystemSettingsTable;
@@ -106,6 +108,7 @@ export interface JobRunsTable {
   job_id: string;
   tenant_id: string;
   worker_id: string;
+  agent_id: string | null;
   attempt_number: number;
   status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
   started_at: ColumnType<Date, Date | undefined, never>;
@@ -139,11 +142,29 @@ export interface HitlTasksTable {
   assigned_staff_id: string | null;
   /** FK to staff_members – who resolved (staff portal HITL). Filled when staff portal is implemented. */
   resolved_staff_id: string | null;
+  escalation_reason: string | null;
+  escalated_at: Date | null;
+  escalated_by: string | null;
 }
 
 export type HitlTask = Selectable<HitlTasksTable>;
 export type NewHitlTask = Insertable<HitlTasksTable>;
 export type HitlTaskUpdate = Updateable<HitlTasksTable>;
+
+// ============================================
+// Job Screenshots (HITL)
+// ============================================
+export interface JobScreenshotsTable {
+  id: Generated<string>;
+  job_id: string;
+  filename: string;
+  content_type: string;
+  data: Buffer;
+  created_at: ColumnType<Date, Date | undefined, never>;
+}
+
+export type JobScreenshotRow = Selectable<JobScreenshotsTable>;
+export type NewJobScreenshot = Insertable<JobScreenshotsTable>;
 
 // ============================================
 // Evidence Packs
@@ -238,6 +259,7 @@ export interface AgentProfilesTable {
   description: string | null;
   config: ColumnType<AgentProfileConfig, AgentProfileConfig, AgentProfileConfig>;
   is_default: ColumnType<boolean, boolean | undefined, boolean>;
+  is_scout: ColumnType<boolean, boolean | undefined, boolean>;
   created_at: ColumnType<Date, Date | undefined, never>;
   updated_at: ColumnType<Date, Date | undefined, Date>;
 }
@@ -316,11 +338,17 @@ export interface WatcherConfigTable {
   id: Generated<string>;
   tenant_id: string;
   enabled: ColumnType<boolean, boolean | undefined, boolean>;
+  time_window_enabled: ColumnType<boolean, boolean | undefined, boolean>;
   window_start_hour: ColumnType<number, number | undefined, number>;
   window_end_hour: ColumnType<number, number | undefined, number>;
   jitter_minutes: ColumnType<number, number | undefined, number>;
   portals: ColumnType<string[], string[] | undefined, string[]>;
   notify_on_change: ColumnType<boolean, boolean | undefined, boolean>;
+  diff_mode: ColumnType<'hash' | 'selector', 'hash' | 'selector' | undefined, 'hash' | 'selector'>;
+  run_retention_days: ColumnType<number, number | undefined, number>;
+  snapshot_retention_days: ColumnType<number, number | undefined, number>;
+  html_diff_interval: ColumnType<string, string | undefined, string>;
+  last_html_diff_at: Date | null;
   last_run_at: Date | null;
   next_scheduled_at: Date | null;
   created_at: ColumnType<Date, Date | undefined, never>;
@@ -330,6 +358,24 @@ export interface WatcherConfigTable {
 export type WatcherConfigRow = Selectable<WatcherConfigTable>;
 export type NewWatcherConfig = Insertable<WatcherConfigTable>;
 export type WatcherConfigUpdate = Updateable<WatcherConfigTable>;
+
+// ============================================
+// Watcher Run History (7-day retention)
+// ============================================
+export interface WatcherRunHistoryTable {
+  id: Generated<string>;
+  tenant_id: string;
+  run_at: ColumnType<Date, Date | undefined, never>;
+  portals_checked: ColumnType<string[], string[] | undefined, string[]>;
+  jobs_created: ColumnType<number, number | undefined, number>;
+  up_portal_ids: ColumnType<string[], string[] | undefined, string[]>;
+  down_portal_ids: ColumnType<string[], string[] | undefined, string[]>;
+  up_portals_with_no_customers: ColumnType<string[], string[] | undefined, string[]>;
+  message: string | null;
+}
+
+export type WatcherRunHistoryRow = Selectable<WatcherRunHistoryTable>;
+export type NewWatcherRunHistory = Insertable<WatcherRunHistoryTable>;
 
 // ============================================
 // Portal Snapshots (Control Plane)
@@ -347,6 +393,9 @@ export interface PortalSnapshotsTable {
   diff_severity: DiffSeverity | null;
   previous_snapshot_id: string | null;
   metadata: ColumnType<SnapshotMetadata, SnapshotMetadata | undefined, SnapshotMetadata>;
+  archived: ColumnType<boolean, boolean | undefined, boolean>;
+  archived_at: ColumnType<Date | null, Date | null | undefined, Date | null>;
+  archive_summary: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export type PortalSnapshotRow = Selectable<PortalSnapshotsTable>;
@@ -593,6 +642,10 @@ export interface DashboardSnapshotsTable {
   active_jobs: number;
   total_jobs: number;
   completed_jobs: number;
+  failed_jobs: number;
+  cancelled_jobs: number;
+  portal_up_count: number;
+  portal_down_count: number;
 }
 
 export type DashboardSnapshot = Selectable<DashboardSnapshotsTable>;

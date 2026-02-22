@@ -52,21 +52,30 @@ function assertFullPortalConfig(portalId: PortalId, m: Record<string, unknown>):
 }
 
 /**
- * Convert agent profile config (rpm, minMs, etc.) to a portal-shaped partial for merging.
- * Only overlapping concepts are mapped; missing keys leave portal value unchanged.
+ * Convert agent profile config to a portal-shaped partial for merging.
+ * Supports both portal-shaped keys (actionsPerMinute, minDelayMs, hitl, etc.) and legacy (rpm, minMs).
  */
 function profileToPortalPartial(profile: AgentProfileConfig | null | undefined): Record<string, unknown> {
   if (!profile || typeof profile !== 'object') return {};
   const out: Record<string, unknown> = {};
-  const r = profile.rateLimit as { rpm?: number; rph?: number } | undefined;
-  if (r?.rpm !== undefined) {
-    out.rateLimit = { ...((out.rateLimit as object) ?? {}), actionsPerMinute: r.rpm };
+  const r = profile.rateLimit as Record<string, unknown> | undefined;
+  if (r && (r.actionsPerMinute !== undefined || r.burst !== undefined || r.enabled !== undefined || r.rpm !== undefined)) {
+    out.rateLimit = {
+      ...((out.rateLimit as object) ?? {}),
+      ...(r.enabled !== undefined && { enabled: r.enabled }),
+      ...(r.actionsPerMinute !== undefined && { actionsPerMinute: r.actionsPerMinute }),
+      ...(r.burst !== undefined && { burst: r.burst }),
+      ...(r.rpm !== undefined && r.actionsPerMinute === undefined && { actionsPerMinute: r.rpm }),
+    };
   }
-  const p = profile.pacing as { minMs?: number; maxMs?: number } | undefined;
-  if (p?.minMs !== undefined || p?.maxMs !== undefined) {
+  const p = profile.pacing as Record<string, unknown> | undefined;
+  if (p && (p.minDelayMs !== undefined || p.maxDelayMs !== undefined || p.jitter !== undefined || p.minMs !== undefined || p.maxMs !== undefined)) {
     const pacing: Record<string, unknown> = { ...((out.pacing as object) ?? {}) };
-    if (p.minMs !== undefined) pacing.minDelayMs = p.minMs;
-    if (p.maxMs !== undefined) pacing.maxDelayMs = p.maxMs;
+    if (p.minDelayMs !== undefined) pacing.minDelayMs = p.minDelayMs;
+    else if (p.minMs !== undefined) pacing.minDelayMs = p.minMs;
+    if (p.maxDelayMs !== undefined) pacing.maxDelayMs = p.maxDelayMs;
+    else if (p.maxMs !== undefined) pacing.maxDelayMs = p.maxMs;
+    if (p.jitter !== undefined) pacing.jitter = p.jitter;
     out.pacing = pacing;
   }
   const t = profile.timeouts as { navigationMs?: number; actionMs?: number } | undefined;
@@ -76,6 +85,12 @@ function profileToPortalPartial(profile: AgentProfileConfig | null | undefined):
     if (t.actionMs !== undefined) timeouts.actionMs = t.actionMs;
     out.timeouts = timeouts;
   }
+  const h = profile.hitl as Record<string, unknown> | undefined;
+  if (h && (h.otpMode !== undefined || h.captchaMode !== undefined || h.maxWaitSeconds !== undefined)) {
+    out.hitl = { ...((out.hitl as object) ?? {}), ...h };
+  }
+  if (profile.minRunDurationMs !== undefined) out.minRunDurationMs = profile.minRunDurationMs;
+  if (profile.mouseMoveIntervalMs !== undefined) out.mouseMoveIntervalMs = profile.mouseMoveIntervalMs;
   return out;
 }
 
@@ -117,9 +132,17 @@ export function resolvePortalConfig(args: {
 
   assertFullPortalConfig(args.portalId, merged);
 
+  const slotHuntFromMerge = merged.slotHunt as { maxPolls?: number; pollDelayMinMs?: number; pollDelayMaxMs?: number } | undefined;
+  const slotHunt = {
+    maxPolls: slotHuntFromMerge?.maxPolls ?? 12,
+    pollDelayMinMs: slotHuntFromMerge?.pollDelayMinMs ?? 1500,
+    pollDelayMaxMs: slotHuntFromMerge?.pollDelayMaxMs ?? 3000,
+  };
+
   return {
     portalId: args.portalId,
     ...merged,
     baseUrl: getPortalBaseUrl(args.portalId, merged.baseUrl as string),
+    slotHunt,
   } as PortalConfig;
 }

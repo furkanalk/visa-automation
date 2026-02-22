@@ -13,6 +13,7 @@ import { watcherRoutes } from './routes/watcher.js';
 import { auditRoutes } from './routes/audit.js';
 import { jobRoutes } from './routes/jobs.js';
 import { hitlRoutes } from './routes/hitl.js';
+import { screenshotRoutes } from './routes/screenshots.js';
 import { settingsRoutes } from './routes/settings.js';
 import { customerRoutes } from './routes/customers.js';
 import { staffRoutes } from './routes/staff.js';
@@ -71,6 +72,7 @@ export async function createApp(): Promise<FastifyInstance> {
     await cpApp.register(auditRoutes, { prefix: '/audit' });
     await cpApp.register(jobRoutes, { prefix: '/jobs' });
     await cpApp.register(hitlRoutes, { prefix: '/hitl' });
+    await cpApp.register(screenshotRoutes, { prefix: '/screenshots' });
     await cpApp.register(settingsRoutes, { prefix: '/settings' });
     await cpApp.register(customerRoutes, { prefix: '/customers' });
     await cpApp.register(staffRoutes); // /cp/staff

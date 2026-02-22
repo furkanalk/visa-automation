@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
+import { SaveBanner } from "@/components/ui/save-banner";
 import { staffApi, type StaffMember, type StaffRole, type StaffStatus } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
 import {
@@ -84,6 +85,11 @@ export default function StaffPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingStaff, setEditingStaff] = useState<StaffMember | null>(null);
   const [staffToDelete, setStaffToDelete] = useState<StaffMember | null>(null);
+  const [banner, setBanner] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const showBanner = (type: "success" | "error", text: string) => {
+    setBanner({ type, text });
+    setTimeout(() => setBanner(null), 5000);
+  };
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   const [dropdownAnchor, setDropdownAnchor] = useState<{ top: number; right: number } | null>(null);
 
@@ -120,7 +126,9 @@ export default function StaffPage() {
       queryClient.invalidateQueries({ queryKey: ["staff-dashboard"] });
       setIsModalOpen(false);
       resetForm();
+      showBanner("success", "Saved.");
     },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to save."),
   });
 
   const updateMutation = useMutation({
@@ -131,7 +139,9 @@ export default function StaffPage() {
       setIsModalOpen(false);
       setEditingStaff(null);
       resetForm();
+      showBanner("success", "Saved.");
     },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to save."),
   });
 
   const deleteMutation = useMutation({
@@ -140,21 +150,27 @@ export default function StaffPage() {
       queryClient.invalidateQueries({ queryKey: ["staff-list"] });
       queryClient.invalidateQueries({ queryKey: ["staff-dashboard"] });
       setStaffToDelete(null);
+      showBanner("success", "Deleted.");
     },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to delete."),
   });
 
   const suspendMutation = useMutation({
     mutationFn: staffApi.suspend,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["staff-list"] });
+      showBanner("success", "Saved.");
     },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to update."),
   });
 
   const activateMutation = useMutation({
     mutationFn: staffApi.activate,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["staff-list"] });
+      showBanner("success", "Saved.");
     },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to update."),
   });
 
   const resetForm = () => {
@@ -230,6 +246,7 @@ export default function StaffPage() {
 
   return (
     <div className="space-y-6">
+      <SaveBanner message={banner} onDismiss={() => setBanner(null)} />
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

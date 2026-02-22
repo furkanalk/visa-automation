@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
+import os from 'node:os';
 import { getDb, SystemSettingsRepository } from '@visa-automation/db';
 import { sql } from 'kysely';
 
@@ -76,6 +77,12 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
       0
     );
     const version = process.env.APP_VERSION ?? '1.0.0';
+    const totalMem = os.totalmem();
+    const rss = process.memoryUsage().rss;
+    const memory_percent = totalMem > 0 ? Math.round((rss / totalMem) * 100) : 0;
+    const loadAvg = os.loadavg();
+    const load_1m = Math.round(loadAvg[0] * 100) / 100;
+    const cpu_count = os.cpus().length;
 
     return {
       success: true,
@@ -84,6 +91,9 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
         version,
         uptime_seconds: process.uptime(),
         tenant_count: tenants.length,
+        memory_percent,
+        load_1m,
+        cpu_count,
         job_stats: { total: jobTotal, active: activeJobs, completed: jobsByStatus['COMPLETED'] ?? 0 },
         agent_stats: {
           total: agentTotal,

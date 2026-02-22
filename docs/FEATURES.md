@@ -65,7 +65,7 @@ Bu dosya projedeki özellikleri (tamamlanan, sürüyor, planlanan) toplar.
 - **Admin için mock tenant + test staff:** Tek tıkla “test tenant” + birkaç staff (admin, staff1, staff2) oluşturma; seed veya Admin UI’dan “Create test tenant” butonu. Migration 012’deki seed staff’ı belirli bir test tenant’a bağlama veya dev ortamında otomatik test tenant.
 - **Staff portal için mock HITL akışı:** Mock portal’da veya ayrı bir “HITL demo” sayfasında sahte task üretip assign/resolve akışını UI’da prova etme (gerçek job’a gerek kalmadan).
 - **Mock portal çeşitliliği:** Farklı selector versiyonları veya hata senaryoları (CAPTCHA, OTP, 404) için birden fazla mock portal endpoint’i; E2E’de senaryo seçimi.
-- **Admin’de “Run slot check” gerçekten job üretsin:** Müşteri ekranından tetiklenince `customer_id`’li job oluşturup queue’ya atma; böylece `jobs.customer_id` + trigger tekrar eklenebilir (şu an TODO).
+- **Admin’de “Run slot check” gerçekten job üretsin:** Müşteri ekranından tetiklenince `customer_id`’li job oluşturup queue’ya atma; böylece `jobs.customer_id` + trigger tekrar eklenebilir Job queue'ya atılır; sadece ASYNC agent'lar (müşteri portalına atanmış veya portal boş) alır. SYNC agent'lar sadece manuel Assign job ile job alır. CP/DP aynı Redis kullanmalı.
 
 ---
 

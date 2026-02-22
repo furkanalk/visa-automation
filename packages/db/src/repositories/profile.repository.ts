@@ -44,6 +44,32 @@ export class ProfileRepository {
   }
 
   /**
+   * Find first scout profile for a tenant (for DP to assign when creating scout agents)
+   */
+  async findScout(tenantId: string): Promise<AgentProfile | undefined> {
+    return this.db
+      .selectFrom('agent_profiles')
+      .selectAll()
+      .where('tenant_id', '=', tenantId)
+      .where('is_scout', '=', true)
+      .limit(1)
+      .executeTakeFirst();
+  }
+
+  /**
+   * Find all scout profile IDs for a tenant (for filtering agents by is_scout)
+   */
+  async findScoutProfileIds(tenantId: string): Promise<string[]> {
+    const rows = await this.db
+      .selectFrom('agent_profiles')
+      .select('id')
+      .where('tenant_id', '=', tenantId)
+      .where('is_scout', '=', true)
+      .execute();
+    return rows.map((r) => r.id);
+  }
+
+  /**
    * Create a new profile
    */
   async create(profile: NewAgentProfile): Promise<AgentProfile> {

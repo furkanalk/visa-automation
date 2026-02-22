@@ -36,6 +36,21 @@ export interface PortalSettings {
     rph?: number;
     daily?: number;
   };
+  /** Optional: minimum total agent run duration in ms (e.g. 40500). Run sleeps until this. */
+  minRunDurationMs?: number;
+  /** Optional: interval in ms for a small mouse move during run (e.g. 10000). */
+  mouseMoveIntervalMs?: number;
+  /** Optional: human-like mouse path – min/max waypoint count (e.g. 10, 16). */
+  mouseMoveSegmentsMin?: number;
+  mouseMoveSegmentsMax?: number;
+  /** Optional: jitter in px per waypoint (e.g. 3). */
+  mouseMoveJitterPx?: number;
+  /** Optional: animation steps per segment – min/max (higher = slower; e.g. 6, 20). */
+  mouseMoveStepsMin?: number;
+  mouseMoveStepsMax?: number;
+  /** Optional: delay between segments in ms – min/max (e.g. 15, 42). */
+  mouseMoveDelayMinMs?: number;
+  mouseMoveDelayMaxMs?: number;
   [key: string]: unknown;
 }
 

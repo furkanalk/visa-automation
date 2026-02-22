@@ -57,6 +57,9 @@ export class AgentRepository {
     if (query.profile_id) {
       qb = qb.where('profile_id', '=', query.profile_id);
     }
+    if (query.profile_ids?.length) {
+      qb = qb.where('profile_id', 'in', query.profile_ids);
+    }
 
     // Filter by portal_id (agents assigned to specific portal)
     if (query.portal_id) {
@@ -84,6 +87,30 @@ export class AgentRepository {
         sql<boolean>`desired_portals @> ${JSON.stringify([portalId])}::jsonb`
       )
       .execute();
+  }
+
+  /**
+   * Find scout agents that have any of the given portals in desired_portals.
+   * Used to enforce "max one watcher per portal".
+   */
+  async findScoutAgentsWithPortals(
+    tenantId: string,
+    scoutProfileIds: string[],
+    portalIds: string[],
+    excludeAgentId?: string
+  ): Promise<Agent[]> {
+    if (scoutProfileIds.length === 0 || portalIds.length === 0) return [];
+    let qb = this.db
+      .selectFrom('agents')
+      .selectAll()
+      .where('tenant_id', '=', tenantId)
+      .where('profile_id', 'in', scoutProfileIds);
+    if (excludeAgentId) qb = qb.where('id', '!=', excludeAgentId);
+    const agents = await qb.execute();
+    return agents.filter((a) => {
+      const desired = (a.desired_portals ?? []) as string[];
+      return portalIds.some((p) => desired.includes(p));
+    });
   }
 
   /**

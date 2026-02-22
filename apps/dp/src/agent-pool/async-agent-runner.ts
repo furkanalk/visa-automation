@@ -2,7 +2,8 @@ import { Worker } from 'bullmq';
 import type { Redis as RedisType } from 'ioredis';
 import type { Logger } from 'pino';
 import { QUEUE_NAMES } from '@visa-automation/shared';
-import type { JobQueuePayload } from '@visa-automation/shared';
+import type { AgentProfileConfig, JobQueuePayload } from '@visa-automation/shared';
+import { HitlWaitingError } from '../processor.js';
 import { AgentPool } from './agent-pool.js';
 import type { AgentRuntime } from './types.js';
 
@@ -22,7 +23,7 @@ export class AsyncAgentRunner {
   private agentPool: AgentPool;
   private redis: RedisType;
   private logger: Logger;
-  private processJob: (payload: JobQueuePayload, workerId: string, logger: Logger) => Promise<void>;
+  private processJob: (payload: JobQueuePayload, workerId: string, logger: Logger, profile?: AgentProfileConfig | null, agentId?: string | null, agentName?: string | null) => Promise<void>;
   private workerId: string;
 
   constructor(options: {
@@ -30,7 +31,7 @@ export class AsyncAgentRunner {
     redis: RedisType;
     logger: Logger;
     workerId: string;
-    processJob: (payload: JobQueuePayload, workerId: string, logger: Logger) => Promise<void>;
+    processJob: (payload: JobQueuePayload, workerId: string, logger: Logger, profile?: AgentProfileConfig | null, agentId?: string | null, agentName?: string | null) => Promise<void>;
   }) {
     this.agentPool = options.agentPool;
     this.redis = options.redis;
@@ -44,17 +45,21 @@ export class AsyncAgentRunner {
    */
   async start(): Promise<void> {
     const stats = this.agentPool.getStats();
-    const concurrency = stats.asyncCount || 1;
+    const concurrency = Math.max(1, (stats.asyncCount ?? 0) - (stats.scoutCount ?? 0));
 
-    this.logger.info({ concurrency }, 'Starting AsyncAgentRunner');
+    this.logger.info({ concurrency, asyncCount: stats.asyncCount, scoutCount: stats.scoutCount }, 'Starting AsyncAgentRunner');
 
     this.worker = new Worker<JobQueuePayload>(
       QUEUE_NAMES.JOB_PROCESSING,
       async (job) => {
         const portalId = job.data.portal_id;
-        
+        const jobId = job.data.job_id;
+
+        // Release any agent that was holding this job (e.g. after HITL requeue) so it can be picked up again
+        this.agentPool.releaseJobFromAgent(jobId);
+
         // Try to find an available agent with retries
-        const agent = await this.waitForAvailableAgent(portalId, job.data.job_id);
+        const agent = await this.waitForAvailableAgent(portalId, jobId);
         if (!agent) {
           this.logger.error({ jobId: job.data.job_id, portalId }, 'No idle agent available after retries');
           throw new Error('No idle agent available for this portal after max retries');
@@ -129,18 +134,10 @@ export class AsyncAgentRunner {
    * Find an available agent for a portal
    */
   private findAvailableAgent(portalId: string): AgentRuntime | null {
-    const idleAgents = this.agentPool.getIdleAsyncAgents();
-    
-    // First, try to find an agent with this specific portal assigned
-    const specificAgent = idleAgents.find(
-      a => a.assignedPortals.includes(portalId)
-    );
+    const idleAgents = this.agentPool.getIdleAsyncAgentsNonScout();
+    const specificAgent = idleAgents.find(a => a.assignedPortals.includes(portalId));
     if (specificAgent) return specificAgent;
-
-    // Then, try to find an agent with no specific portals (can handle any)
-    const genericAgent = idleAgents.find(
-      a => a.assignedPortals.length === 0
-    );
+    const genericAgent = idleAgents.find(a => a.assignedPortals.length === 0);
     return genericAgent ?? null;
   }
 
@@ -173,6 +170,10 @@ export class AsyncAgentRunner {
 
       await this.agentPool.completeJob(agent.id, job_id);
     } catch (err) {
+      if (err instanceof HitlWaitingError) {
+        this.logger.info({ jobId: err.jobId, agentId: agent.id }, 'Job waiting for HITL; agent stays assigned');
+        return;
+      }
       await this.agentPool.failJob(agent.id, job_id, err as Error);
       throw err;
     }
@@ -190,7 +191,7 @@ export class AsyncAgentRunner {
       this.logger.info({ jobId: payload.job_id }, 'Job aborted before start');
       return;
     }
-    await this.processJob(payload, this.workerId, this.logger, agent.profile ?? undefined);
+    await this.processJob(payload, this.workerId, this.logger, agent.profile ?? undefined, agent.id, agent.name ?? undefined);
   }
 
   /**

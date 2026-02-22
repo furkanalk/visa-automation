@@ -19,7 +19,7 @@ Otomasyon, mock site (`.bin/as-visa.html` / `.bin/as-visa.js`) ve canlı sitedek
 | Step          | Kullanım                          | Durum   |
 |---------------|------------------------------------|---------|
 | slot-hunt.ts  | SLOT_SEARCHING: sayfa aç, dateDisabled oku, müsait tarih var mı kontrol et | Kullanılıyor |
-| fill-form.ts  | Form doldurma (ad, soyad, pasaport, vb.)   | Stub, ileride |
+| fill-form.ts  | FORM_FILLING: applicant_data → form values → selectors ile form doldurma | Kullanılıyor |
 | security-code.ts | 6 haneli kod / CAPTCHA/Turnstile        | Stub, ileride |
 | payment.ts    | Ödeme adımı (gerekirse)                  | Stub, ileride |
 
@@ -31,9 +31,21 @@ Otomasyon, mock site (`.bin/as-visa.html` / `.bin/as-visa.js`) ve canlı sitedek
 4. **Job / Agent**: Job oluşturulunca (veya mevcut akışta) DP’de agent bu job’ı alır. FSM: **LOGIN_PROCESS** (sayfaya git, form selector’ı bekle) → **SLOT_SEARCHING** (slotHunt: sayfada `window.dateDisabled`’ı oku, müsait tarih var mı kontrol et).
 5. **Mock’ta tarih vermek**: Canlı sitede `AppointmentTabID` change olunca `/AnBir/Macaristan/TarihGetir` çağrılıyor ve `window.dateDisabled` set ediliyor. Mock’ta bu API’yi taklit eden bir endpoint + sayfada bu isteği yapan JS olmalı; yoksa `dateDisabled` boş kalır ve slot-hunt “slot yok” görür. İleride mock API ekleyebilirsin (ör. birkaç tarih döndüren stub).
 
-## Müşteri formu (Admin Portal)
+## Müşteri formu ve form doldurma (Admin Portal → DP)
 
-Admin portal’da **Portals → Configure → Customer form fields (schema)** ile portala özel alanlar tanımlanır. Müşteri eklerken önce portal seçilir; seçilen portala göre bu alanlar açılır. Değerler `customer.preferences` içinde saklanır; agent (özellikle fill-form adımı) bu key’leri kullanarak formu doldurur. **Schema’daki `key` değerleri selektörlerdeki mantıksal isimlerle uyumlu olmalı** (örn. `nationality`, `name`, `passportNumber`) ki agent doğru input’a yazabilsin.
+Admin portal’da **Portals → Configure → Customer form fields (schema)** ile portala özel alanlar tanımlanır. Müşteri eklerken önce portal seçilir; seçilen portala göre bu alanlar açılır. Değerler `customer.preferences` içinde saklanır.
+
+**Job oluşturulurken** (müşteriden job tetiklenince) `applicant_data` olarak **customer.preferences** geçilmelidir; böylece DP’deki fill-form adımı bu veriyi kullanır.
+
+**AS-VISA mapping (form-values.ts):**
+
+- **Visa Information** (genel alanlar) → selector key’e çevrilir:
+  - `name`, `surname`, `passportNumber`, `email`, `phone` → aynı key ile kullanılır.
+  - `idNo` → `tcKimlikNo` (veya preferences’ta `tcKimlikNo` varsa o).
+  - `birthDate` → yıl çıkarılıp `dogumYili` olarak kullanılır.
+- **Portal-specific** (schema’daki key’ler) → selector key ile aynı olmalı: `nationality`, `appointment`, `travelSubject`, `travelDate`, `appointmentDate`, `appointmentTime`.
+
+Fill-form adımı `buildAsVisaFormValues(applicant_data)` ile bu mapping’i uygular, sonra `AS_VISA_SELECTORS` (inputs/selects) üzerinden formu doldurur.
 
 ## Selektör stratejisi
 

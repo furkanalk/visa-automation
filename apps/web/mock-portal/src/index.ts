@@ -234,12 +234,14 @@ app.post('/as-visa/submit', async (req, res) => {
 
   // Create session and store form data
   const session = mockState.createSession('as-visa');
+  const confirmationNumber = `MOCK-${new Date().getFullYear()}-${session.id.slice(0, 8).toUpperCase()}`;
   mockState.updateSession(session.id, {
     formData: req.body,
     currentStep: 'slots',
+    confirmationNumber,
   });
 
-  // Success - redirect to next page (placeholder for now)
+  // Success page with confirmation number (for agent to scrape)
   res.send(`
     <html>
       <head>
@@ -311,9 +313,11 @@ app.post('/as-visa/submit', async (req, res) => {
         <div class="mock-banner">⚠️ MOCK PORTAL – Test environment</div>
         <div class="success-card">
           <div class="success-icon">✅</div>
-          <h1>Form submitted</h1>
-          <p>Form submitted successfully. Next steps / confirmation page can be added later.</p>
-          
+          <h1>Appointment booked</h1>
+          <p>Form submitted successfully. Confirmation number below.</p>
+          <div id="confirmationNumber" data-confirmation="${confirmationNumber}" class="session-id">
+            Confirmation: ${confirmationNumber}
+          </div>
           <div class="session-id">
             Session: ${session.id}
           </div>

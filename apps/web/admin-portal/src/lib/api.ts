@@ -1,5 +1,5 @@
 // Runtime URL getters that support localStorage override from Settings page
-const getCpApiUrl = () =>
+export const getCpApiUrl = () =>
   (typeof window !== "undefined" && localStorage.getItem("cp_api_url")) ||
   process.env.NEXT_PUBLIC_CP_API_URL ||
   "http://localhost:3001";
@@ -118,6 +118,24 @@ async function fetchApi<T>(
   }
 }
 
+/** Fetch screenshot image with auth (for HITL View Screenshot). Returns blob URL or null. */
+export async function fetchScreenshotBlob(screenshotPath: string): Promise<string | null> {
+  const base = getCpApiUrl().replace(/\/+$/, "");
+  const path = screenshotPath.startsWith("/") ? screenshotPath : `/${screenshotPath}`;
+  const url = path.startsWith("/cp/") ? `${base}${path}` : `${base}/cp${path}`;
+  const headers: Record<string, string> = { "x-tenant-id": getTenantId() };
+  const role = getRoles();
+  if (role) headers["x-roles"] = role;
+  const actorId = getActorId();
+  if (actorId) headers["x-actor-id"] = actorId;
+  const actorName = getActorName();
+  if (actorName) headers["x-actor-name"] = actorName;
+  const res = await fetch(url, { headers });
+  if (!res.ok) return null;
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
 // CP API endpoints
 export const cpApi = {
   // Agents
@@ -148,6 +166,10 @@ export const cpApi = {
   // Portals
   getPortals: () => fetchApi<{ items: PortalConfig[]; total: number }>(`${getCpApiUrl()}/cp/portals`),
   getPortal: (id: string) => fetchApi<PortalConfig>(`${getCpApiUrl()}/cp/portals/${id}`),
+  getPortalLiveness: () =>
+    fetchApi<{ items: { portal_id: string; name: string; status: "up" | "down"; checked_at: string }[]; checked_at: string }>(
+      `${getCpApiUrl()}/cp/portals/liveness`
+    ),
   updatePortal: (id: string, data: Partial<PortalConfig>) =>
     fetchApi<PortalConfig>(`${getCpApiUrl()}/cp/portals/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   enablePortal: (id: string) =>
@@ -191,17 +213,19 @@ export const cpApi = {
   retryJob: (id: string) =>
     fetchApi<{ job: Job; message: string }>(`${getCpApiUrl()}/cp/jobs/${id}/retry`, {
       method: "POST",
+      body: "{}",
     }),
   requeueJob: (id: string) =>
     fetchApi<{ job: Job; message: string }>(`${getCpApiUrl()}/cp/jobs/${id}/requeue`, {
       method: "POST",
+      body: "{}",
     }),
   getJobEvents: (id: string, limit?: number) => {
     const query = limit ? `?limit=${limit}` : "";
     return fetchApi<{ items: JobEvent[]; total: number }>(`${getCpApiUrl()}/cp/jobs/${id}/events${query}`);
   },
   getJobRuns: (id: string) =>
-    fetchApi<{ items: JobEvent[]; total: number; retry_count: number }>(`${getCpApiUrl()}/cp/jobs/${id}/runs`),
+    fetchApi<{ items: JobRun[]; total: number; retry_count: number }>(`${getCpApiUrl()}/cp/jobs/${id}/runs`),
 
   // HITL
   getHitlTasks: (params?: Record<string, string>) => {
@@ -225,6 +249,7 @@ export const cpApi = {
   cancelHitlTask: (id: string) =>
     fetchApi<{ task: HitlTask; message: string }>(`${getCpApiUrl()}/cp/hitl/${id}/cancel`, {
       method: "POST",
+      body: "{}",
     }),
   getHitlTasksByJob: (jobId: string) =>
     fetchApi<{ items: HitlTask[]; total: number }>(`${getCpApiUrl()}/cp/hitl/job/${jobId}`),
@@ -272,18 +297,70 @@ export const cpApi = {
     }),
   getWatcherStatus: () =>
     fetchApi<WatcherStatus>(`${getCpApiUrl()}/cp/watcher/status`),
+  getWatcherRunHistory: (limit?: number) => {
+    const q = limit != null ? `?limit=${limit}` : "";
+    return fetchApi<{ items: WatcherRunHistoryItem[]; total: number }>(`${getCpApiUrl()}/cp/watcher/run-history${q}`);
+  },
+  clearWatcherRunHistory: () =>
+    fetchApi<{ success: boolean; data: { deleted: number } }>(`${getCpApiUrl()}/cp/watcher/run-history`, { method: "DELETE" }),
+  clearWatcherSnapshots: () =>
+    fetchApi<{ success: boolean; data: { deleted: number } }>(`${getCpApiUrl()}/cp/watcher/snapshots`, { method: "DELETE" }),
+  getWatcherInterval: () =>
+    fetchApi<WatcherIntervalConfig>(`${getCpApiUrl()}/cp/watcher/interval`),
+  updateWatcherInterval: (data: WatcherIntervalUpdate) =>
+    fetchApi<WatcherIntervalConfig>(`${getCpApiUrl()}/cp/watcher/interval`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
   getSnapshots: (params?: Record<string, string>) => {
     const query = params ? `?${new URLSearchParams(params)}` : "";
     return fetchApi<{ items: WatcherSnapshot[]; total: number }>(`${getCpApiUrl()}/cp/watcher/snapshots${query}`);
   },
+  updateSnapshotArchive: (id: string, archived: boolean, archiveSummary?: string) =>
+    fetchApi<WatcherSnapshot>(`${getCpApiUrl()}/cp/watcher/snapshots/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ archived, ...(archiveSummary !== undefined && { archive_summary: archiveSummary }) }),
+    }),
   getSnapshot: (id: string) =>
     fetchApi<WatcherSnapshotFull>(`${getCpApiUrl()}/cp/watcher/snapshots/${id}`),
+  getLatestArchivedSnapshot: (portalId: string, excludeSnapshotId?: string) => {
+    const params = new URLSearchParams({ portal_id: portalId });
+    if (excludeSnapshotId) params.set("exclude_snapshot_id", excludeSnapshotId);
+    return fetchApi<WatcherSnapshotFull>(`${getCpApiUrl()}/cp/watcher/snapshots/latest-archived?${params}`);
+  },
   getSnapshotHtml: (id: string) =>
     fetch(`${getCpApiUrl()}/cp/watcher/snapshots/${id}/html`, {
       headers: { "x-tenant-id": getTenantId() },
     }).then((r) => r.text()),
   getLatestDiff: (portalId: string) =>
     fetchApi<WatcherDiff>(`${getCpApiUrl()}/cp/watcher/diffs/latest?portal_id=${portalId}`),
+
+  // Settings (system_settings: mock, notify, etc.)
+  settings: {
+    getCategory: (category: string) =>
+      fetchApi<Record<string, Record<string, unknown>>>(
+        `${getCpApiUrl()}/cp/settings?category=${encodeURIComponent(category)}`
+      ).then((res) => (res && res[category] && typeof res[category] === "object" ? res[category] as Record<string, unknown> : {})),
+    setValue: (category: string, key: string, value: unknown, description?: string) =>
+      fetchApi<SystemSetting>(
+        `${getCpApiUrl()}/cp/settings/${category}/${key}`,
+        { method: "PUT", body: JSON.stringify({ value, description }) }
+      ) as Promise<SystemSetting>,
+    bulkUpdate: (updates: Array<{ category: string; key: string; value: unknown }>) =>
+      fetchApi(`${getCpApiUrl()}/cp/settings/bulk`, {
+        method: "PATCH",
+        body: JSON.stringify({ updates }),
+      }),
+    getGlobalSettings: (): Promise<{ items: SystemSetting[]; total: number }> =>
+      fetchApi<{ items: SystemSetting[]; total: number }>(`${getCpApiUrl()}/cp/settings/global`).then(
+        (res) => res ?? { items: [], total: 0 }
+      ),
+    setGlobalValue: (category: string, key: string, value: unknown, description?: string) =>
+      fetchApi<SystemSetting>(
+        `${getCpApiUrl()}/cp/settings/global/${category}/${key}`,
+        { method: "PUT", body: JSON.stringify({ value, description }) }
+      ) as Promise<SystemSetting>,
+  },
 };
 
 // Public API endpoints (for job submission)
@@ -325,6 +402,7 @@ export interface Profile {
   description: string | null;
   config: Record<string, unknown>;
   is_default: boolean;
+  is_scout: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -334,6 +412,7 @@ export interface CreateProfileData {
   description?: string;
   config: Record<string, unknown>;
   is_default?: boolean;
+  is_scout?: boolean;
 }
 
 export interface PortalConfig {
@@ -386,6 +465,21 @@ export interface JobEvent {
   created_at: string;
 }
 
+export interface JobRun {
+  id: string;
+  job_id: string;
+  tenant_id: string;
+  worker_id: string;
+  agent_id: string | null;
+  agent_name: string | null;
+  attempt_number: number;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  error_code: string | null;
+  error_message: string | null;
+}
+
 export interface CreateJobData {
   visa_type: string;
   applicant_data: Record<string, unknown>;
@@ -397,6 +491,9 @@ export interface SystemStatus {
   version: string;
   uptime_seconds: number;
   tenant_count: number;
+  memory_percent?: number;
+  load_1m?: number;
+  cpu_count?: number;
   job_stats: { total: number; active: number; completed: number };
   agent_stats: { total: number; online: number; offline: number };
 }
@@ -408,6 +505,10 @@ export interface DashboardHistoryPoint {
   active_jobs: number;
   total_jobs: number;
   completed_jobs: number;
+  failed_jobs: number;
+  cancelled_jobs: number;
+  portal_up_count: number;
+  portal_down_count: number;
 }
 
 export interface DashboardHistoryData {
@@ -438,6 +539,7 @@ export type HitlTaskType =
   | "TURNSTILE"
   | "CAPTCHA"
   | "OTP"
+  | "SECURITY_CODE"
   | "DOCUMENT_CLARIFICATION"
   | "MANUAL_REVIEW"
   | "CUSTOM_INPUT";
@@ -447,7 +549,8 @@ export type HitlTaskStatus =
   | "ASSIGNED"
   | "RESOLVED"
   | "EXPIRED"
-  | "CANCELLED";
+  | "CANCELLED"
+  | "ESCALATED";
 
 export interface HitlContext {
   screenshot_url?: string;
@@ -477,6 +580,9 @@ export interface HitlTask {
   created_at: string;
   resolved_at: string | null;
   resolved_by: string | null;
+  escalation_reason?: string | null;
+  escalated_at?: string | null;
+  escalated_by?: string | null;
 }
 
 export interface ScaleResponse {
@@ -528,15 +634,22 @@ export interface UpdateNotifySettingsRequest {
 }
 
 // Watcher types
+export type WatcherDiffMode = "hash" | "selector";
+
 export interface WatcherConfig {
   id: string;
   tenant_id: string;
   enabled: boolean;
+  time_window_enabled: boolean;
   window_start_hour: number;
   window_end_hour: number;
   jitter_minutes: number;
   portals: string[] | null;
   notify_on_change: boolean;
+  diff_mode: WatcherDiffMode;
+  run_retention_days?: number;
+  snapshot_retention_days?: number;
+  html_diff_interval?: string;
   last_run_at: string | null;
   created_at: string;
   updated_at: string;
@@ -544,18 +657,34 @@ export interface WatcherConfig {
 
 export interface UpdateWatcherConfigRequest {
   enabled?: boolean;
+  time_window_enabled?: boolean;
   window_start_hour?: number;
   window_end_hour?: number;
   jitter_minutes?: number;
   portals?: string[];
   notify_on_change?: boolean;
+  diff_mode?: WatcherDiffMode;
+  run_retention_days?: number;
+  snapshot_retention_days?: number;
+  html_diff_interval?: string;
 }
 
 export interface WatcherRunResult {
   triggered: boolean;
   portals: string[];
+  jobs_created?: number;
   message: string;
-  estimated_completion: string;
+  estimated_completion?: string;
+}
+
+export interface WatcherIntervalConfig {
+  fixed_ms: number;
+  jitter_ms: number;
+}
+
+export interface WatcherIntervalUpdate {
+  fixed_ms?: number;
+  jitter_ms?: number;
 }
 
 export interface WatcherSnapshot {
@@ -567,6 +696,8 @@ export interface WatcherSnapshot {
   diff_summary: string | null;
   has_screenshot: boolean;
   metadata: Record<string, unknown> | null;
+  archived?: boolean;
+  archived_at?: string | null;
 }
 
 export interface WatcherSnapshotFull extends WatcherSnapshot {
@@ -576,9 +707,21 @@ export interface WatcherSnapshotFull extends WatcherSnapshot {
   previous_snapshot_id: string | null;
 }
 
+export interface WatcherRunHistoryItem {
+  id: string;
+  run_at: string;
+  portals_checked: string[];
+  jobs_created: number;
+  up_portal_ids: string[];
+  down_portal_ids: string[];
+  up_portals_with_no_customers: string[];
+  message: string | null;
+}
+
 export interface WatcherStatus {
   config: WatcherConfig | null;
   status: "not_configured" | "enabled" | "disabled";
+  disabled_reason?: string | null;
   last_results: Array<{
     portal_id: string;
     snapshot_id: string;
@@ -722,6 +865,15 @@ export const settingsApi = {
   async getAll(): Promise<SettingsGrouped> {
     const res = await fetchApi<SettingsGrouped>(`${getCpApiUrl()}/cp/settings`);
     return res ?? {};
+  },
+
+  /** Get settings for a single category (e.g. mock). Returns record of key -> value. */
+  async getCategory(category: string): Promise<Record<string, unknown>> {
+    const res = await fetchApi<Record<string, Record<string, unknown>>>(
+      `${getCpApiUrl()}/cp/settings?category=${encodeURIComponent(category)}`
+    );
+    const cat = res?.[category];
+    return (cat && typeof cat === "object") ? cat : {};
   },
 
   async getList(category?: string): Promise<{ items: SystemSetting[]; total: number }> {
@@ -882,8 +1034,8 @@ export const customerApi = {
     }).then(r => r.data);
   },
 
-  async triggerSlotCheck(id: string): Promise<{ message: string; customer_id: string }> {
-    return fetchApi<{ data: { message: string; customer_id: string } }>(
+  async triggerSlotCheck(id: string): Promise<{ message: string; customer_id: string; job_id: string }> {
+    return fetchApi<{ data: { message: string; customer_id: string; job_id: string } }>(
       `${getCpApiUrl()}/cp/customers/${id}/run-slot-check`,
       { method: 'POST', body: '{}' }
     ).then(r => r.data);

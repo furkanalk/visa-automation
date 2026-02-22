@@ -8,7 +8,6 @@ const BCRYPT_ROUNDS = 10;
 export const authRoutes: FastifyPluginAsync = async (app) => {
   const db = getDb();
   const staffRepo = new StaffRepository(db);
-  const notifyRepo = new NotifyRepository(db);
 
   /**
    * Get invite details by token (for register page)

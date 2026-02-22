@@ -1,9 +1,9 @@
 /**
- * AS-VISA Make Appointment sayfası selektörleri (Ankara Bireysel / randevu formu).
- * Mock / canlı site ile uyumlu; .bin/as-visa.html ve as-visa.js referans alındı.
+ * AS-VISA Make Appointment page selectors (Ankara Individual / appointment form).
+ * Aligned with mock and live site; .bin/as-visa.html and as-visa.js used as reference.
  *
  * Form: #apForm
- * Önemli id/name: NationalityTabID, AppointmentTabID, TravelSubject, TravelDate, datepicker,
+ * Important id/name: NationalityTabID, AppointmentTabID, TravelSubject, TravelDate, datepicker,
  * AppointmentTime, PassaportNumber, Name, Surname, TcKimlikNo, reTCKN, DogumYili, Phone, Email, reEmail, enteredCode.
  */
 
@@ -51,5 +51,22 @@ export const AS_VISA_SELECTORS = {
 
   security: {
     turnstile: '.cf-turnstile',
+  },
+
+  /** Confirmation page after booking (mock: #confirmationNumber or [data-confirmation]; live site may vary) */
+  confirmation: {
+    number: '[data-confirmation], #confirmationNumber, .confirmation-number',
+  },
+
+  /** SweetAlert2 confirm button when form submit shows "Randevu başvurusu yapmak istediğinize emin misiniz?" */
+  swalConfirm: '.swal2-confirm',
+
+  /** jQuery UI datepicker (widget-click fallback when #datepicker is readonly) */
+  datepicker: {
+    popup: '.ui-datepicker',
+    /** Tüm tıklanabilir günler (diğer aylar dahil) */
+    enabledDay: '.ui-datepicker td:not(.ui-datepicker-unselectable) a',
+    /** Sadece bu ay (other-month yok; yanlış ay seçimini önler) */
+    enabledDayCurrentMonth: '.ui-datepicker td:not(.ui-datepicker-unselectable):not(.ui-datepicker-other-month) a',
   },
 } as const;

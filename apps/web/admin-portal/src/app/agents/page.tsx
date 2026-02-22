@@ -11,6 +11,7 @@ import { cpApi, type Agent } from "@/lib/api";
 import { AgentModal } from "@/components/agents/agent-modal";
 import { AgentSwimlanes } from "@/components/agents/agent-swimlanes";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { SaveBanner } from "@/components/ui/save-banner";
 import { Bot, Plus, RefreshCw, Trash2, Power, PowerOff, Settings2, CheckSquare, Square, Layers, Loader2, Edit, AlertCircle, LayoutGrid, Columns, ChevronDown, Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -92,6 +93,12 @@ export default function AgentsPage() {
   const [bulkStatusDropdown, setBulkStatusDropdown] = useState(false);
   const [bulkPortalDropdown, setBulkPortalDropdown] = useState(false);
   const [agentToDeleteId, setAgentToDeleteId] = useState<string | null>(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [banner, setBanner] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const showBanner = (type: "success" | "error", text: string) => {
+    setBanner({ type, text });
+    setTimeout(() => setBanner(null), 5000);
+  };
   const { data: agents, isLoading, isError, error, refetch } = useAgents();
   const { data: profiles } = useQuery({
     queryKey: ["profiles"],
@@ -160,28 +167,33 @@ export default function AgentsPage() {
     desired_portals: string[];
     desired_concurrency: number;
   }) => {
-    if (editingAgent) {
-      await updateAgent.mutateAsync({
-        id: editingAgent.id,
-        data: {
+    try {
+      if (editingAgent) {
+        await updateAgent.mutateAsync({
+          id: editingAgent.id,
+          data: {
+            name: data.name,
+            mode: data.mode,
+            status: data.status,
+            profile_id: data.profile_id,
+            desired_portals: data.desired_portals,
+            desired_concurrency: data.desired_concurrency,
+          },
+        });
+      } else {
+        await createAgent.mutateAsync({
           name: data.name,
           mode: data.mode,
-          status: data.status,
-          profile_id: data.profile_id,
+          profile_id: data.profile_id || undefined,
           desired_portals: data.desired_portals,
           desired_concurrency: data.desired_concurrency,
-        },
-      });
-    } else {
-      await createAgent.mutateAsync({
-        name: data.name,
-        mode: data.mode,
-        profile_id: data.profile_id || undefined,
-        desired_portals: data.desired_portals,
-        desired_concurrency: data.desired_concurrency,
-      });
+        });
+      }
+      showBanner("success", "Saved.");
+      handleCloseModal();
+    } catch (err) {
+      showBanner("error", err instanceof Error ? err.message : "Failed to save.");
     }
-    handleCloseModal();
   };
 
   const handleToggleStatus = async (agent: Agent) => {
@@ -195,13 +207,18 @@ export default function AgentsPage() {
 
   const handleDeleteConfirm = async () => {
     if (!agentToDeleteId) return;
-    await deleteAgent.mutateAsync(agentToDeleteId);
-    setSelectedAgents((prev) => {
-      const next = new Set(prev);
-      next.delete(agentToDeleteId);
-      return next;
-    });
-    setAgentToDeleteId(null);
+    try {
+      await deleteAgent.mutateAsync(agentToDeleteId);
+      setSelectedAgents((prev) => {
+        const next = new Set(prev);
+        next.delete(agentToDeleteId);
+        return next;
+      });
+      setAgentToDeleteId(null);
+      showBanner("success", "Deleted.");
+    } catch (err) {
+      showBanner("error", err instanceof Error ? err.message : "Failed to delete.");
+    }
   };
 
   const toggleSelectAgent = (id: string) => {
@@ -224,14 +241,23 @@ export default function AgentsPage() {
     }
   };
 
-  const handleBulkDelete = async () => {
+  const handleBulkDeleteClick = () => {
     if (selectedAgents.size === 0) return;
-    if (!confirm(`Delete ${selectedAgents.size} selected agent(s)?`)) return;
-    
-    for (const id of selectedAgents) {
-      await deleteAgent.mutateAsync(id);
+    setBulkDeleteOpen(true);
+  };
+
+  const handleBulkDeleteConfirm = async () => {
+    const ids = Array.from(selectedAgents);
+    try {
+      for (const id of ids) {
+        await deleteAgent.mutateAsync(id);
+      }
+      setSelectedAgents(new Set());
+      setBulkDeleteOpen(false);
+      showBanner("success", "Deleted.");
+    } catch (err) {
+      showBanner("error", err instanceof Error ? err.message : "Failed to delete.");
     }
-    setSelectedAgents(new Set());
   };
 
   const handleBulkAssignProfile = async (profileId: string | null) => {
@@ -280,6 +306,7 @@ export default function AgentsPage() {
 
   return (
     <div className="space-y-6">
+      <SaveBanner message={banner} onDismiss={() => setBanner(null)} />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Agents</h1>
@@ -483,7 +510,7 @@ export default function AgentsPage() {
             </div>
 
             {/* Bulk Delete */}
-            <Button size="sm" variant="destructive" onClick={handleBulkDelete}>
+            <Button size="sm" variant="destructive" onClick={handleBulkDeleteClick}>
               <Trash2 className="h-4 w-4 mr-1" />
               Delete
             </Button>
@@ -716,6 +743,18 @@ export default function AgentsPage() {
         onConfirm={handleDeleteConfirm}
         title="Delete agent"
         message="Are you sure you want to delete this agent?"
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        variant="destructive"
+        isLoading={deleteAgent.isPending}
+      />
+
+      <ConfirmDialog
+        open={bulkDeleteOpen}
+        onClose={() => setBulkDeleteOpen(false)}
+        onConfirm={handleBulkDeleteConfirm}
+        title="Delete agents"
+        message={`Delete ${selectedAgents.size} selected agent(s)?`}
         confirmLabel="Delete"
         cancelLabel="Cancel"
         variant="destructive"

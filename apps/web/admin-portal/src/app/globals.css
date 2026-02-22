@@ -47,6 +47,13 @@ body {
   --border-color: #bfdbfe;
 }
 
+/* Chart tooltip – readable in both themes */
+:root {
+  --chart-tooltip-bg: #f8fafc;
+  --chart-tooltip-border: #e2e8f0;
+  --chart-tooltip-text: #0f172a;
+}
+
 /* Dark mode */
 .dark {
   --bg-main: #0f172a;
@@ -55,6 +62,9 @@ body {
   --text-primary: #f1f5f9;
   --text-secondary: #94a3b8;
   --border-color: #334155;
+  --chart-tooltip-bg: #1e293b;
+  --chart-tooltip-border: #334155;
+  --chart-tooltip-text: #f1f5f9;
 }
 
 .dark body {
@@ -142,4 +152,13 @@ select {
 
 .dark select {
   background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%239ca3af' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+}
+
+/* Live mode indicator – red dot blink */
+@keyframes live-blink {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.6); }
+  50% { opacity: 0.4; box-shadow: 0 0 0 4px rgba(248, 113, 113, 0); }
+}
+.animate-live-blink {
+  animation: live-blink 1.4s ease-in-out infinite;
 }

@@ -13,6 +13,7 @@ export interface SystemConfig {
     max_agents_per_worker: number;
     default_async_agent_count: number;
     default_sync_agent_count: number;
+    default_scout_agent_count: number;
     max_concurrent_jobs: number;
   };
   // Job settings
@@ -82,7 +83,7 @@ export interface SystemConfig {
 
 /** Required categories and their keys; CP must return all of these (no runtime defaults). */
 const REQUIRED_CATEGORIES: Record<keyof SystemConfig, string[]> = {
-  system: ['heartbeat_interval_ms', 'heartbeat_timeout_ms', 'config_refresh_interval_ms', 'sync_poll_interval_ms', 'max_agents_per_worker', 'default_async_agent_count', 'default_sync_agent_count', 'max_concurrent_jobs'],
+  system: ['heartbeat_interval_ms', 'heartbeat_timeout_ms', 'config_refresh_interval_ms', 'sync_poll_interval_ms', 'max_agents_per_worker', 'default_async_agent_count', 'default_sync_agent_count', 'default_scout_agent_count', 'max_concurrent_jobs'],
   job: ['max_retries', 'default_priority', 'lock_timeout_ms', 'retry_slot_delay_min_ms', 'retry_slot_delay_max_ms'],
   queue: ['rate_limit_max', 'rate_limit_window_ms', 'completed_retention_hours', 'completed_max_count', 'failed_retention_hours', 'failed_max_count'],
   portal: ['navigation_timeout_ms', 'action_timeout_ms', 'selector_timeout_ms', 'pacing_min_delay_ms', 'pacing_max_delay_ms', 'pacing_jitter', 'rate_limit_actions_per_minute', 'rate_limit_burst'],
@@ -123,9 +124,14 @@ function buildConfigFromCP(data: Record<string, Record<string, unknown>>): Syste
       throw new Error(`CP config missing required category: ${cat}. Run migration 010_system_settings.`);
     }
     const out: Record<string, unknown> = {};
+    const optionalKeys = new Set(['default_scout_agent_count']);
     for (const key of keys) {
       const v = raw[key];
       if (v === undefined) {
+        if (optionalKeys.has(key)) {
+          out[key] = key === 'default_scout_agent_count' ? 0 : undefined;
+          continue;
+        }
         throw new Error(`CP config missing ${cat}.${key}. Ensure system_settings has this key.`);
       }
       if (cat === 'features' && (key === 'watcher_enabled' || key === 'hitl_enabled' || key === 'notifications_enabled')) {
