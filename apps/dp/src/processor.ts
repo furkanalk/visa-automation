@@ -95,6 +95,7 @@ import { scheduleSlotRetry } from './core/queue/schedule-retry.js';
 import {
   notifyAgentStarted,
   notifyAgentCompleted,
+  notifyAgentFailed,
   notifyBookingConfirmed,
   notifyHitlRequired,
 } from './core/notify/index.js';
@@ -279,7 +280,7 @@ export async function processJob(
 
       metrics.gauge('dp_job_run_duration_ms').set(Date.now() - runStartMs);
       metrics.counter('dp_job_completions_total', { status: 'slot_found' }).inc(1);
-      jobLogger.info({}, 'Job halted at SLOT_FOUND (MVP)');
+      jobLogger.info({}, 'Job halted at SLOT_FOUND');
       try {
         await notifyAgentCompleted({
           jobId: job_id,
@@ -289,7 +290,6 @@ export async function processJob(
           agentId: agentId ?? null,
           agentName: agentName ?? null,
           status: 'slot_found',
-          details: 'Halted at SLOT_FOUND (MVP)',
           logger: jobLogger,
         });
       } catch (e) {
@@ -330,19 +330,19 @@ export async function processJob(
         metrics.counter('dp_job_retries_total').inc(1);
         jobLogger.warn({ attempt: payload.attempt_number }, 'Slot retry skipped: max_retries exceeded');
         try {
-          await notifyAgentCompleted({
+          await notifyAgentFailed({
             jobId: job_id,
             jobRunId: jobRun.id,
             tenantId: tenant_id,
             portalId: portalConfig.portalId,
             agentId: agentId ?? null,
             agentName: agentName ?? null,
-            status: 'failed',
-            details: 'Max retries exceeded',
+            finalStatus: JOB_STATES.FAILED_RETRYABLE,
+            reason: 'Max retries exceeded',
             logger: jobLogger,
           });
         } catch (e) {
-          jobLogger.warn({ err: e }, 'Agent completed notify failed');
+          jobLogger.warn({ err: e }, 'Agent failed notify failed');
         }
         return;
       }
@@ -404,19 +404,19 @@ export async function processJob(
         .execute();
       jobLogger.info({ abortReason: result.abortReason }, 'Slot-check aborted; marked FAILED_RETRYABLE');
       try {
-        await notifyAgentCompleted({
+        await notifyAgentFailed({
           jobId: job_id,
           jobRunId: jobRun.id,
           tenantId: tenant_id,
           portalId: portalConfig.portalId,
           agentId: agentId ?? null,
           agentName: agentName ?? null,
-          status: 'failed',
-          details: reason,
+          finalStatus: JOB_STATES.FAILED_RETRYABLE,
+          reason,
           logger: jobLogger,
         });
       } catch (e) {
-        jobLogger.warn({ err: e }, 'Agent completed notify failed');
+        jobLogger.warn({ err: e }, 'Agent failed notify failed');
       }
       throw new Error(reason);
     }
@@ -571,19 +571,19 @@ export async function processJob(
 
     if (jobRun) {
       try {
-        await notifyAgentCompleted({
+        await notifyAgentFailed({
           jobId: job_id,
           jobRunId: jobRun.id,
           tenantId: tenant_id,
           portalId: (payload.portal_id as string) ?? 'unknown',
           agentId: agentId ?? null,
           agentName: agentName ?? null,
-          status: 'failed',
-          errorMessage: (err as Error).message,
+          finalStatus: terminalState,
+          reason: (err as Error).message,
           logger: jobLogger,
         });
       } catch (e) {
-        jobLogger.warn({ err: e }, 'Agent completed notify failed');
+        jobLogger.warn({ err: e }, 'Agent failed notify failed');
       }
     }
 

@@ -12,6 +12,7 @@ include:
   - ../services/dp.yml
   - ../services/admin-portal.yml
   - ../services/staff-portal.yml
+  - ../services/caddy.yml
 
 networks:
   visa-network:

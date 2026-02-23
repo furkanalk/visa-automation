@@ -64,6 +64,8 @@ export interface AgentRegistrationResponse {
 export interface HeartbeatResponse {
   acknowledged: boolean;
   disabled?: boolean;
+  /** When true, CP wants this agent to drain (finish current job then go OFFLINE). */
+  draining?: boolean;
   config_changed: boolean;
   profile?: AgentProfileConfig;
   desired_portals: string[];

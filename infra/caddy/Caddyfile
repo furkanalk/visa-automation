@@ -1,0 +1,18 @@
+# Public reverse proxy and TLS. Replace example.com with your domain and set DNS A record.
+# Caddy serves HTTPS via Let's Encrypt when domain is reachable.
+
+api.example.com {
+	reverse_proxy cp:3001
+}
+
+admin.example.com {
+	reverse_proxy admin-portal:3002
+}
+
+staff.example.com {
+	reverse_proxy staff-portal:3003
+}
+
+mock.example.com {
+	reverse_proxy mock-portal:3004
+}

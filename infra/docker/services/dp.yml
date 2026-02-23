@@ -1,39 +1,32 @@
 # Data Plane / worker (dp) - single service file
+# All values from env (--env-file or env_file). No defaults; Telegram/notify from CP config.
 services:
   dp:
     build:
       context: ../../..
       dockerfile: apps/dp/Dockerfile
       target: production
-    image: ${IMAGE_DP:-visa-automation/dp:latest}
+    image: ${IMAGE_DP}
     container_name: visa-dp
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      WORKER_ID: ${WORKER_ID:-worker-1}
-      TENANT_ID: ${TENANT_ID:-default}
-      CP_API_URL: http://cp:3001
-      PUBLIC_API_URL: http://cp:3001
-      ASYNC_AGENT_COUNT: ${ASYNC_AGENT_COUNT:-2}
-      SYNC_AGENT_COUNT: ${SYNC_AGENT_COUNT:-0}
-      MAX_AGENTS: ${MAX_AGENTS:-100}
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: ${DB_NAME:-visa_automation}
-      DB_USER: ${DB_USER:-postgres}
+      LOG_LEVEL: ${LOG_LEVEL}
+      WORKER_ID: ${WORKER_ID}
+      TENANT_ID: ${TENANT_ID}
+      CP_API_URL: ${CP_API_URL}
+      PUBLIC_API_URL: ${PUBLIC_API_URL}
+      CP_INTERNAL_SECRET: ${CP_INTERNAL_SECRET}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_CHAT_IDS: ${TELEGRAM_CHAT_IDS:-}
-      TELEGRAM_CHAT_IDS_OPS: ${TELEGRAM_CHAT_IDS_OPS:-}
-      TELEGRAM_CHAT_IDS_BOOKINGS: ${TELEGRAM_CHAT_IDS_BOOKINGS:-}
-      NOTIFY_ACTION_BASE_URL: ${NOTIFY_ACTION_BASE_URL:-http://cp:3001}
-      NOTIFY_ACTION_TOKEN: ${NOTIFY_ACTION_TOKEN:-}
-      USE_MOCK_PORTAL: ${USE_MOCK_PORTAL:-false}
-      MOCK_PORTAL_URL: http://mock-portal:3004/as-visa
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      USE_MOCK_PORTAL: ${USE_MOCK_PORTAL}
+      MOCK_PORTAL_URL: ${MOCK_PORTAL_URL}
     depends_on:
       postgres:
         condition: service_healthy

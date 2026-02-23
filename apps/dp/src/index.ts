@@ -85,18 +85,7 @@ async function main() {
   const SYNC_POLL_INTERVAL_MS = systemConfig.sync_poll_interval_ms;
   const MAX_AGENTS = systemConfig.max_agents_per_worker;
 
-  logger.info({
-    workerId: WORKER_ID,
-    tenantId: TENANT_ID,
-    cpApiUrl: CP_API_URL,
-    publicApiUrl: PUBLIC_API_URL,
-    asyncAgents: ASYNC_AGENT_COUNT,
-    syncAgents: SYNC_AGENT_COUNT,
-    scoutAgents: SCOUT_AGENT_COUNT,
-    heartbeatInterval: HEARTBEAT_INTERVAL_MS,
-    configRefreshInterval: CONFIG_REFRESH_INTERVAL_MS,
-    configSource: 'cp',
-  }, 'Starting worker with AgentPool');
+  logger.info({ workerId: WORKER_ID, asyncAgents: ASYNC_AGENT_COUNT, syncAgents: SYNC_AGENT_COUNT, scoutAgents: SCOUT_AGENT_COUNT }, 'DP worker starting');
 
   // Initialize AgentPool
   agentPool = new AgentPool({
@@ -121,12 +110,7 @@ async function main() {
   const needSyncAgents = Math.max(0, SYNC_AGENT_COUNT - hydratedStats.syncCount);
   const needScoutAgents = Math.max(0, SCOUT_AGENT_COUNT - hydratedStats.scoutCount);
 
-  logger.info({
-    hydrated: hydratedStats,
-    needAsync: needAsyncAgents,
-    needSync: needSyncAgents,
-    needScout: needScoutAgents,
-  }, 'Agent counts after hydration');
+  logger.debug({ hydrated: hydratedStats, needAsync: needAsyncAgents, needSync: needSyncAgents, needScout: needScoutAgents }, 'Agent counts after hydration');
 
   const agentName = (index: number) =>
     WORKER_ID === 'worker-1'
@@ -180,7 +164,7 @@ async function main() {
   }
 
   const finalStats = agentPool.getStats();
-  logger.info(finalStats, 'Final agent pool stats');
+  logger.debug(finalStats, 'Final agent pool stats');
 
   const health = startHealthServer(DP_HEALTH_PORT, {
     cpHealthCheck: () => agentPool!.getCPClient().healthCheck(),
@@ -211,7 +195,7 @@ async function main() {
     await syncRunner.start();
   }
 
-  // Slot-check queue is consumed only by scout agents; watcher is disabled when no scout agent (CP validates on enable)
+  // Slot-check queue is consumed only by scout agents
   scoutRunner = new ScoutAgentRunner({
     agentPool,
     redis: getRedisConnection(),
@@ -222,7 +206,7 @@ async function main() {
   });
   await scoutRunner.start();
 
-  logger.info('Worker started, waiting for jobs...');
+  logger.info({ workerId: WORKER_ID, asyncCount: finalStats.asyncCount, syncCount: finalStats.syncCount, scoutCount: finalStats.scoutCount }, 'DP worker ready');
 }
 
 async function shutdown(signal: string) {

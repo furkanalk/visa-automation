@@ -2,6 +2,7 @@ import type { Page } from 'playwright';
 import type { Throttler } from '../../../core/networking/throttler.js';
 import type { RateLimiter } from '../../../core/networking/rate-limiter.js';
 import { AS_VISA_SELECTORS as S } from '../pages/make-appointment/index.js';
+import { setDateInput } from './date-input.js';
 import { createHash } from 'node:crypto';
 
 /** Telemetry: neden slot bulunamadı / bulundu (prod debug). */
@@ -59,7 +60,7 @@ export async function slotHunt(args: {
   await page.waitForSelector(S.selects.travelSubject, { timeout: 30_000 });
   await page.waitForSelector(S.inputs.travelDate, { timeout: 30_000 });
 
-  // Travel Date boşsa set et (bazı akışlarda datepicker/step state'i için gerekli)
+  // Travel Date boşsa set et (bazı akışlarda datepicker/step state'i için gerekli). Readonly olduğu için setDateInput kullan.
   const travelDateVal = await page.inputValue(S.inputs.travelDate).catch(() => '');
   if (!travelDateVal.trim()) {
     const d = new Date();
@@ -67,7 +68,7 @@ export async function slotHunt(args: {
     const dd = String(d.getDate()).padStart(2, '0');
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const yyyy = String(d.getFullYear());
-    await page.fill(S.inputs.travelDate, `${dd}/${mm}/${yyyy}`);
+    await setDateInput(page, S.inputs.travelDate, `${dd}/${mm}/${yyyy}`);
   }
 
   // Availability yükleten tetik: #AppointmentTabID change → /TarihGetir; dateDisabled bu sayede dolar

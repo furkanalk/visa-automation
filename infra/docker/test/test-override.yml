@@ -1,5 +1,6 @@
 # Test-only overrides. Use: docker compose -f compose.yml -f test-override.yml up -d
 # env_file: .env.test (bu klasördeki .env.test)
+# Re-expose ports for E2E (base services use expose only when behind Caddy in prod).
 services:
   postgres:
     env_file: .env.test
@@ -7,6 +8,8 @@ services:
     env_file: .env.test
   cp:
     env_file: .env.test
+    ports:
+      - "3001:3001"
     working_dir: /app
     volumes:
       - ../../..:/app
@@ -24,7 +27,13 @@ services:
       - ../../..:/app
   admin-portal:
     env_file: .env.test
+    ports:
+      - "3002:3002"
   staff-portal:
     env_file: .env.test
+    ports:
+      - "3003:3003"
   mock-portal:
     env_file: .env.test
+    ports:
+      - "3004:3004"

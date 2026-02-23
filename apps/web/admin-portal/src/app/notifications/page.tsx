@@ -99,8 +99,13 @@ export default function NotificationsPage() {
         undefined,
         `🔔 Visa Automation – Test\n\nThis is a test from the Admin Portal.\nSent at: ${new Date().toISOString()}`
       ),
-    onSuccess: () => {
-      setSaveMessage({ type: "success", text: "Saved." });
+    onSuccess: (data) => {
+      const sent = (data?.details as { sent?: number })?.sent;
+      const text =
+        sent != null && sent > 0
+          ? `Test message sent to ${sent} chat(s) (Ops, Bookings, Watcher).`
+          : "Test message sent.";
+      setSaveMessage({ type: "success", text });
       setTimeout(() => setSaveMessage(null), 3000);
     },
     onError: (error: Error) => {

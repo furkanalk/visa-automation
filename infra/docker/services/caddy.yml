@@ -1,0 +1,23 @@
+# Caddy: public reverse proxy and TLS. Only this service exposes ports 80/443.
+# Internal services (cp, admin-portal, staff-portal, mock-portal) use expose only; visa-dp is not exposed.
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: visa-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../../caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      cp:
+        condition: service_healthy
+    networks:
+      - visa-network
+
+volumes:
+  caddy_data:
+  caddy_config:

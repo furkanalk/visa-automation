@@ -84,6 +84,19 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
   });
 
   /**
+   * Delete all jobs for the tenant (clear list). Job runs removed by CASCADE.
+   * DELETE /cp/jobs
+   */
+  app.delete('/', async (request, reply) => {
+    const deleted = await jobRepo.deleteAllForTenant(request.tenantId);
+    request.log.info({ tenantId: request.tenantId, deleted }, 'Jobs cleared');
+    return reply.send({
+      success: true,
+      data: { deleted },
+    });
+  });
+
+  /**
    * Get job by ID
    * GET /cp/jobs/:id
    */

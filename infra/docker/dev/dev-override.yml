@@ -1,5 +1,6 @@
 # Dev-only overrides (build target, volumes, commands). Use: docker compose -f compose.yml -f dev-override.yml up -d
 # env_file: .env.dev (bu klasördeki .env.dev)
+# Re-expose ports for local access (base services use expose only for prod behind Caddy).
 services:
   postgres:
     env_file: .env.dev
@@ -8,6 +9,8 @@ services:
   bootstrap:
     env_file: .env.dev
   cp:
+    ports:
+      - "3001:3001"
     build:
       target: development
     env_file: .env.dev
@@ -32,7 +35,13 @@ services:
     command: ["npm", "run", "dev", "--workspace=@visa-automation/dp"]
   admin-portal:
     env_file: .env.dev
+    ports:
+      - "3002:3002"
   staff-portal:
     env_file: .env.dev
+    ports:
+      - "3003:3003"
   mock-portal:
     env_file: .env.dev
+    ports:
+      - "3004:3004"

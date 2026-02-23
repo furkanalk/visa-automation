@@ -288,7 +288,17 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
 
     if (body.name !== undefined) updates.name = body.name;
     if (body.mode !== undefined) updates.mode = body.mode;
-    if (body.status !== undefined) updates.status = body.status;
+    if (body.status !== undefined) {
+      // When disabling (OFFLINE): if agent is running a job, set DRAINING so it finishes then goes OFFLINE
+      const requestedOffline = body.status === 'OFFLINE' || body.status === 'DISABLED';
+      if (requestedOffline && agent.current_job_id) {
+        updates.status = 'DRAINING';
+      } else {
+        updates.status = body.status;
+      }
+      // When enabling agent, clear stale current_job_id so it is not stuck showing a finished job
+      if (body.status === 'ONLINE') updates.current_job_id = null;
+    }
     if (body.profile_id !== undefined) updates.profile_id = body.profile_id;
     if (body.desired_portals !== undefined) {
       updates.desired_portals = Array.isArray(body.desired_portals)

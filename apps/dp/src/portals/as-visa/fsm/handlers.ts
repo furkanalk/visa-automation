@@ -181,5 +181,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
       }
     }
     ctx.logger.info({ jobId: ctx.jobId, reason: res.reason }, 'No slot found, waiting');
+    // Halt so we do not advance to SLOT_FOUND (only advance when res.found is true and we throw above)
+    throw new FSMHalt({ lastState: JOB_STATES.WAITING_SLOT });
   },
 };

@@ -198,6 +198,9 @@ export const cpApi = {
     const query = params ? `?${new URLSearchParams(params)}` : "";
     return fetchApi<{ items: Job[]; total: number }>(`${getCpApiUrl()}/cp/jobs${query}`);
   },
+  /** Delete all jobs for the current tenant. */
+  clearAllJobs: () =>
+    fetchApi<{ deleted: number }>(`${getCpApiUrl()}/cp/jobs`, { method: "DELETE" }),
   getJob: (id: string) => fetchApi<Job>(`${getCpApiUrl()}/cp/jobs/${id}`),
   // Batch get job statuses for performance
   batchGetJobStatuses: (ids: string[]) =>

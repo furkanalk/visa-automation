@@ -5,13 +5,13 @@ services:
       context: ../../..
       dockerfile: apps/web/mock-portal/Dockerfile
       target: production
-    image: ${IMAGE_MOCK_PORTAL:-visa-automation/mock-portal:latest}
+    image: ${IMAGE_MOCK_PORTAL}
     container_name: visa-mock-portal
     restart: unless-stopped
     environment:
       NODE_ENV: production
       PORT: 3004
-    ports:
-      - "3004:3004"
+    expose:
+      - "3004"
     networks:
       - visa-network

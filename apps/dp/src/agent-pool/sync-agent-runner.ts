@@ -35,7 +35,7 @@ export class SyncAgentRunner {
    * Start polling for sync agent jobs
    */
   async start(): Promise<void> {
-    this.logger.info({ pollIntervalMs: this.pollIntervalMs }, 'Starting SyncAgentRunner');
+    this.logger.debug({ pollIntervalMs: this.pollIntervalMs }, 'Starting SyncAgentRunner');
     
     // Initial poll
     await this.pollForJobs();
@@ -46,7 +46,7 @@ export class SyncAgentRunner {
       await this.pollForJobs();
     }, this.pollIntervalMs);
 
-    this.logger.info('SyncAgentRunner started');
+    this.logger.debug('SyncAgentRunner started');
   }
 
   /**
@@ -68,7 +68,7 @@ export class SyncAgentRunner {
 
         // Check if CP assigned a job to this agent
         if (cpAgent.current_job_id && !agent.currentJobId) {
-          this.logger.info({ agentId: agent.id, jobId: cpAgent.current_job_id }, 'Sync agent job assignment detected');
+          this.logger.debug({ agentId: agent.id, jobId: cpAgent.current_job_id }, 'Sync agent job assignment detected');
           
           // Fetch job details
           const job = await cpClient.getJob(cpAgent.current_job_id);
@@ -99,11 +99,11 @@ export class SyncAgentRunner {
 
     try {
       await this.agentPool.assignJob(agent.id, jobId);
-      this.logger.info({ agentId: agent.id, jobId }, 'Starting sync job execution');
+      this.logger.debug({ agentId: agent.id, jobId }, 'Starting sync job execution');
 
       // Check abort before starting
       if (abortController.signal.aborted) {
-        this.logger.info({ jobId }, 'Job aborted before start');
+        this.logger.debug({ jobId }, 'Job aborted before start');
         return;
       }
 
@@ -118,7 +118,7 @@ export class SyncAgentRunner {
       await this.processJob(payload, this.workerId, this.logger, agent.profile ?? undefined, agent.id, agent.name ?? undefined);
 
       await this.agentPool.completeJob(agent.id, jobId);
-      this.logger.info({ agentId: agent.id, jobId }, 'Sync job completed');
+      this.logger.debug({ agentId: agent.id, jobId }, 'Sync job completed');
     } catch (err) {
       await this.agentPool.failJob(agent.id, jobId, err as Error);
       this.logger.error({ agentId: agent.id, jobId, err }, 'Sync job failed');
@@ -137,7 +137,7 @@ export class SyncAgentRunner {
     }
 
     running.abortController.abort();
-    this.logger.info({ jobId, agentId: running.agentId }, 'Sync job abort requested');
+    this.logger.debug({ jobId, agentId: running.agentId }, 'Sync job abort requested');
     return { aborted: true };
   }
 
@@ -163,7 +163,7 @@ export class SyncAgentRunner {
    */
   async stop(): Promise<void> {
     this.isShuttingDown = true;
-    this.logger.info('Stopping SyncAgentRunner');
+    this.logger.debug('Stopping SyncAgentRunner');
     
     if (this.pollInterval) {
       clearInterval(this.pollInterval);
@@ -173,10 +173,10 @@ export class SyncAgentRunner {
     // Abort all running jobs
     for (const [jobId, running] of this.runningJobs) {
       running.abortController.abort();
-      this.logger.info({ jobId, agentId: running.agentId }, 'Sync job aborted on shutdown');
+      this.logger.debug({ jobId, agentId: running.agentId }, 'Sync job aborted on shutdown');
     }
     this.runningJobs.clear();
 
-    this.logger.info('SyncAgentRunner stopped');
+    this.logger.debug('SyncAgentRunner stopped');
   }
 }

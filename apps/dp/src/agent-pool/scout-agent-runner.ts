@@ -48,7 +48,7 @@ export class ScoutAgentRunner {
     const stats = this.agentPool.getStats();
     const concurrency = this.useFallbackToAsyncAgents ? 1 : Math.max(1, stats.scoutCount);
 
-    this.logger.info(
+    this.logger.debug(
       { concurrency, scoutCount: stats.scoutCount, useFallbackToAsyncAgents: this.useFallbackToAsyncAgents },
       'Starting ScoutAgentRunner'
     );
@@ -74,7 +74,7 @@ export class ScoutAgentRunner {
     );
 
     this.worker.on('completed', (job) => {
-      this.logger.info({ jobId: job.data.job_id }, 'Scout job completed');
+      this.logger.debug({ jobId: job.data.job_id }, 'Scout job completed');
     });
     this.worker.on('failed', (job, err) => {
       this.logger.error({ jobId: job?.data.job_id, err: err.message }, 'Scout job failed');
@@ -83,7 +83,7 @@ export class ScoutAgentRunner {
       this.logger.error({ err }, 'Scout worker error');
     });
 
-    this.logger.info('ScoutAgentRunner started');
+    this.logger.debug('ScoutAgentRunner started');
   }
 
   private async waitForAvailableAgent(jobId: string, portalId: string): Promise<AgentRuntime | null> {
@@ -96,14 +96,38 @@ export class ScoutAgentRunner {
         ? (idle.find(a => this.agentPool.canAgentProcessPortal(a, portalId)) ?? idle[0] ?? null)
         : (idle[0] ?? null);
       if (agent) return agent;
+      const stats = this.agentPool.getStats();
+      const asyncScoutSummary = this.agentPool
+        .getAllAgents()
+        .filter((a) => a.mode === 'ASYNC')
+        .map((a) => ({ id: a.id, name: a.name, status: a.status, is_scout: a.profile?.is_scout }));
       this.logger.debug(
-        { jobId, attempt: attempt + 1, maxRetries: AGENT_WAIT_CONFIG.maxRetries, delayMs: delay },
+        {
+          jobId,
+          attempt: attempt + 1,
+          maxRetries: AGENT_WAIT_CONFIG.maxRetries,
+          delayMs: delay,
+          scoutCount: stats.scoutCount,
+          asyncCount: stats.asyncCount,
+          idleCount: stats.idle,
+          runningCount: stats.running,
+          asyncAgents: asyncScoutSummary,
+        },
         this.useFallbackToAsyncAgents ? 'No async agent available for slot-check, waiting' : 'No scout agent available, waiting'
       );
       const jitter = Math.random() * 0.2 * delay;
       await new Promise(r => setTimeout(r, delay + jitter));
       delay = Math.min(delay * AGENT_WAIT_CONFIG.backoffMultiplier, AGENT_WAIT_CONFIG.maxDelayMs);
     }
+    const stats = this.agentPool.getStats();
+    const asyncScoutSummary = this.agentPool
+      .getAllAgents()
+      .filter((a) => a.mode === 'ASYNC')
+      .map((a) => ({ id: a.id, name: a.name, status: a.status, is_scout: a.profile?.is_scout }));
+    this.logger.warn(
+      { jobId, scoutCount: stats.scoutCount, asyncCount: stats.asyncCount, asyncAgents: asyncScoutSummary },
+      'No idle scout agent after retries; check that an ASYNC agent has a profile with is_scout=true and is IDLE'
+    );
     return null;
   }
 
@@ -111,10 +135,10 @@ export class ScoutAgentRunner {
     const { job_id } = payload;
     try {
       await this.agentPool.assignJob(agent.id, job_id);
-      this.logger.info({ agentId: agent.id, jobId: job_id }, 'Starting scout job');
+      this.logger.debug({ agentId: agent.id, jobId: job_id }, 'Starting scout job');
       const shouldAbort = await this.agentPool.shouldAbortJob(job_id);
       if (shouldAbort) {
-        this.logger.info({ jobId: job_id }, 'Scout job aborted before start');
+        this.logger.debug({ jobId: job_id }, 'Scout job aborted before start');
         return;
       }
       await this.processJob(payload, this.workerId, this.logger, agent.profile ?? undefined, agent.id, agent.name ?? undefined);
@@ -126,11 +150,11 @@ export class ScoutAgentRunner {
   }
 
   async stop(): Promise<void> {
-    this.logger.info('Stopping ScoutAgentRunner');
+    this.logger.debug('Stopping ScoutAgentRunner');
     if (this.worker) {
       await this.worker.close();
       this.worker = null;
     }
-    this.logger.info('ScoutAgentRunner stopped');
+    this.logger.debug('ScoutAgentRunner stopped');
   }
 }

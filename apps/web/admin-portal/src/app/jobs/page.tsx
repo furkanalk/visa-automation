@@ -24,6 +24,7 @@ import {
   CheckCircle2,
   Loader2,
   Settings,
+  Trash2,
 } from "lucide-react";
 
 const statusColors: Record<string, "default" | "secondary" | "destructive" | "success" | "warning"> = {
@@ -44,7 +45,8 @@ const statusColors: Record<string, "default" | "secondary" | "destructive" | "su
   CANCELLED: "secondary",
 };
 
-const TERMINAL_STATES = ["COMPLETED", "FAILED_TERMINAL", "CANCELLED"];
+/** Job is finished (no Cancel); includes scout slot-check outcomes (SLOT_FOUND, FAILED_RETRYABLE). */
+const TERMINAL_STATES = ["COMPLETED", "FAILED_TERMINAL", "CANCELLED", "SLOT_FOUND", "FAILED_RETRYABLE"];
 /** States that allow Retry: failed/cancelled; increments retry count (max_retries). */
 const RETRYABLE_STATES = ["FAILED_RETRYABLE", "FAILED_TERMINAL", "CANCELLED"];
 /** States that allow Requeue: put back in queue without incrementing retry count (e.g. continue after HITL or pause). */
@@ -102,10 +104,22 @@ export default function JobsPage() {
   };
 
   const [banner, setBanner] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [clearAllConfirm, setClearAllConfirm] = useState(false);
   const showBanner = (type: "success" | "error", text: string) => {
     setBanner({ type, text });
     setTimeout(() => setBanner(null), 5000);
   };
+
+  const clearAllMutation = useMutation({
+    mutationFn: () => cpApi.clearAllJobs(),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      setClearAllConfirm(false);
+      setSelectedJob(null);
+      showBanner("success", `Cleared ${data?.deleted ?? 0} job(s).`);
+    },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to clear jobs."),
+  });
 
   const stopMutation = useMutation({
     mutationFn: (id: string) => cpApi.stopJob(id, "Stopped by admin"),
@@ -195,6 +209,14 @@ export default function JobsPage() {
           <p className="text-gray-500 dark:text-gray-400">Monitor and manage visa automation jobs</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setClearAllConfirm(true)}
+            className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
+          >
+            <Trash2 className="h-4 w-4 mr-1" />
+            Clear all jobs
+          </Button>
           <Button variant="outline" onClick={handleOpenJobConfig}>
             <Settings className="h-4 w-4 mr-1" />
             Configure
@@ -229,6 +251,7 @@ export default function JobsPage() {
           <option value="LOGIN_PROCESS">Login Process</option>
           <option value="PROCESSING">Processing</option>
           <option value="SLOT_SEARCHING">Slot Searching</option>
+          <option value="SLOT_FOUND">Slot Found</option>
           <option value="WAITING_HITL">Waiting HITL</option>
           <option value="COMPLETED">Completed</option>
           <option value="FAILED_RETRYABLE">Failed (Retryable)</option>
@@ -424,6 +447,33 @@ export default function JobsPage() {
           isRequeuePending={requeueMutation.isPending}
         />
       )}
+
+      {/* Clear all jobs confirm */}
+      <Modal
+        open={clearAllConfirm}
+        onClose={() => setClearAllConfirm(false)}
+        title="Clear all jobs"
+        description="Permanently delete all jobs for this tenant. Job runs and events will be removed. This cannot be undone."
+        size="sm"
+      >
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="outline" onClick={() => setClearAllConfirm(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() => clearAllMutation.mutate()}
+            disabled={clearAllMutation.isPending}
+          >
+            {clearAllMutation.isPending ? (
+              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4 mr-1" />
+            )}
+            Clear all
+          </Button>
+        </div>
+      </Modal>
 
       {/* Job retention config modal */}
       <Modal

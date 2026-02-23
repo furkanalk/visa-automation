@@ -278,6 +278,27 @@ export class JobRepository {
   }
 
   /**
+   * Delete all jobs for a tenant (and their events). job_runs are removed by FK CASCADE.
+   * Returns the number of jobs deleted.
+   */
+  async deleteAllForTenant(tenantId: string): Promise<number> {
+    const jobIds = await this.db
+      .selectFrom('jobs')
+      .select('id')
+      .where('tenant_id', '=', tenantId)
+      .execute();
+    const ids = jobIds.map((r) => r.id);
+    if (ids.length > 0) {
+      await this.db.deleteFrom('job_events').where('job_id', 'in', ids).execute();
+    }
+    const result = await this.db
+      .deleteFrom('jobs')
+      .where('tenant_id', '=', tenantId)
+      .executeTakeFirst();
+    return Number(result.numDeletedRows ?? 0n);
+  }
+
+  /**
    * Get job runs for a job (for details UI), with agent name when agent_id is set.
    */
   async findJobRunsByJobId(jobId: string, tenantId: string): Promise<JobRunWithAgent[]> {

@@ -60,15 +60,22 @@ export async function notifySlotFound(args: {
   logger: Logger;
 }): Promise<void> {
   const { cpApiUrl, tenantId, internalSecret } = getCpNotifyContext(args.tenantId);
-  const settings = await getNotifySettings(cpApiUrl, tenantId, internalSecret);
+  // Skip cache so we always use latest Watcher chat ID (admin may have just added it)
+  const settings = await getNotifySettings(cpApiUrl, tenantId, internalSecret, { skipCache: true });
   const notifyConfig = getConfigService().get('notify');
   const actionBase = (notifyConfig.notify_action_base_url ?? '').replace(/\/+$/, '');
   const actionToken = notifyConfig.notify_action_token ?? '';
 
   const token = settings.telegram_bot_token;
-  const { watcher: watcherChatIds } = getOpsBookingsWatcherChatIds(settings.telegram_chat_ids ?? []);
-  if (settings.telegram_enabled && token && watcherChatIds.length === 0) {
-    args.logger.debug({ jobId: args.jobId }, 'SLOT OPEN: Watcher chat ID not configured, skipping Telegram');
+  const chatIds = settings.telegram_chat_ids ?? [];
+  const { watcher: watcherChatIds } = getOpsBookingsWatcherChatIds(chatIds);
+  // Prefer Watcher (3rd) chat; if missing, send to all configured chats so Watcher still gets it (same list as Test Telegram)
+  const slotNotifyChatIds = watcherChatIds.length > 0 ? watcherChatIds : chatIds.filter((id) => (id ?? '').trim().length > 0);
+  if (settings.telegram_enabled && token && slotNotifyChatIds.length === 0) {
+    args.logger.info(
+      { jobId: args.jobId, tenantId: args.tenantId, telegramChatIdsLength: chatIds.length },
+      'SLOT FOUND: No Telegram chat IDs configured, skipping'
+    );
   }
   if (!actionToken || actionToken === 'changeme') {
     throw new Error('notify_action_token not set in CP system_settings (notify category)');
@@ -97,27 +104,41 @@ export async function notifySlotFound(args: {
   await setSlotStatus(args.jobId, 'open');
 
   const text =
-    `<b>SLOT OPEN</b> ${TELEGRAM_EMOJI.SLOT_OPEN}\n` +
+    `🔔 <b>SLOT FOUND</b> ${TELEGRAM_EMOJI.SLOT_OPEN}\n` +
+    `\n` +
     `Portal: <code>${portalLine}</code>\n` +
-    `Tarihler: ${datesText}\n` +
-    `Detect: ${formatTimeTR(now)} (TR)\n` +
+    `Dates: ${datesText}\n` +
+    `Detected: ${formatTimeTR(now)} (TR)\n` +
     `Job: <code>${args.jobId}</code>\n` +
+    `Run: <code>${args.jobRunId}</code>\n` +
     `Next: ${next}`;
 
-  if (token && watcherChatIds.length > 0) {
+  if (token && slotNotifyChatIds.length > 0) {
+    args.logger.info(
+      { jobId: args.jobId, chatCount: slotNotifyChatIds.length, watcherOnly: watcherChatIds.length > 0 },
+      'SLOT FOUND: Sending Telegram (Watcher or all configured chats)'
+    );
     const buttons = canUseTelegramActionButtons(actionBase)
       ? [
           { text: '✅ ACK', url: `${actionBase}/api/jobs/${args.jobId}/ack?event=slot_open&token=${encodeURIComponent(actionToken)}` },
           { text: '🛑 STOP', url: `${actionBase}/api/jobs/${args.jobId}/stop?token=${encodeURIComponent(actionToken)}` },
         ]
       : [];
-    await telegramSendMessage({
-      token,
-      chatIds: watcherChatIds,
-      text,
-      buttons: buttons.length > 0 ? buttons : undefined,
-      logger: args.logger,
-    });
+    try {
+      await telegramSendMessage({
+        token,
+        chatIds: slotNotifyChatIds,
+        text,
+        buttons: buttons.length > 0 ? buttons : undefined,
+        logger: args.logger,
+      });
+    } catch (err) {
+      args.logger.error(
+        { jobId: args.jobId, err, chatCount: slotNotifyChatIds.length },
+        'SLOT FOUND: Failed to send Telegram (check chat IDs and that bot is in those chats)'
+      );
+      throw err;
+    }
   }
 
   const smtp = smtpConfigFromNotifySettings(settings);
@@ -202,10 +223,19 @@ export async function notifyBookingConfirmed(args: {
     `Applicant: ${applicantMasked}\n` +
     `Job: <code>${args.jobId}</code>`;
 
+  const notifyConfig = getConfigService().get('notify');
+  const actionBase = (notifyConfig.notify_action_base_url ?? '').replace(/\/+$/, '');
+  const actionToken = notifyConfig.notify_action_token ?? '';
+  const buttons =
+    canUseTelegramActionButtons(actionBase) && actionToken && actionToken !== 'changeme'
+      ? [{ text: '✅ ACK', url: `${actionBase}/api/jobs/${args.jobId}/ack?event=booked&token=${encodeURIComponent(actionToken)}` }]
+      : undefined;
+
   await telegramSendMessage({
     token,
     chatIds: bookingsChatIds,
     text,
+    buttons,
     logger: args.logger,
   });
 
@@ -276,7 +306,7 @@ export async function notifyHitlRequired(args: {
   }
 }
 
-/** Ops only: Agent started (detailed). */
+/** Ops only: Agent started (detailed). All notifications in English with emojis. */
 export async function notifyAgentStarted(args: {
   jobId: string;
   jobRunId: string;
@@ -297,21 +327,30 @@ export async function notifyAgentStarted(args: {
 
   const portalLine = args.portalLabel ? `${args.portalId} / ${args.portalLabel}` : args.portalId;
   const agentLine = args.agentName ?? args.agentId ?? '—';
-  const visaLine = args.visaType != null ? `Visa: ${args.visaType}` : '';
-  const prioLine = args.priority != null ? `Priority: ${args.priority}` : '';
-  const extra = [visaLine, prioLine].filter(Boolean).join(' · ') || '—';
+  const lines = [
+    '🚀 Agent Started',
+    '',
+    `Job: <code>${args.jobId}</code>`,
+    `Run: <code>${args.jobRunId}</code>`,
+    `Portal: ${portalLine}`,
+    `Agent: ${agentLine}`,
+  ];
+  if (args.visaType != null) lines.push(`Visa: ${args.visaType}`);
+  if (args.priority != null) lines.push(`Priority: ${args.priority}`);
+  const text = lines.join('\n');
 
-  const text =
-    `<b>Agent başladı</b>\n` +
-    `Job: <code>${args.jobId}</code> · Run: <code>${args.jobRunId}</code>\n` +
-    `Portal: <code>${portalLine}</code>\n` +
-    `Agent: ${agentLine}\n` +
-    `${extra}`;
+  const notifyConfig = getConfigService().get('notify');
+  const actionBase = (notifyConfig.notify_action_base_url ?? '').replace(/\/+$/, '');
+  const actionToken = notifyConfig.notify_action_token ?? '';
+  const buttons =
+    canUseTelegramActionButtons(actionBase) && actionToken && actionToken !== 'changeme'
+      ? [{ text: '✅ ACK', url: `${actionBase}/api/jobs/${args.jobId}/ack?event=agent_started&token=${encodeURIComponent(actionToken)}` }]
+      : undefined;
 
-  await telegramSendMessage({ token, chatIds: opsChatIds, text, logger: args.logger });
+  await telegramSendMessage({ token, chatIds: opsChatIds, text, buttons, logger: args.logger });
 }
 
-/** Ops only: Agent completed (detailed). */
+/** Ops only: Agent completed (success path). English, no MVP in messages. */
 export async function notifyAgentCompleted(args: {
   jobId: string;
   jobRunId: string;
@@ -320,10 +359,9 @@ export async function notifyAgentCompleted(args: {
   portalLabel?: string;
   agentId: string | null;
   agentName: string | null;
-  status: 'completed' | 'failed' | 'cancelled' | 'slot_found' | 'waiting_hitl' | 'waiting_slot';
+  status: 'completed' | 'cancelled' | 'slot_found' | 'waiting_hitl' | 'waiting_slot';
   details?: string;
   confirmationNumber?: string;
-  errorMessage?: string;
   logger: Logger;
 }): Promise<void> {
   const { cpApiUrl, tenantId, internalSecret } = getCpNotifyContext(args.tenantId);
@@ -334,19 +372,74 @@ export async function notifyAgentCompleted(args: {
 
   const portalLine = args.portalLabel ? `${args.portalId} / ${args.portalLabel}` : args.portalId;
   const agentLine = args.agentName ?? args.agentId ?? '—';
-  const detailParts: string[] = [];
-  if (args.confirmationNumber) detailParts.push(`Conf: ${args.confirmationNumber}`);
-  if (args.errorMessage) detailParts.push(`Error: ${args.errorMessage}`);
-  if (args.details) detailParts.push(args.details);
-  const detailLine = detailParts.length > 0 ? detailParts.join(' · ') : '—';
+  const title =
+    args.status === 'slot_found'
+      ? '✅ Agent Completed (Slot Found)'
+      : '✅ Agent Completed';
+  const finalStatus = args.status === 'slot_found' ? 'SLOT_FOUND' : args.status.toUpperCase();
+  const lines = [
+    title,
+    '',
+    `Job: <code>${args.jobId}</code>`,
+    `Run: <code>${args.jobRunId}</code>`,
+    `Portal: ${portalLine}`,
+    `Agent: ${agentLine}`,
+    `Final Status: ${finalStatus}`,
+  ];
+  if (args.confirmationNumber) lines.push(`Confirmation: ${args.confirmationNumber}`);
+  const cleanDetails = args.details?.replace(/\s*\(MVP\)\s*/gi, '').trim();
+  if (cleanDetails) lines.push(cleanDetails);
+  const text = lines.join('\n');
 
+  const notifyConfig = getConfigService().get('notify');
+  const actionBase = (notifyConfig.notify_action_base_url ?? '').replace(/\/+$/, '');
+  const actionToken = notifyConfig.notify_action_token ?? '';
+  const buttons =
+    canUseTelegramActionButtons(actionBase) && actionToken && actionToken !== 'changeme'
+      ? [{ text: '✅ ACK', url: `${actionBase}/api/jobs/${args.jobId}/ack?event=agent_completed&token=${encodeURIComponent(actionToken)}` }]
+      : undefined;
+
+  await telegramSendMessage({ token, chatIds: opsChatIds, text, buttons, logger: args.logger });
+}
+
+/** Ops only: Agent failed (FAILED_RETRYABLE, FAILED_TERMINAL, etc.). */
+export async function notifyAgentFailed(args: {
+  jobId: string;
+  jobRunId: string;
+  tenantId: string;
+  portalId: string;
+  portalLabel?: string;
+  agentId: string | null;
+  agentName: string | null;
+  finalStatus: string;
+  reason: string;
+  logger: Logger;
+}): Promise<void> {
+  const { cpApiUrl, tenantId, internalSecret } = getCpNotifyContext(args.tenantId);
+  const settings = await getNotifySettings(cpApiUrl, tenantId, internalSecret);
+  const token = settings.telegram_bot_token;
+  const { ops: opsChatIds } = getOpsBookingsWatcherChatIds(settings.telegram_chat_ids ?? []);
+  if (!token || opsChatIds.length === 0) return;
+
+  const portalLine = args.portalLabel ? `${args.portalId} / ${args.portalLabel}` : args.portalId;
+  const agentLine = args.agentName ?? args.agentId ?? '—';
   const text =
-    `<b>Agent tamamlandı</b>\n` +
-    `Job: <code>${args.jobId}</code> · Run: <code>${args.jobRunId}</code>\n` +
-    `Portal: <code>${portalLine}</code>\n` +
+    '❌ Agent Failed\n' +
+    '\n' +
+    `Job: <code>${args.jobId}</code>\n` +
+    `Run: <code>${args.jobRunId}</code>\n` +
+    `Portal: ${portalLine}\n` +
     `Agent: ${agentLine}\n` +
-    `Status: <code>${args.status}</code>\n` +
-    `${detailLine}`;
+    `Final Status: ${args.finalStatus}\n` +
+    `Reason: ${args.reason}`;
 
-  await telegramSendMessage({ token, chatIds: opsChatIds, text, logger: args.logger });
+  const notifyConfig = getConfigService().get('notify');
+  const actionBase = (notifyConfig.notify_action_base_url ?? '').replace(/\/+$/, '');
+  const actionToken = notifyConfig.notify_action_token ?? '';
+  const buttons =
+    canUseTelegramActionButtons(actionBase) && actionToken && actionToken !== 'changeme'
+      ? [{ text: '✅ ACK', url: `${actionBase}/api/jobs/${args.jobId}/ack?event=agent_failed&token=${encodeURIComponent(actionToken)}` }]
+      : undefined;
+
+  await telegramSendMessage({ token, chatIds: opsChatIds, text, buttons, logger: args.logger });
 }

@@ -21,11 +21,26 @@ export interface NotifySettingsFromCP {
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const cache = new Map<string, { data: NotifySettingsFromCP; expiresAt: number }>();
 
+function normalizeTelegramChatIds(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw.map((v) => (typeof v === 'string' ? v.trim() : String(v).trim())).filter(Boolean);
+  }
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      return normalizeTelegramChatIds(parsed);
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 function fromRow(row: Record<string, unknown>): NotifySettingsFromCP {
   return {
     telegram_enabled: Boolean(row.telegram_enabled),
     telegram_bot_token: (row.telegram_bot_token as string) ?? null,
-    telegram_chat_ids: Array.isArray(row.telegram_chat_ids) ? (row.telegram_chat_ids as string[]) : [],
+    telegram_chat_ids: normalizeTelegramChatIds(row.telegram_chat_ids),
     email_enabled: Boolean(row.email_enabled),
     smtp_host: (row.smtp_host as string) ?? null,
     smtp_port: typeof row.smtp_port === 'number' ? row.smtp_port : 587,
@@ -38,17 +53,25 @@ function fromRow(row: Record<string, unknown>): NotifySettingsFromCP {
   };
 }
 
+export interface GetNotifySettingsOptions {
+  /** When true, always fetch from CP (skip cache). Use for slot-found so Watcher chat ID is up to date. */
+  skipCache?: boolean;
+}
+
 /**
- * Fetch notify settings for a tenant from CP. Cached for CACHE_TTL_MS.
+ * Fetch notify settings for a tenant from CP. Cached for CACHE_TTL_MS unless skipCache is true.
  */
 export async function getNotifySettings(
   cpApiUrl: string,
   tenantId: string,
-  internalSecret: string
+  internalSecret: string,
+  options?: GetNotifySettingsOptions
 ): Promise<NotifySettingsFromCP> {
   const now = Date.now();
-  const entry = cache.get(tenantId);
-  if (entry && entry.expiresAt > now) return entry.data;
+  if (!options?.skipCache) {
+    const entry = cache.get(tenantId);
+    if (entry && entry.expiresAt > now) return entry.data;
+  }
 
   const base = cpApiUrl.replace(new RegExp('/+$'), '');
   const url = `${base}/cp/notify/worker`;

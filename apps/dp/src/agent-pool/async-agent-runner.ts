@@ -47,7 +47,7 @@ export class AsyncAgentRunner {
     const stats = this.agentPool.getStats();
     const concurrency = Math.max(1, (stats.asyncCount ?? 0) - (stats.scoutCount ?? 0));
 
-    this.logger.info({ concurrency, asyncCount: stats.asyncCount, scoutCount: stats.scoutCount }, 'Starting AsyncAgentRunner');
+    this.logger.debug({ concurrency, asyncCount: stats.asyncCount, scoutCount: stats.scoutCount }, 'Starting AsyncAgentRunner');
 
     this.worker = new Worker<JobQueuePayload>(
       QUEUE_NAMES.JOB_PROCESSING,
@@ -89,7 +89,7 @@ export class AsyncAgentRunner {
       this.logger.error({ err }, 'Worker error');
     });
 
-    this.logger.info('AsyncAgentRunner started');
+    this.logger.debug('AsyncAgentRunner started');
   }
 
   /**
@@ -105,7 +105,7 @@ export class AsyncAgentRunner {
       const agent = this.findAvailableAgent(portalId);
       if (agent) {
         if (attempt > 0) {
-          this.logger.info(
+          this.logger.debug(
             { jobId, portalId, attempt },
             'Found available agent after retry'
           );
@@ -160,7 +160,7 @@ export class AsyncAgentRunner {
     try {
       await this.agentPool.assignJob(agent.id, job_id);
 
-      this.logger.info(
+      this.logger.debug(
         { agentId: agent.id, jobId: job_id },
         'Starting job execution with agent'
       );
@@ -188,7 +188,7 @@ export class AsyncAgentRunner {
   ): Promise<void> {
     const shouldAbort = await this.agentPool.shouldAbortJob(payload.job_id);
     if (shouldAbort) {
-      this.logger.info({ jobId: payload.job_id }, 'Job aborted before start');
+      this.logger.debug({ jobId: payload.job_id }, 'Job aborted before start');
       return;
     }
     await this.processJob(payload, this.workerId, this.logger, agent.profile ?? undefined, agent.id, agent.name ?? undefined);
@@ -198,12 +198,12 @@ export class AsyncAgentRunner {
    * Stop the runner
    */
   async stop(): Promise<void> {
-    this.logger.info('Stopping AsyncAgentRunner');
+    this.logger.debug('Stopping AsyncAgentRunner');
     if (this.worker) {
       await this.worker.close();
       this.worker = null;
     }
-    this.logger.info('AsyncAgentRunner stopped');
+    this.logger.debug('AsyncAgentRunner stopped');
   }
 
   /**

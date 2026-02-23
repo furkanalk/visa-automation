@@ -72,9 +72,7 @@ export function startHealthServer(
     res.end();
   });
 
-  server.listen(port, () => {
-    console.info(`DP health server listening on port ${port}`);
-  });
+  server.listen(port);
 
   return {
     server,

@@ -3,6 +3,7 @@ import type { Throttler } from '../../../core/networking/throttler.js';
 import type { RateLimiter } from '../../../core/networking/rate-limiter.js';
 import { AS_VISA_SELECTORS as S } from '../pages/make-appointment/index.js';
 import { buildAsVisaFormValues } from './form-values.js';
+import { setDateInput } from './date-input.js';
 
 export interface FillFormArgs {
   page: Page;
@@ -37,10 +38,22 @@ export async function fillForm(args: FillFormArgs): Promise<void> {
     }
   }
 
-  // Fill inputs (travelDate, appointmentDate, passportNumber, name, surname, tcKimlikNo, dogumYili, phone, email)
+  // Date inputs may be readonly (datepicker); use setDateInput so we don't timeout on fill()
+  const dateInputKeys = ['travelDate', 'appointmentDate'] as const;
+  for (const key of dateInputKeys) {
+    const value = formValues[key];
+    if (value === undefined || value === '') continue;
+    const selector = S.inputs[key];
+    try {
+      await throttler.beforeAction();
+      await setDateInput(page, selector, value);
+    } catch {
+      // Element might not be visible yet (e.g. depends on previous selects); skip
+    }
+  }
+
+  // Fill remaining inputs (passportNumber, name, surname, tcKimlikNo, dogumYili, phone, email)
   const inputKeys = [
-    'travelDate',
-    'appointmentDate',
     'passportNumber',
     'name',
     'surname',

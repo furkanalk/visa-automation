@@ -174,9 +174,9 @@ export class ConfigService {
    * Initialize the config service - fetch initial config
    */
   async initialize(): Promise<void> {
-    this.logger.info('Initializing ConfigService');
+    this.logger.debug('Initializing ConfigService');
     await this.refresh();
-    this.logger.info({ lastFetchedAt: this.lastFetchedAt }, 'ConfigService initialized');
+    this.logger.debug({ lastFetchedAt: this.lastFetchedAt }, 'ConfigService initialized');
   }
 
   /**
@@ -198,7 +198,7 @@ export class ConfigService {
       }
     }, refreshInterval);
 
-    this.logger.info({ refreshInterval }, 'Started auto-refresh');
+    this.logger.debug({ refreshInterval }, 'Started auto-refresh');
   }
 
   /**
@@ -208,7 +208,7 @@ export class ConfigService {
     if (this.refreshIntervalId) {
       clearInterval(this.refreshIntervalId);
       this.refreshIntervalId = null;
-      this.logger.info('Stopped auto-refresh');
+      this.logger.debug('Stopped auto-refresh');
     }
   }
 

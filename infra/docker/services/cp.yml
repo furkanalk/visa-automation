@@ -1,31 +1,31 @@
 # Control Plane API (cp) - single service file
+# All values from env. NOTIFY_ACTION_* and Telegram are in Postgres (Admin → Notify / Settings).
 services:
   cp:
     build:
       context: ../../..
       dockerfile: apps/cp/Dockerfile
       target: production
-    image: ${IMAGE_CP:-visa-automation/cp:latest}
+    image: ${IMAGE_CP}
     container_name: visa-cp
     restart: unless-stopped
     environment:
       NODE_ENV: production
       PORT: 3001
       HOST: 0.0.0.0
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: ${DB_NAME:-visa_automation}
-      DB_USER: ${DB_USER:-postgres}
+      LOG_LEVEL: ${LOG_LEVEL}
+      CP_INTERNAL_SECRET: ${CP_INTERNAL_SECRET}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-      NOTIFY_ACTION_BASE_URL: ${NOTIFY_ACTION_BASE_URL:-http://localhost:3001}
-      NOTIFY_ACTION_TOKEN: ${NOTIFY_ACTION_TOKEN:-}
-      CORS_ORIGIN: ${CORS_ORIGIN:-*}
-    ports:
-      - "3001:3001"
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      CORS_ORIGIN: ${CORS_ORIGIN}
+    expose:
+      - "3001"
     depends_on:
       postgres:
         condition: service_healthy

@@ -567,9 +567,11 @@ export default function WatcherPage() {
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-gray-500 dark:text-gray-400 py-4">
-                No run history yet. Run the watcher to see entries.
-              </p>
+              <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                <Clock className="h-8 w-8 mx-auto mb-2 text-gray-300 dark:text-gray-600" />
+                <p>No run history yet</p>
+                <p className="text-sm">Run the watcher to see entries</p>
+              </div>
             )}
           </CardContent>
         )}
