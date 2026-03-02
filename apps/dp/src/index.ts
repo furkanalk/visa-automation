@@ -183,17 +183,15 @@ async function main() {
     await asyncRunner.start();
   }
 
-  // Start SyncAgentRunner (for CP-triggered job processing)
-  if (finalStats.syncCount > 0) {
-    syncRunner = new SyncAgentRunner({
-      agentPool,
-      logger,
-      workerId: WORKER_ID,
-      pollIntervalMs: SYNC_POLL_INTERVAL_MS,
-      processJob,
-    });
-    await syncRunner.start();
-  }
+  // Start SyncAgentRunner (queue-based, one BullMQ Worker per SYNC agent)
+  syncRunner = new SyncAgentRunner({
+    agentPool,
+    logger,
+    workerId: WORKER_ID,
+    processJob,
+    redisConnection: getRedisConnection(),
+  });
+  await syncRunner.start();
 
   // Slot-check queue is consumed only by scout agents
   scoutRunner = new ScoutAgentRunner({

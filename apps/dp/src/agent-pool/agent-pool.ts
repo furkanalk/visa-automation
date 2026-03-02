@@ -485,6 +485,8 @@ export class AgentPool extends EventEmitter {
           { agentId: runtime.id, name: runtime.name, mode: runtime.mode, isScout: !!runtime.profile?.is_scout },
           'Agent added to pool (was enabled in CP after DP started)'
         );
+        // Notify runners (e.g. SyncAgentRunner) so they can subscribe to this agent's queue.
+        this.emit('agent:created', runtime);
       }
     } catch (err) {
       this.logger.warn({ err }, 'Sync agents from CP failed');

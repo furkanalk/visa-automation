@@ -133,6 +133,7 @@ export async function processJob(
   let runStartMs = 0;
   let jobLogger: Logger = logger;
   let jobRun: { id: string } | undefined;
+  let agentFailedNotified = false;
 
   try {
     // Create job run record (agent_id for job details UI)
@@ -189,6 +190,7 @@ export async function processJob(
         agentName: agentName ?? null,
         visaType: (payload as unknown as Record<string, unknown>).visa_type as string | undefined,
         priority: (payload as unknown as Record<string, unknown>).priority as number | undefined,
+        triggeredBy: (payload.config as Record<string, unknown> | undefined)?.triggered_by as string | undefined,
         logger: jobLogger,
       });
     } catch (e) {
@@ -217,8 +219,10 @@ export async function processJob(
     );
 
     // Optional: enforce minimum run duration (human-like timing)
+    // Scout/slot-check jobs are exempt — they run as fast as possible to notify quickly.
+    const isScoutJob = (payload.config as Record<string, unknown> | undefined)?.slot_check_only === true;
     const minRunMs = portalConfig.minRunDurationMs;
-    if (minRunMs != null && minRunMs > 0) {
+    if (!isScoutJob && minRunMs != null && minRunMs > 0) {
       const elapsed = Date.now() - runStartMs;
       if (elapsed < minRunMs) {
         const waitMs = minRunMs - elapsed;
@@ -298,7 +302,44 @@ export async function processJob(
       return;
     }
 
-    // Check if job is waiting for a slot
+    // Scout only: slot-check completed with no slot → job ends; watcher creates new job for next check
+    const slotCheckOnly = (payload.config as Record<string, unknown> | undefined)?.slot_check_only === true;
+    if (slotCheckOnly && result.lastState === JOB_STATES.COMPLETED && result.slotFound === false) {
+      await jobRepo.updateStatus(job_id, JOB_STATES.COMPLETED, { completed_at: new Date() });
+      await eventRepo.createStateTransition(
+        job_id,
+        tenant_id,
+        JOB_STATES.SLOT_SEARCHING,
+        JOB_STATES.COMPLETED,
+        { reason: 'No slot found' },
+        jobRun.id
+      );
+      await db.instance
+        .updateTable('job_runs')
+        .set({ status: 'COMPLETED', finished_at: new Date() })
+        .where('id', '=', jobRun.id)
+        .execute();
+      metrics.gauge('dp_job_run_duration_ms').set(Date.now() - runStartMs);
+      metrics.counter('dp_job_completions_total', { status: 'no_slot' }).inc(1);
+      jobLogger.info({}, 'Slot-check completed (no slot); job finished');
+      try {
+        await notifyAgentCompleted({
+          jobId: job_id,
+          jobRunId: jobRun.id,
+          tenantId: tenant_id,
+          portalId: portalConfig.portalId,
+          agentId: agentId ?? null,
+          agentName: agentName ?? null,
+          status: 'no_slot_completed',
+          logger: jobLogger,
+        });
+      } catch (e) {
+        jobLogger.warn({ err: e }, 'Agent completed notify failed');
+      }
+      return;
+    }
+
+    // Normal (non-scout) agents: WAITING_SLOT → schedule retry for same job
     if (result.lastState === JOB_STATES.WAITING_SLOT) {
       const retryRaw = profileConfig?.retry as Record<string, unknown> | undefined;
       const profileRetry: { maxRetries?: number; retryDelayMs?: number } | undefined = retryRaw
@@ -316,7 +357,7 @@ export async function processJob(
         await eventRepo.createStateTransition(
           job_id,
           tenant_id,
-          JOB_STATES.PROCESSING,
+          result.lastState,
           JOB_STATES.WAITING_SLOT,
           { reason: 'No slots found, max_retries exceeded', next_retry_ms: 0 },
           jobRun.id
@@ -347,21 +388,20 @@ export async function processJob(
         return;
       }
 
+      await jobRepo.updateStatus(job_id, JOB_STATES.WAITING_SLOT);
       await eventRepo.createStateTransition(
         job_id,
         tenant_id,
-        JOB_STATES.PROCESSING,
+        result.lastState,
         JOB_STATES.WAITING_SLOT,
         { reason: 'No slots found', next_retry_ms: delayMs },
         jobRun.id
       );
-
       await db.instance
         .updateTable('job_runs')
         .set({ status: 'COMPLETED', finished_at: new Date() })
         .where('id', '=', jobRun.id)
         .execute();
-
       metrics.counter('dp_job_retries_total').inc(1);
       jobLogger.info({ delayMs }, 'Job scheduled for slot retry');
       try {
@@ -415,6 +455,7 @@ export async function processJob(
           reason,
           logger: jobLogger,
         });
+        agentFailedNotified = true;
       } catch (e) {
         jobLogger.warn({ err: e }, 'Agent failed notify failed');
       }
@@ -569,7 +610,7 @@ export async function processJob(
       undefined
     );
 
-    if (jobRun) {
+    if (jobRun && !agentFailedNotified) {
       try {
         await notifyAgentFailed({
           jobId: job_id,

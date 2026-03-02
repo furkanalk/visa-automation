@@ -69,4 +69,14 @@ export const AS_VISA_SELECTORS = {
     /** Sadece bu ay (other-month yok; yanlış ay seçimini önler) */
     enabledDayCurrentMonth: '.ui-datepicker td:not(.ui-datepicker-unselectable):not(.ui-datepicker-other-month) a',
   },
+
+  /** Bootstrap datepicker (mock portal uses bootstrap-datepicker 1.3.0, same as real site) */
+  bootstrapDatepicker: {
+    /** Popup wrapper — 1.3.0 uses .datepicker-dropdown, inner table div has .datepicker */
+    popup: '.datepicker-dropdown',
+    /** Enabled days (current + other months, not disabled) */
+    enabledDay: '.datepicker td.day:not(.disabled)',
+    /** Current month only (no old/new class) */
+    enabledDayCurrentMonth: '.datepicker td.day:not(.disabled):not(.old):not(.new)',
+  },
 } as const;

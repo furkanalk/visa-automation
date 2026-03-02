@@ -18,6 +18,7 @@ import { settingsRoutes } from './routes/settings.js';
 import { customerRoutes } from './routes/customers.js';
 import { staffRoutes } from './routes/staff.js';
 import { authRoutes } from './routes/auth.js';
+import { mockPortalRoutes } from './routes/mock-portal.js';
 import { publicJobRoutes } from './routes/public-jobs.js';
 import { tenantMiddleware } from './middleware/tenant.js';
 import { auditPreHandler, auditOnSend } from './middleware/audit.js';
@@ -77,6 +78,7 @@ export async function createApp(): Promise<FastifyInstance> {
     await cpApp.register(customerRoutes, { prefix: '/customers' });
     await cpApp.register(staffRoutes); // /cp/staff
     await cpApp.register(authRoutes, { prefix: '/auth' }); // /cp/auth (tenant optional for invite)
+    await cpApp.register(mockPortalRoutes, { prefix: '/mock-portal' }); // /cp/mock-portal/:portalId/config
   }, { prefix: '/cp' });
 
   // Global error handler

@@ -46,6 +46,8 @@ export interface FSMResult {
   confirmationNumber?: string;
   meta?: Record<string, unknown>;
   error?: string;
+  /** When lastState is COMPLETED and slot-check found no slot; job ends (watcher creates new job for next check) */
+  slotFound?: boolean;
 }
 
 /**
@@ -72,7 +74,7 @@ export async function runFSM(
   const throttler = new Throttler(portalConfig.pacing);
   const rateLimiter = new RateLimiter(portalConfig.rateLimit);
 
-  // Slot-check jobs only need: open page → check calendar; no form fill, no processing (avoids security code etc.)
+  // Slot-check jobs: one job = one check; ends at SLOT_FOUND (slot found) or COMPLETED (no slot; watcher creates new job)
   const stateProgression: JobState[] = slotCheckOnly
     ? [
         JOB_STATES.QUEUED,
@@ -80,7 +82,6 @@ export async function runFSM(
         JOB_STATES.LOGGED_IN,
         JOB_STATES.SLOT_SEARCHING,
         JOB_STATES.SLOT_FOUND,
-        JOB_STATES.WAITING_SLOT,
         JOB_STATES.COMPLETED,
       ]
     : [
@@ -88,7 +89,6 @@ export async function runFSM(
         JOB_STATES.LOGIN_PROCESS,
         JOB_STATES.LOGGED_IN,
         JOB_STATES.FORM_FILLING,
-        JOB_STATES.PROCESSING,
         JOB_STATES.SLOT_SEARCHING,
         JOB_STATES.SLOT_FOUND,
         JOB_STATES.WAITING_SLOT,
@@ -223,6 +223,19 @@ export async function runFSM(
       to: nextState 
     }, 'State transition');
 
+    // Persist transition before running handler so UI shows current state even if handler hangs
+    await jobRepo.updateStatus(job_id, nextState);
+    await eventRepo.createStateTransition(
+      job_id,
+      tenant_id,
+      currentState,
+      nextState,
+      { worker_id: workerId },
+      jobRunId
+    );
+    currentState = nextState;
+    stateIndex++;
+
     const handler = handlers[nextState];
     if (handler) {
       await handler({
@@ -241,22 +254,6 @@ export async function runFSM(
     } else {
       logger.debug({ jobId: job_id, to: nextState }, 'No handler for state (skipping)');
     }
-
-    // Update job status in database
-    await jobRepo.updateStatus(job_id, nextState);
-    
-    // Log state transition event
-    await eventRepo.createStateTransition(
-      job_id,
-      tenant_id,
-      currentState,
-      nextState,
-      { worker_id: workerId },
-      jobRunId
-    );
-
-    currentState = nextState;
-    stateIndex++;
 
     // Small delay to simulate processing (remove in production)
     await sleep(500);

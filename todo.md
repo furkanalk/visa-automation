@@ -1,195 +1,56 @@
-1) Agent Start / Complete Notifications (English, improved format)
-
-We need to refactor agent lifecycle notifications.
-
-Current Example
-
-Start:
-
-Agent started
-Job: 96152232-6b3e-4058-85d5-950b49b8d94b · Run: 8ecd568f-70eb-41fb-b53c-94b7fc8283bd
-Portal: as-visa
-Agent: agent-asvisa-scout
-Visa: SCHENGEN · Priority: 1
-
-Complete:
-
-Agent completed
-Job: 96152232-6b3e-4058-85d5-950b49b8d94b · Run: 8ecd568f-70eb-41fb-b53c-94b7fc8283bd
-Portal: as-visa
-Agent: agent-asvisa-scout
-Status: slot_found
-Halted at SLOT_FOUND (MVP)
-Required Changes
-
-All notifications must be in English.
-
-Add clear emojis:
-
-🚀 for started
-
-✅ for completed (success)
-
-❌ for failed
-
-Improve formatting:
-
-Put Run on a separate line (not next to Job)
-
-Remove “(MVP)” from user-facing messages
-
-Add failure notification format.
-
-Target Format
-🚀 Agent Started
-🚀 Agent Started
-
-Job: 96152232-6b3e-4058-85d5-950b49b8d94b
-Run: 8ecd568f-70eb-41fb-b53c-94b7fc8283bd
-Portal: as-visa
-Agent: agent-asvisa-scout
-Visa: SCHENGEN
-Priority: 1
-✅ Agent Completed (Slot Found)
-✅ Agent Completed
-
-Job: 96152232-6b3e-4058-85d5-950b49b8d94b
-Run: 8ecd568f-70eb-41fb-b53c-94b7fc8283bd
-Portal: as-visa
-Agent: agent-asvisa-scout
-Final Status: SLOT_FOUND
-
-Remove:
-
-Halted at SLOT_FOUND (MVP)
-
-Any reference to MVP in notifications
-
-❌ Agent Failed
-
-If job ends in:
-
-FAILED_RETRYABLE
-
-FAILED_TERMINAL
-
-FAILED_PROXY_LOST
-
-any unexpected error
-
-Format:
-
-❌ Agent Failed
-
-Job: {jobId}
-Run: {runId}
-Portal: {portalId}
-Agent: {agentId}
-Final Status: {status}
-Reason: {errorMessage or failure_reason}
-2) Watcher + Multiple Scout Agents Behavior
-
-Clarification needed:
-
-If a portal has 2 or more scout agents assigned:
-
-Do they work concurrently?
-
-Or do they pull jobs sequentially from the same queue?
-
-Expected design:
-
-Watcher enqueues jobs normally.
-
-All scout agents listening to the same queue compete for jobs.
-
-Redis/BullMQ ensures only one agent processes a job (lease-based).
-
-If there are multiple scout agents, they process different jobs in parallel (not the same job).
-
-Ensure:
-
-No duplicate processing of same watcher job.
-
-Proper lease locking.
-
-Visibility in logs which agent picked which job.
-
-3) Telegram ACK Button
-
-We need to verify:
-
-Do all relevant Telegram notifications include ACK?
-
-Specifically:
-
-Slot Found
-
-Agent lifecycle
-
-Booking confirmed
-
-If missing, add ACK button.
-
-Button behavior:
-
-Signed URL (HMAC-based)
-
-Goes to /api/jobs/{id}/ack
-
-Must include ts, nonce, sig
-
-Placement:
-
-Either top or bottom of message
-
-Prefer bottom under message body
-
-Example:
-
-[✅ ACK]
-
-Ensure:
-
-Signed link verification implemented
-
-10-minute expiration
-
-Event logged as NOTIFY_ACK
-
-4) Slot Found Notification Not Sent (Watcher)
-
-We need to confirm:
-
-Are we still sending Telegram notification when slot is found inside watcher flow?
-
-It must:
-
-Send Slot Found notification
-
-Include:
-
-job
-
-portal
-
-tenant
-
-dates
-
-base URL
-
-Include ACK button
-
-If it was removed accidentally during refactor, re-enable it.
-
-Watcher flow:
-SLOT_SEARCHING → SLOT_FOUND
-→ notifySlotFound()
-→ halt job
-
-Notification must still be triggered.
-
+Yapılacaklar Listesi
+🔴 Bug — Acil
+1. staff_members JSON güncelleme hatası (staff.ts:265)
+
+Sorun: [sql](http://_vscodecontentref_/17)${JSON.stringify(arr)}::jsonb`ifadesi PostgreSQL'e$1::jsonbyerine bozuk parametre gönderiyor →"invalid input syntax for type json"/"Expected ':', found ','"`
+Etkilenen: Herhangi bir staff üyesini super_admin yapmaya çalışırken permissions veya settings içeren tüm PATCH istekleri patlıyor
+Nerede: staff.repository.ts update() metodu (satır 122–128)
+Çözüm: [sql](http://_vscodecontentref_/22)${...}::jsonb`` yerine Kysely'nin [sql](http://_vscodecontentref_/23)cast(${...} as jsonb)`` veya sql.raw(...) kullanılmalı
+🟡 Özellik — Devam Eden
+2. Scout false positive — seyahat tarihi filtresi YOK
+
+Sorun: Scout portali today+90 ile tarar, müşterinin travel_date'ini görmez. Slot bulunca TÜM aktif müşterilere iş oluşturuyor. Ama müşterinin geçerli randevu penceresi [travelDate-45, travelDate-15] — bulunan tarihler bu pencereye girmeyebilir → booking agent boşa çalışıyor
+Nerede: watcher.ts POST /slot-open — müşteri job'ı oluşturmadan önce open_dates ↔ müşteri penceresi kesişimi kontrol edilmeli
+Plan (B+C):
+B: callSlotOpen / /slot-open endpoint'i: her müşteri için [travelDate-45, travelDate-15] penceresiyle res.dates kesişimini kontrol et, eşleşme yoksa o müşteri için job oluşturma
+C: Booking agent SLOT_SEARCHING girişinde: pencere dışındaysa erken WAITING_SLOT döndür
+3. Booking agent runStageB (locator.click()) doğrulaması
+
+Sorun: Önceki oturumda jQuery synthetic click sorunu giderildi, ama booking path'iyle (slotCheckOnly=false) test edilmedi
+Yapılacak: Mock portal'da slotCheckOnly=false ile bir iş çalıştır, runStageB: clicked day cell via locator ve hasRealSlot:true loglarını gözlemle
+🟢 UI / UX — Staff Portalı
+4. Şifre alanı sadece super_admin görmeli
+
+super_admin'de göz ikonu ile göster/gizle
+Diğer roller **** redacted görür, edit edemez
+5. Staff ekleme akışı — e-posta davetiye ile kayıt
+
+Yeni staff eklenince girilen maile davetiye gönder
+Link → portalda şifre belirleme formu (şifre + tekrar gir)
+Şifre set edilene kadar listede pending durumda
+Şifreler DB'ye şifreli (bcrypt) kaydedilmeli
+Davet adımını tamamlamayanlar listede açıkça pending görünsün
+6. Suspend gerçekten girişi engelliyor mu?
+
+Suspended kullanıcı giriş yapmaya çalışınca "This account is suspended. Contact administrator." mesajı görmeli
+Doğrulama gerekiyor
+7. Portals sekmesi güncellemesi
+
+Rate limit, OTP, CAPTCHA modları her portalda listelensin
+Renk eski haline dönsün
+🔵 Altyapı / Uzun Vadeli
+8. SMTP e-posta için domain
+
+E-posta gönderimi için gerçek domain alınmalı
+9. Mouse hareketi — Mock server log'larına bak, birkaç hareket kayıt olmalı (mouseMoveIntervalMs)
+
+10. Min 40 saniye kuralı — minRunDurationMs: 40000 enforce ediliyor mu? Log'lardan kontrol
+
+11. Payments tab — Admin portalı için ödeme sekmesi
+
+12. Headless sayfa 2 testi
+
+Öneri sırası: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 5) Current Services
 

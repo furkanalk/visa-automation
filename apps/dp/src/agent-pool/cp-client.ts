@@ -281,11 +281,12 @@ export class CPClient {
   }
 
   /**
-   * Get job details from public API (for sync agent job fetching)
+   * Get full job details from internal CP API (includes applicant_data, portal_id, config).
+   * Used by SyncAgentRunner to build the JobQueuePayload before executing.
    */
   async getJob(jobId: string): Promise<Record<string, unknown> | null> {
     try {
-      const response = await fetch(`${this.publicApiUrl}/api/jobs/${jobId}`, {
+      const response = await fetch(`${this.baseUrl}/cp/jobs/${jobId}`, {
         method: 'GET',
         headers: this.getHeaders(),
       });

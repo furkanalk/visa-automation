@@ -132,11 +132,12 @@ export function resolvePortalConfig(args: {
 
   assertFullPortalConfig(args.portalId, merged);
 
-  const slotHuntFromMerge = merged.slotHunt as { maxPolls?: number; pollDelayMinMs?: number; pollDelayMaxMs?: number } | undefined;
+  const slotHuntFromMerge = merged.slotHunt as { maxPolls?: number; pollDelayMinMs?: number; pollDelayMaxMs?: number; maxReadyWaits?: number } | undefined;
   const slotHunt = {
     maxPolls: slotHuntFromMerge?.maxPolls ?? 12,
     pollDelayMinMs: slotHuntFromMerge?.pollDelayMinMs ?? 1500,
     pollDelayMaxMs: slotHuntFromMerge?.pollDelayMaxMs ?? 3000,
+    ...(slotHuntFromMerge?.maxReadyWaits != null && { maxReadyWaits: slotHuntFromMerge.maxReadyWaits }),
   };
 
   return {

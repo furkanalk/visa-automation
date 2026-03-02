@@ -82,7 +82,7 @@ export async function notifySlotFound(args: {
   }
 
   const now = new Date();
-  const datesText = args.dates.slice(0, 10).join(', ');
+  const datesText = args.dates.slice(0, 30).join(', ');
   const portalLine = args.portalLabel ? `${args.portalId} / ${args.portalLabel}` : args.portalId;
   const next = args.nextStep ?? 'proceeding to booking flow';
 
@@ -103,6 +103,10 @@ export async function notifySlotFound(args: {
   // Track slot status
   await setSlotStatus(args.jobId, 'open');
 
+  const triggeredBy = (args.payload?.config as Record<string, unknown> | undefined)?.triggered_by as string | undefined;
+  const triggeredByLine = triggeredBy === 'manual' ? '👤 Manual' : triggeredBy === 'watcher_auto' ? '🤖 Auto' : undefined;
+  const applicantMaskedSlot = maskApplicant(args.payload?.applicant_data as Record<string, unknown> | undefined);
+
   const text =
     `🔔 <b>SLOT FOUND</b> ${TELEGRAM_EMOJI.SLOT_OPEN}\n` +
     `\n` +
@@ -111,6 +115,8 @@ export async function notifySlotFound(args: {
     `Detected: ${formatTimeTR(now)} (TR)\n` +
     `Job: <code>${args.jobId}</code>\n` +
     `Run: <code>${args.jobRunId}</code>\n` +
+    (triggeredByLine ? `Triggered by: ${triggeredByLine}\n` : '') +
+    (applicantMaskedSlot ? `Applicant: ${applicantMaskedSlot}\n` : '') +
     `Next: ${next}`;
 
   if (token && slotNotifyChatIds.length > 0) {
@@ -286,7 +292,17 @@ export async function notifyHitlRequired(args: {
       `Link: ${panelUrl}\n` +
       `Expires: ${args.expiresSeconds}s\n` +
       `Job: <code>${args.jobId}</code>`;
-    await telegramSendMessage({ token, chatIds: opsChatIds, text, logger: args.logger });
+    const notifyConfig = getConfigService().get('notify');
+    const actionBase = (notifyConfig.notify_action_base_url ?? '').replace(/\/+$/, '');
+    const actionToken = notifyConfig.notify_action_token ?? '';
+    const buttons =
+      canUseTelegramActionButtons(actionBase) && actionToken && actionToken !== 'changeme'
+        ? [
+            { text: '✅ ACK', url: `${actionBase}/api/jobs/${args.jobId}/ack?event=hitl_required&token=${encodeURIComponent(actionToken)}` },
+            { text: '🔧 Open Panel', url: panelUrl },
+          ]
+        : undefined;
+    await telegramSendMessage({ token, chatIds: opsChatIds, text, buttons, logger: args.logger });
   }
 
   const smtp = smtpConfigFromNotifySettings(settings);
@@ -317,6 +333,7 @@ export async function notifyAgentStarted(args: {
   agentName: string | null;
   visaType?: string;
   priority?: number;
+  triggeredBy?: string;
   logger: Logger;
 }): Promise<void> {
   const { cpApiUrl, tenantId, internalSecret } = getCpNotifyContext(args.tenantId);
@@ -327,6 +344,7 @@ export async function notifyAgentStarted(args: {
 
   const portalLine = args.portalLabel ? `${args.portalId} / ${args.portalLabel}` : args.portalId;
   const agentLine = args.agentName ?? args.agentId ?? '—';
+  const triggeredByLine = args.triggeredBy === 'manual' ? '👤 Manual' : args.triggeredBy === 'watcher_auto' ? '🤖 Auto' : undefined;
   const lines = [
     '🚀 Agent Started',
     '',
@@ -337,6 +355,7 @@ export async function notifyAgentStarted(args: {
   ];
   if (args.visaType != null) lines.push(`Visa: ${args.visaType}`);
   if (args.priority != null) lines.push(`Priority: ${args.priority}`);
+  if (triggeredByLine) lines.push(`Triggered by: ${triggeredByLine}`);
   const text = lines.join('\n');
 
   const notifyConfig = getConfigService().get('notify');
@@ -359,7 +378,7 @@ export async function notifyAgentCompleted(args: {
   portalLabel?: string;
   agentId: string | null;
   agentName: string | null;
-  status: 'completed' | 'cancelled' | 'slot_found' | 'waiting_hitl' | 'waiting_slot';
+  status: 'completed' | 'cancelled' | 'slot_found' | 'no_slot_completed' | 'waiting_hitl' | 'waiting_slot';
   details?: string;
   confirmationNumber?: string;
   logger: Logger;
@@ -375,8 +394,11 @@ export async function notifyAgentCompleted(args: {
   const title =
     args.status === 'slot_found'
       ? '✅ Agent Completed (Slot Found)'
-      : '✅ Agent Completed';
-  const finalStatus = args.status === 'slot_found' ? 'SLOT_FOUND' : args.status.toUpperCase();
+      : args.status === 'no_slot_completed'
+        ? '✅ Agent Completed (No Slot)'
+        : '✅ Agent Completed';
+  const finalStatus =
+    args.status === 'slot_found' ? 'SLOT_FOUND' : args.status === 'no_slot_completed' ? 'COMPLETED' : args.status.toUpperCase();
   const lines = [
     title,
     '',

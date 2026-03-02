@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { getDb, AgentRepository, ProfileRepository, JobRepository, SystemSettingsRepository } from '@visa-automation/db';
+import { getDb, AgentRepository, ProfileRepository, JobRepository, JobEventRepository, SystemSettingsRepository } from '@visa-automation/db';
+import { JOB_STATES, canTransitionFromTo } from '@visa-automation/shared';
 import type {
   CreateAgentRequest,
   UpdateAgentRequest,
@@ -20,6 +21,7 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
   const agentRepo = new AgentRepository(db);
   const profileRepo = new ProfileRepository(db);
   const jobRepo = new JobRepository(db);
+  const eventRepo = new JobEventRepository(db);
   const settingsRepo = new SystemSettingsRepository(db);
 
   /**
@@ -289,10 +291,30 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
     if (body.name !== undefined) updates.name = body.name;
     if (body.mode !== undefined) updates.mode = body.mode;
     if (body.status !== undefined) {
-      // When disabling (OFFLINE): if agent is running a job, set DRAINING so it finishes then goes OFFLINE
+      // When disabling: clear job state immediately (cancel job, end run, set OFFLINE) so UI does not stay on "Draining" + Current Job State
       const requestedOffline = body.status === 'OFFLINE' || body.status === 'DISABLED';
       if (requestedOffline && agent.current_job_id) {
-        updates.status = 'DRAINING';
+        const jobId = agent.current_job_id;
+        const job = await jobRepo.findByIdAndTenant(jobId, request.tenantId);
+        if (job && canTransitionFromTo(job.status, JOB_STATES.CANCELLED)) {
+          await jobRepo.updateStatusIf(jobId, job.status, JOB_STATES.CANCELLED);
+          await eventRepo.createStateTransition(
+            jobId,
+            request.tenantId,
+            job.status,
+            JOB_STATES.CANCELLED,
+            { reason: 'Disabled by admin' }
+          );
+        }
+        await db
+          .updateTable('job_runs')
+          .set({ status: 'CANCELLED', finished_at: new Date() })
+          .where('job_id', '=', jobId)
+          .where('tenant_id', '=', request.tenantId)
+          .where('status', '=', 'RUNNING')
+          .execute();
+        updates.status = body.status;
+        updates.current_job_id = null;
       } else {
         updates.status = body.status;
       }
@@ -316,6 +338,61 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
       success: true,
       data: updated,
     };
+  });
+
+  /**
+   * Force stop agent: drop current job and clear state; agent stays ONLINE (enabled).
+   * Use when agent is working or DRAINING and you want it to stop this job at once and be free for new work.
+   * POST /cp/agents/:id/force-stop
+   */
+  app.post<{ Params: AgentParams }>('/:id/force-stop', async (request, reply) => {
+    const agent = await agentRepo.findById(request.tenantId, request.params.id);
+
+    if (!agent) {
+      return reply.status(404).send({
+        success: false,
+        error: {
+          code: 'AGENT_NOT_FOUND',
+          message: `Agent with ID '${request.params.id}' not found`,
+        },
+      });
+    }
+
+    const jobId = agent.current_job_id;
+    if (jobId) {
+      const job = await jobRepo.findByIdAndTenant(jobId, request.tenantId);
+      if (job && canTransitionFromTo(job.status, JOB_STATES.CANCELLED)) {
+        await jobRepo.updateStatusIf(jobId, job.status, JOB_STATES.CANCELLED);
+        await eventRepo.createStateTransition(
+          jobId,
+          request.tenantId,
+          job.status,
+          JOB_STATES.CANCELLED,
+          { reason: 'Force stop: agent dropped job by admin' }
+        );
+      }
+      // End any RUNNING job_run for this job so agent UI no longer shows "Current Job State"
+      await db
+        .updateTable('job_runs')
+        .set({ status: 'CANCELLED', finished_at: new Date() })
+        .where('job_id', '=', jobId)
+        .where('tenant_id', '=', request.tenantId)
+        .where('status', '=', 'RUNNING')
+        .execute();
+    }
+
+    // Clear current_job_id only; keep status (ONLINE/DRAINING) so agent stays enabled
+    await agentRepo.update(request.tenantId, request.params.id, {
+      current_job_id: null,
+      ...(agent.status === 'DRAINING' ? { status: 'ONLINE' as const } : {}),
+    });
+
+    const updated = await agentRepo.findById(request.tenantId, request.params.id);
+    return reply.send({
+      success: true,
+      data: updated,
+      message: 'Agent dropped current job; state cleared, agent remains enabled',
+    });
   });
 
   /**
@@ -381,18 +458,21 @@ export const agentRoutes: FastifyPluginAsync = async (app) => {
 
     // When agent is OFFLINE (admin-disabled), DISABLED, or DRAINING (admin/worker-set), do not overwrite status on heartbeat
     const preserveStatus = agent.status === 'OFFLINE' || agent.status === 'DISABLED' || agent.status === 'DRAINING';
+    // If DB has current_job_id = null (e.g. after force-stop), never overwrite from heartbeat so UI stays cleared
+    const jobIdToWrite =
+      agent.current_job_id != null ? (current_job_id ?? null) : null;
     const updated = preserveStatus
       ? await agentRepo.updateHeartbeatMetadataOnly(
           request.tenantId,
           request.params.id,
-          current_job_id ?? null,
+          jobIdToWrite,
           updatedMetadata
         )
       : await agentRepo.updateHeartbeat(
           request.tenantId,
           request.params.id,
           status,
-          current_job_id,
+          jobIdToWrite ?? undefined,
           updatedMetadata
         );
 

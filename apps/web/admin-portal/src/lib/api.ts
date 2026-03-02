@@ -148,6 +148,8 @@ export const cpApi = {
     fetchApi<Agent>(`${getCpApiUrl()}/cp/agents`, { method: "POST", body: JSON.stringify(data) }),
   updateAgent: (id: string, data: Partial<Agent>) =>
     fetchApi<Agent>(`${getCpApiUrl()}/cp/agents/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  forceStopAgent: (id: string) =>
+    fetchApi<Agent>(`${getCpApiUrl()}/cp/agents/${id}/force-stop`, { method: "POST", body: "{}" }),
   deleteAgent: (id: string) =>
     fetchApi<{ deleted: boolean }>(`${getCpApiUrl()}/cp/agents/${id}`, { method: "DELETE" }),
   scaleAgents: (data: { async_count: number; sync_count: number }) =>
@@ -308,6 +310,13 @@ export const cpApi = {
     fetchApi<{ success: boolean; data: { deleted: number } }>(`${getCpApiUrl()}/cp/watcher/run-history`, { method: "DELETE" }),
   clearWatcherSnapshots: () =>
     fetchApi<{ success: boolean; data: { deleted: number } }>(`${getCpApiUrl()}/cp/watcher/snapshots`, { method: "DELETE" }),
+  getOpenSlots: () =>
+    fetchApi<PortalOpenSlots[]>(`${getCpApiUrl()}/cp/watcher/slots`),
+  grabBooking: (data: { customer_id: string; portal_id: string; open_dates: string[]; preferred_date?: string }) =>
+    fetchApi<{ job_id: string; agent_id: string; agent_name: string; open_dates_count: number; message: string }>(
+      `${getCpApiUrl()}/cp/watcher/grab-booking`,
+      { method: "POST", body: JSON.stringify(data) }
+    ),
   getWatcherInterval: () =>
     fetchApi<WatcherIntervalConfig>(`${getCpApiUrl()}/cp/watcher/interval`),
   updateWatcherInterval: (data: WatcherIntervalUpdate) =>
@@ -363,6 +372,19 @@ export const cpApi = {
         `${getCpApiUrl()}/cp/settings/global/${category}/${key}`,
         { method: "PUT", body: JSON.stringify({ value, description }) }
       ) as Promise<SystemSetting>,
+  },
+
+  // Mock Portal (proxied through CP to avoid browser DNS issues with Docker hostnames)
+  mockPortal: {
+    getConfig: (portalId: string) =>
+      fetchApi<{ portalId: string; slots: { hasAvailability: boolean; availableTimes: string[]; randomizeAvailability: boolean; slotDisappearChance: number } }>(
+        `${getCpApiUrl()}/cp/mock-portal/${encodeURIComponent(portalId)}/config`
+      ),
+    setConfig: (portalId: string, body: unknown) =>
+      fetchApi<{ portalId: string; slots: { hasAvailability: boolean } }>(
+        `${getCpApiUrl()}/cp/mock-portal/${encodeURIComponent(portalId)}/config`,
+        { method: "POST", body: JSON.stringify(body) }
+      ),
   },
 };
 
@@ -721,6 +743,15 @@ export interface WatcherRunHistoryItem {
   message: string | null;
 }
 
+export interface PortalOpenSlots {
+  portal_id: string;
+  portal_name: string;
+  open_dates: string[];
+  last_checked_at: string | null;
+  matching_customers: number;
+  total_active_customers: number;
+}
+
 export interface WatcherStatus {
   config: WatcherConfig | null;
   status: "not_configured" | "enabled" | "disabled";
@@ -1037,8 +1068,8 @@ export const customerApi = {
     }).then(r => r.data);
   },
 
-  async triggerSlotCheck(id: string): Promise<{ message: string; customer_id: string; job_id: string }> {
-    return fetchApi<{ data: { message: string; customer_id: string; job_id: string } }>(
+  async triggerSlotCheck(id: string): Promise<{ message: string; customer_id: string; job_id: string; agent_id?: string; agent_name?: string }> {
+    return fetchApi<{ data: { message: string; customer_id: string; job_id: string; agent_id?: string; agent_name?: string } }>(
       `${getCpApiUrl()}/cp/customers/${id}/run-slot-check`,
       { method: 'POST', body: '{}' }
     ).then(r => r.data);

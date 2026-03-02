@@ -38,7 +38,14 @@ export class JobService {
     return tenant.id;
   }
 
-  async createJob(request: CreateJobRequest): Promise<CreateJobResponse> {
+  /**
+   * Create a job and optionally enqueue it for async processing.
+   * Pass `skipQueue: true` when assigning the job directly to a SYNC agent —
+   * the SyncAgentRunner polls CP for agents with `current_job_id` set, so the
+   * job must NOT be put on the Redis queue (otherwise an async agent would race
+   * to claim it as well).
+   */
+  async createJob(request: CreateJobRequest, { skipQueue = false }: { skipQueue?: boolean } = {}): Promise<CreateJobResponse> {
     validateJobConfig(request.config);
     const tenant_id = await this.resolveTenantId(request.tenant_id);
     const defaultPriority = await this.settingsRepo.getNumber(null, 'job', 'default_priority', 50);
@@ -56,27 +63,29 @@ export class JobService {
       max_retries: maxRetries,
     });
 
-    const queuePayload: JobQueuePayload = {
-      job_id: job.id,
-      tenant_id: job.tenant_id,
-      visa_type: request.visa_type,
-      priority: job.priority,
-      applicant_data: applicantData as ApplicantData,
-      config: request.config ?? {},
-      portal_id: request.portal_id,
-      attempt_number: 1,
-    };
+    if (!skipQueue) {
+      const queuePayload: JobQueuePayload = {
+        job_id: job.id,
+        tenant_id: job.tenant_id,
+        visa_type: request.visa_type,
+        priority: job.priority,
+        applicant_data: applicantData as ApplicantData,
+        config: request.config ?? {},
+        portal_id: request.portal_id,
+        attempt_number: 1,
+      };
 
-    if (request.config?.slot_check_only) {
-      await enqueueSlotCheckJob(queuePayload);
-    } else {
-      await enqueueJob(queuePayload);
+      if (request.config?.slot_check_only) {
+        await enqueueSlotCheckJob(queuePayload);
+      } else {
+        await enqueueJob(queuePayload);
+      }
     }
 
     return {
       job_id: job.id,
       status: JOB_STATES.QUEUED,
-      message: 'Job created and queued for processing',
+      message: skipQueue ? 'Job created (direct SYNC agent assignment)' : 'Job created and queued for processing',
     };
   }
 

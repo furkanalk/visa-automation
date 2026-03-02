@@ -156,6 +156,8 @@ export function PortalConfigModal({
       mouseMoveDelayMinMs: c.mouseMoveDelayMinMs != null ? String(c.mouseMoveDelayMinMs) : "",
       mouseMoveDelayMaxMs: c.mouseMoveDelayMaxMs != null ? String(c.mouseMoveDelayMaxMs) : "",
     });
+    setTimingEnabled(c.minRunDurationMs != null && Number(c.minRunDurationMs) > 0);
+    setMouseEnabled(c.mouseMoveIntervalMs != null && Number(c.mouseMoveIntervalMs) > 0);
     const sh = (c.slotHunt as Record<string, unknown>) ?? {};
     setSlotHunt({
       maxPolls: sh.maxPolls != null ? String(sh.maxPolls) : "",

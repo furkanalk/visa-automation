@@ -91,8 +91,36 @@ export default function SettingsPage() {
       setPortalUrls(urls && typeof urls === "object" ? { ...urls } : {});
     }
   }, [mockSettings]);
-  const mockSaveMutation = useMutation({
-    mutationFn: async () => {
+  // Mock portal slot availability toggles (proxied through CP to avoid browser Docker DNS issues)
+  const [slotAvailability, setSlotAvailability] = useState<Record<string, boolean>>({});
+  const [slotTogglePending, setSlotTogglePending] = useState<Record<string, boolean>>({});
+
+  // Fetch current slot availability via CP proxy
+  const { data: mockSlotData } = useQuery({
+    queryKey: ['cp-mock-portal-config', 'as-visa'],
+    queryFn: () => cpApi.mockPortal.getConfig('as-visa'),
+    enabled: activeTab === 'mock',
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (mockSlotData?.slots) {
+      setSlotAvailability((prev) => ({ ...prev, 'as-visa': mockSlotData.slots.hasAvailability ?? false }));
+    }
+  }, [mockSlotData]);
+
+  const toggleSlotAvailability = async (portalId: string, value: boolean) => {
+    setSlotTogglePending((p) => ({ ...p, [portalId]: true }));
+    try {
+      await cpApi.mockPortal.setConfig(portalId, { slots: { hasAvailability: value } });
+      setSlotAvailability((prev) => ({ ...prev, [portalId]: value }));
+      void queryClient.invalidateQueries({ queryKey: ['cp-mock-portal-config', portalId] });
+    } finally {
+      setSlotTogglePending((p) => ({ ...p, [portalId]: false }));
+    }
+  };
+
+  const mockSaveMutation = useMutation({    mutationFn: async () => {
       const updates = [
         { category: "mock", key: "enabled", value: mockEnabled },
         { category: "mock", key: "default_base_url", value: mockDefaultBaseUrl.trim() || "" },
@@ -331,6 +359,59 @@ export default function SettingsPage() {
                 {mockSaveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
                 Save mock settings
               </Button>
+            </CardContent>
+          </Card>
+
+          {/* Slot availability toggles (calls mock portal API directly) */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-gray-900 dark:text-white">
+                <FlaskConical className="h-5 w-5" />
+                Mock portal slot availability
+              </CardTitle>
+              <CardDescription>
+                Toggle whether each mock portal returns open appointment slots. Calls the mock portal&apos;s own API directly.
+                Requires mock portal to be running and reachable at the configured URL above.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {portals.length === 0 ? (
+                <p className="text-sm text-gray-500">No portals configured.</p>
+              ) : (
+                portals.map((portal: { portal_id: string; name: string }) => {
+                  const hasSlots = slotAvailability[portal.portal_id] ?? false;
+                  const pending = slotTogglePending[portal.portal_id] ?? false;
+                  return (
+                    <div key={portal.portal_id} className="flex items-center justify-between p-3 rounded-lg bg-gray-50 dark:bg-slate-800/50">
+                      <div>
+                        <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{portal.name}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                          {hasSlots
+                            ? '🟢 Slots available — dateDisabled empty, all days open'
+                            : '🔴 No slots — all days blocked'}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() => toggleSlotAvailability(portal.portal_id, !hasSlots)}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
+                          hasSlots ? 'bg-green-500' : 'bg-gray-300 dark:bg-slate-600'
+                        } ${pending ? 'opacity-50 cursor-wait' : 'cursor-pointer'}`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                            hasSlots ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+              <p className="text-xs text-muted-foreground bg-muted/50 dark:bg-slate-800/50 rounded px-2 py-1.5">
+                Changes take effect immediately on the mock portal — no restart needed. The DP agent picks up the new state on the next poll cycle.
+              </p>
             </CardContent>
           </Card>
         </div>

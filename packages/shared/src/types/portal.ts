@@ -51,6 +51,18 @@ export interface PortalSettings {
   /** Optional: delay between segments in ms – min/max (e.g. 15, 42). */
   mouseMoveDelayMinMs?: number;
   mouseMoveDelayMaxMs?: number;
+  /**
+   * Appointment window relative to travel date.
+   * Default: { minBeforeTravel: 15, maxBeforeTravel: 45 }
+   * Meaning: randevu en erken travelDate-maxBeforeTravel, en geç travelDate-minBeforeTravel olabilir.
+   * Örnek: { minBeforeTravel: 15, maxBeforeTravel: 90 } → 3 aya kadar önceden randevu alınabilir.
+   */
+  appointmentWindowDays?: {
+    /** Minimum days before travel date (appointment must be at least this many days before). Default: 15 */
+    minBeforeTravel?: number;
+    /** Maximum days before travel date (appointment can be at most this many days before). Default: 45 */
+    maxBeforeTravel?: number;
+  };
   [key: string]: unknown;
 }
 

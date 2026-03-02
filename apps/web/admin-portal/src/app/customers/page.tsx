@@ -310,7 +310,10 @@ export default function CustomersPage() {
   const triggerSlotCheckMutation = useMutation({
     mutationFn: (id: string) => customerApi.triggerSlotCheck(id),
     onSuccess: (data) => {
-      setSlotCheckMessage(data.job_id ? `Job started. Job ID: ${data.job_id}` : data.message);
+      const msg = data.agent_name
+        ? `Job assigned to sync agent "${data.agent_name}". Job ID: ${data.job_id}`
+        : data.job_id ? `Job started. Job ID: ${data.job_id}` : data.message;
+      setSlotCheckMessage(msg);
       setTimeout(() => setSlotCheckMessage(null), 6000);
     },
   });
@@ -567,7 +570,7 @@ export default function CustomersPage() {
                             <Button
                               variant="outline"
                               size="sm"
-                              title="Start slot check. Job is queued; an async agent assigned to this customer's portal will pick it up. (Sync agents do not auto-take queue jobs. In Portals, assign the customer's portal to at least one async agent.)"
+                              title="Start slot check. Assigns the job to an idle SYNC agent immediately."
                               onClick={() => triggerSlotCheckMutation.mutate(customer.id)}
                               disabled={triggerSlotCheckMutation.isPending}
                             >

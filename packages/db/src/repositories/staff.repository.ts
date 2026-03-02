@@ -120,10 +120,10 @@ export class StaffRepository {
     };
     if (setObj.permissions !== undefined) {
       const arr = Array.isArray(setObj.permissions) ? setObj.permissions : [];
-      setObj.permissions = sql`${JSON.stringify(arr)}::jsonb`;
+      setObj.permissions = JSON.stringify(arr);
     }
     if (setObj.settings !== undefined && typeof setObj.settings === 'object' && setObj.settings !== null && !Array.isArray(setObj.settings)) {
-      setObj.settings = sql`${JSON.stringify(setObj.settings)}::jsonb`;
+      setObj.settings = JSON.stringify(setObj.settings);
     }
     return this.db
       .updateTable('staff_members')

@@ -8,6 +8,14 @@ export const QUEUE_NAMES = {
   /** Slot-check (scout/watcher) queue; only agents with scout profile consume from this */
   SLOT_CHECK: 'visa-slot-check',
 
+  /**
+   * Per-agent SYNC queue prefix. Full queue name = SYNC_AGENT_PREFIX + agentId.
+   * CP pushes directly to this queue when assigning a job to a specific SYNC agent.
+   * The SyncAgentRunner on DP subscribes each SYNC agent to its own queue.
+   * BullMQ does not allow ":" in queue names, so we use "__" as separator.
+   */
+  SYNC_AGENT_PREFIX: 'visa-sync__',
+
   /** HITL task notifications */
   HITL_NOTIFICATIONS: 'visa-hitl-notifications',
 

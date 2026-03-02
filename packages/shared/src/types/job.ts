@@ -43,6 +43,15 @@ export interface JobConfig {
   simulate_hitl?: boolean;
   /** When true, job only checks for slot; if found, calls CP to create customer jobs (no booking) */
   slot_check_only?: boolean;
+  /**
+   * How this job was triggered.
+   * 'manual'        – operator manually triggered (customers page, slots grab, manual watcher run)
+   * 'watcher_auto'  – scheduled watcher run (no human present)
+   * When a scout job creates customer booking jobs via slot-open:
+   *   'manual' source      → booking job goes to SYNC agent (operator is watching)
+   *   'watcher_auto' source → booking job goes to ASYNC queue (background)
+   */
+  triggered_by?: 'manual' | 'watcher_auto';
   [key: string]: unknown;
 }
 

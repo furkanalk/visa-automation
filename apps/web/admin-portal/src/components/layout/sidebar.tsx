@@ -23,6 +23,7 @@ import {
   Sliders,
   UserCog,
   Loader2,
+  CalendarSearch,
 } from "lucide-react";
 
 const navigation = [
@@ -36,6 +37,7 @@ const navigation = [
   { name: "HITL", href: "/hitl", icon: Hand },
   { name: "Notifications", href: "/notifications", icon: Bell },
   { name: "Watcher", href: "/watcher", icon: Eye },
+  { name: "Slots", href: "/slots", icon: CalendarSearch },
   { name: "Audit Logs", href: "/audit", icon: ScrollText },
   { name: "Config", href: "/config", icon: Sliders },
   { name: "Settings", href: "/settings", icon: Settings },

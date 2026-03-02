@@ -11,11 +11,17 @@
 
 export interface Page1Options {
   csrfToken: string;
-  availableDates: string[]; // Format: YYYY-M-D (e.g., "2026-2-16")
+  /**
+   * Blocked/disabled dates in YYYY-M-D format (no leading zeros) — same semantics as real AS-VISA.
+   * dateDisabled = kapalı günler listesi. Empty = tüm günler açık = slot var.
+   */
+  blockedDates: string[];
   availableTimes: string[];
   showCaptcha: boolean;
   captchaAutoSolve: boolean;
   captchaAutoSolveDelayMs: number;
+  /** When false, 6-digit code input is hidden so scout slot-check can run without HITL (mock testing). */
+  showSecurityCode: boolean;
   securityCode: string;
   skipInfoPopup: boolean;
   skipBotDetection: boolean;
@@ -24,17 +30,18 @@ export interface Page1Options {
 export function renderPage1(options: Partial<Page1Options> = {}): string {
   const {
     csrfToken = generateToken(),
-    availableDates = [],
+    blockedDates = [],
     availableTimes = ['09:00', '09:30', '10:00', '10:30', '11:00', '14:00', '14:30', '15:00'],
     showCaptcha = true,
     captchaAutoSolve = true,
     captchaAutoSolveDelayMs = 3000,
+    showSecurityCode = true,
     securityCode = generateSecurityCode(),
     skipInfoPopup = true,
     skipBotDetection = true,
   } = options;
 
-  const dateDisabledJS = JSON.stringify(availableDates);
+  const dateDisabledJS = JSON.stringify(blockedDates);
   const availableTimesJS = JSON.stringify(availableTimes);
 
   return `<!DOCTYPE html>
@@ -52,9 +59,9 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
   <!-- jQuery -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 
-  <!-- Bootstrap Datepicker -->
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-datepicker/1.10.0/css/bootstrap-datepicker.min.css" rel="stylesheet" />
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-datepicker/1.10.0/js/bootstrap-datepicker.min.js"></script>
+  <!-- Bootstrap Datepicker (same version as real site: 1.3.0) -->
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-datepicker/1.3.0/css/datepicker.css" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-datepicker/1.3.0/js/bootstrap-datepicker.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-datepicker/1.10.0/locales/bootstrap-datepicker.tr.min.js"></script>
 
   <!-- SweetAlert2 & Toastr -->
@@ -117,55 +124,11 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
     .form-control:focus { outline: none; border-color: #1d2657; }
     .form-select { width: 100%; padding: 12px 15px; border: 1px solid #ddd; border-radius: 5px; font-size: 15px; background: white; }
 
-    /* Datepicker - position below input + opaque container (reeldeki gibi) */
-    .datepicker-input-wrap { position: relative; display: inline-block; width: 100%; }
-    /* Dropdown kutusu opak; arkasi gorme (transparency fix) */
-    .datepicker,
-    .datepicker-dropdown {
-      z-index: 10000 !important;
-      position: absolute !important;
-      left: 0 !important;
-      top: 100% !important;
-      margin-top: 2px !important;
-      background: #fff !important;
-      border: 1px solid #ccc !important;
-      border-radius: 4px !important;
-      box-shadow: 0 6px 12px rgba(0,0,0,0.175) !important;
-      padding: 4px !important;
-    }
-    .datepicker table { background: #fff !important; }
-    .datepicker-dropdown.datepicker-orient-bottom::before,
-    .datepicker-dropdown.datepicker-orient-bottom::after { display: none; }
-    .datepicker table tr td.day { cursor: pointer; background: #fff; }
-    .datepicker table tr td.day:hover { background: #eee; }
-    /* Reeldeki as-visa.html inline style ile ayni: sadece renk (color) */
+    /* Same color classes as real as-visa site (inline style block in as-visa.html) */
     .orange-bg { color: darkgreen !important; }
     .red-bg { color: darkorange !important; }
     .blue-text { color: darkgreen !important; }
     .white-text { color: darkorange !important; }
-    /* Disabled gunler - reeldeki: disabled + red-bg + white-text => darkorange yazi, gri arka */
-    .datepicker table tr td.disabled { cursor: not-allowed !important; background: #eee !important; }
-    .datepicker table tr td.disabled:hover { background: #eee !important; }
-    .datepicker table tr td.disabled.red-bg,
-    .datepicker table tr td.disabled.white-text { color: darkorange !important; background: #eee !important; }
-    /* Musait gunler - reeldeki: orange-bg + blue-text => darkgreen yazi, acik yesil arka */
-    .datepicker table tr td.day.orange-bg,
-    .datepicker table tr td.day.orange-bg.disabled,
-    .datepicker table tr td.orange-bg,
-    .datepicker table tr td.day.blue-text {
-      color: darkgreen !important;
-      background: #d4edda !important;
-      cursor: pointer !important;
-      pointer-events: auto !important;
-    }
-    .datepicker table tr td.day.orange-bg:hover,
-    .datepicker table tr td.orange-bg:hover { background: #c3e6cb !important; }
-    /* Musait olmayan (kapali) gunler - reeldeki: disabled + red-bg + white-text */
-    .datepicker table tr td.day.red-bg:not(.orange-bg),
-    .datepicker table tr td.red-bg { color: darkorange !important; background: #eee !important; }
-    /* Secili tarih */
-    .datepicker table tr td.day.active,
-    .datepicker table tr td.active { background: #1d2657 !important; color: white !important; }
 
     /* Turnstile CAPTCHA */
     .cf-turnstile { min-height: 65px; display: flex; align-items: center; justify-content: center; background: #fafafa; border: 1px dashed #ddd; border-radius: 5px; padding: 15px; margin: 20px 0; }
@@ -291,11 +254,11 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
                   </div>
                 </div>
 
-                <!-- #TravelDate (wrapper for datepicker position - opens below input) -->
+                <!-- #TravelDate (same as real site: no container wrapper) -->
                 <div class="col-md-12 col-sm-12">
-                  <div class="form-group"><label>Seyahat Tarihi (Travel Date)</label></div>
-                  <div class="form-group datepicker-input-wrap" id="TravelDate-container" style="margin-bottom:20px;">
-                    <input type="text" readonly required class="form-control" name="TravelDate" id="TravelDate" placeholder="Lütfen Seyahat Tarihini Seçiniz" />
+                  <div class="form-group" style="margin-bottom:20px;"><label style="color:orangered">Seyahat Tarihi (Travel Date)</label></div>
+                  <div class="form-group" style="margin-bottom:20px;">
+                    <input type="text" readonly required class="form-control" name="TravelDate" id="TravelDate" placeholder="Lütfen Seyahat Tarihini Seçiniz" required="required" />
                   </div>
                 </div>
 
@@ -304,10 +267,10 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
                   <input type="text" name="CompanyName" style="display:none" tabindex="-1" autocomplete="off" />
                 </div>
 
-                <!-- #apDate - Randevu Tarihi (wrapper for datepicker position - opens below input) -->
+                <!-- #apDate - Randevu Tarihi (same as real site: no container wrapper) -->
                 <div class="col-md-12 col-sm-12" style="margin-bottom:20px" id="apDate">
-                  <div class="form-group"><label>Randevu Tarihi (Appointment Date)</label></div>
-                  <div class="form-group datepicker-input-wrap" id="datepicker-container">
+                  <div class="form-group" style="margin-bottom:20px;"><label style="color:orangered">Randevu Tarihi (Appointment Date)</label></div>
+                  <div class="form-group">
                     <input type="text" readonly required class="form-control" name="AppointmentDate" id="datepicker" placeholder="Lütfen Randevu Tarihini Seçiniz" />
                   </div>
                 </div>
@@ -395,13 +358,19 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
                   </div>
                 </div>
 
-                <!-- Security Code -->
+                <!-- Security Code (hidden when showSecurityCode false so scout slot-check can run) -->
+                ${
+                  showSecurityCode
+                    ? `
                 <div class="col-md-12 col-sm-12">
                   <div class="form-group">
                     <label>6 Haneli Kod (6-Digit Code): <strong style="font-size: 18px; color: #1d2657;">${securityCode}</strong></label>
                     <input type="tel" maxlength="6" minlength="6" class="form-control" placeholder="Lütfen 6 Haneli Kodu Giriniz." name="enteredCode" required />
                   </div>
                 </div>
+                `
+                    : ''
+                }
 
                 <!-- Turnstile CAPTCHA -->
                 ${
@@ -518,25 +487,31 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
       }, 1000);
     }
 
-    // ===== FETCH TIMES (mock) =====
+    // ===== FETCH TIMES — birebir real as-visa.js (calls /AnBir/Macaristan/SaatGetir) =====
     function tarihGetir() {
       showAppTimeLoading();
-      var selectedDate = $('#datepicker').val();
-      console.log('[Mock] Fetching times for:', selectedDate);
-
-      setTimeout(function() {
-        $('#AppointmentTime').empty();
-        for (var i = 0; i < availableTimes.length; i++) {
-          $('#AppointmentTime').append('<option value="' + availableTimes[i] + '">' + availableTimes[i] + '</option>');
-        }
-        $('#AppTime').show();
-        $('#AppTimeSelectForm').show();
-        $('#AppointmentTime').show();
-        hideAppTimeLoading();
-      }, 500);
+      var id = $('#datepicker').val();
+      $.ajax({
+        url: '/AnBir/Macaristan/SaatGetir',
+        data: { dateTab: id },
+        type: 'Post',
+        dataType: 'Json',
+        success: function (data) {
+          console.log(data);
+          $('#AppointmentTime').empty();
+          for (var i = 0; i < data.length; i++) {
+            $('#AppointmentTime').append("<option value='" + data[i].value + "'>" + data[i].text + "</option>");
+          }
+          $('#AppTime').show();
+          $('#AppTimeSelectForm').show();
+          $('#AppointmentTime').show();
+          hideAppTimeLoading();
+        },
+        error: function() { hideAppTimeLoading(); }
+      });
     }
 
-    // ===== DATEPICKER INITIALIZATION (EXACT match to real portal) =====
+    // ===== DATEPICKER INITIALIZATION — birebir real as-visa.js =====
     $(function() {
       var date = new Date(), y = date.getFullYear(), m = date.getMonth();
       var firstDay = new Date(y, m, 1);
@@ -549,55 +524,28 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
         $("#apDate").hide();
       }
 
-      // Click on disabled day shows error (but not if it has orange-bg = available)
-      $('body').on('click', '.day.disabled:not(.orange-bg)', function(e) {
+      // Click on disabled day shows error
+      $('body').on('click', '.day.disabled', function(e) {
         toastr.error('Seçim yapmak istediğiniz tarihi size veremiyoruz. Açık olan tarihlerde seçiminizi gerçekleştiriniz.');
       });
-      
-      // Force click handler for available dates (in case bootstrap disables them)
-      $('body').on('click', '.day.orange-bg', function(e) {
-        e.stopPropagation();
-        var $this = $(this);
-        var date = $this.data('date');
-        console.log('[Mock] Orange-bg date clicked:', date, $this.text());
-        
-        // Format: day number is the text content
-        var day = parseInt($this.text(), 10);
-        var $datepicker = $this.closest('.datepicker');
-        var currentMonth = $datepicker.find('.datepicker-switch').text();
-        console.log('[Mock] Current month view:', currentMonth, 'day:', day);
-        
-        // Let bootstrap handle it if it's enabled
-        if (!$this.hasClass('disabled')) {
-          return; // Let default behavior work
-        }
-        
-        // If disabled class exists but it's available, we need to force select
-        var $input = $('#datepicker');
-        var currentDate = $input.datepicker('getViewDate') || new Date();
-        var newDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
-        
-        // Format as dd/mm/yyyy
-        var formatted = ('0' + day).slice(-2) + '/' + ('0' + (newDate.getMonth() + 1)).slice(-2) + '/' + newDate.getFullYear();
-        $input.val(formatted);
-        $input.datepicker('hide');
-        $input.trigger('change');
-        $input.trigger('changeDate');
-        console.log('[Mock] Forced date selection:', formatted);
-      });
 
-      // Travel Subject change - In MOCK, we don't apply strict date range restrictions
-      // This makes testing easier. The real portal restricts appointment dates to 15-45 days before travel.
-      // For mock portal, all dates in dateDisabled array are selectable regardless of TravelSubject.
+      // TravelSubject change — same as real portal (date range restriction)
       $('select[name=TravelSubject]').change(function() {
         var value = $(this).val();
-        console.log('[Mock] TravelSubject changed:', value);
-        // In mock, always allow full date range - remove restrictions
-        $('#datepicker').datepicker("setStartDate", firstDay);
-        $('#datepicker').datepicker("setEndDate", lastDay);
+        if (value === 'İş (Ticari)') {
+          $('#datepicker').datepicker("setEndDate", lastDay);
+        } else {
+          var travelDate = new Date($('#TravelDate').datepicker('getDate'));
+          var copyTravelDate1 = new Date(travelDate);
+          var copyTravelDate2 = new Date(travelDate);
+          var startDate = new Date(copyTravelDate1.setDate(travelDate.getDate() - 45));
+          var endDate = new Date(copyTravelDate2.setDate(travelDate.getDate() - 15));
+          $('#datepicker').datepicker("setStartDate", startDate);
+          $('#datepicker').datepicker("setEndDate", endDate);
+        }
       });
 
-      // ===== #datepicker - Appointment Date (container fixes position: opens below input) =====
+      // ===== #datepicker — birebir real as-visa.js (no container option) =====
       $("#datepicker").datepicker({
         weekStart: 1,
         autoclose: true,
@@ -606,13 +554,11 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
         startDate: firstDay,
         endDate: lastDay,
         language: 'tr',
-        container: '#datepicker-container',
-        orientation: 'bottom auto',
         beforeShowDay: function(date) {
           var today = new Date();
           today.setHours(0, 0, 0, 0);
           var current = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-          // Format: YYYY-M-D (no leading zeros) - same as real portal
+          // Format: YYYY-M-D (no leading zeros) — same as real portal
           var formatted = date.getFullYear() + '-' + (date.getMonth() + 1) + '-' + date.getDate();
 
           if (current < today) {
@@ -621,7 +567,9 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
           if (current.getTime() === today.getTime()) {
             return { enabled: false, classes: 'disabled today-date red-bg white-text' };
           }
-          // Check if date is in available dates
+          // REAL AS-VISA semantics (birebir as-visa.js):
+          // dateDisabled = AÇIK günler listesi. Listede varsa → enabled (orange).
+          // Listede yoksa → disabled (red).
           if ($.inArray(formatted, dateDisabled) !== -1) {
             return { enabled: true, classes: 'orange-bg blue-text' };
           }
@@ -631,45 +579,71 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
         tarihGetir();
       });
 
-      // ===== #TravelDate (container fixes position: opens below input) =====
-      var nextDay = new Date();
-      nextDay.setDate(nextDay.getDate() + 1);
-      
+      // ===== #TravelDate — birebir real as-visa.js (no container option) =====
+      var nextmonth = new Date();
       $("#TravelDate").datepicker({
         weekStart: 1,
         autoclose: true,
         todayHighlight: true,
         language: 'tr',
         format: "dd/mm/yyyy",
-        startDate: nextDay,
-        container: '#TravelDate-container',
-        orientation: 'bottom auto'
+        startDate: new Date(nextmonth.setDate(nextmonth.getDate() + 1))
       }).on('changeDate', function() {
         console.log('[Mock] TravelDate changed:', $(this).val());
         $('#datepicker').val('');
-        
         if ($('#TravelDate').val()) {
           $("#apDate").show();
         } else {
           $("#apDate").hide();
         }
-        
-        // In MOCK portal, no date range restrictions - all dates in dateDisabled are available
-        console.log('[Mock] TravelDate set, showing appointment date section');
+        var value = $('select[name=TravelSubject]').val();
+        if (value !== 'İş (Ticari)') {
+          var travelDate = new Date($('#TravelDate').datepicker('getDate'));
+          var copyTravelDate1 = new Date(travelDate);
+          var copyTravelDate2 = new Date(travelDate);
+          var startDate = new Date(copyTravelDate1.setDate(travelDate.getDate() - 45));
+          var endDate = new Date(copyTravelDate2.setDate(travelDate.getDate() - 15));
+          $('#datepicker').datepicker("setStartDate", startDate);
+          $('#datepicker').datepicker("setEndDate", endDate);
+        } else {
+          $('#datepicker').datepicker("setEndDate", lastDay);
+        }
+      }).on('change', function() {
+        // Fallback for automation: native 'change' event also shows/hides apDate
+        if ($(this).val()) {
+          $("#apDate").show();
+        } else {
+          $("#apDate").hide();
+        }
       });
 
-      // ===== #AppointmentTabID change - trigger date fetch =====
-      $('#AppointmentTabID').change(function() {
+      // ===== #AppointmentTabID change — birebir real as-visa.js =====
+      $('#AppointmentTabID').change(function () {
         showLoading();
         var id = $('#AppointmentTabID').val();
-        console.log('[Mock] AppointmentTabID changed:', id);
-
-        // Simulate AJAX delay
-        setTimeout(function() {
-          window.dateDisabled = dateDisabled; // Use pre-configured dates
-          hideLoading();
-          console.log('[Mock] Available dates loaded:', dateDisabled.length, 'dates');
-        }, 500);
+        var cid = $('#NationalityTabID').val();
+        var token = $('input[name="__RequestVerificationToken"]').val();
+        $.ajax({
+          url: '/AnBir/Macaristan/TarihGetir',
+          data: { tabId: id, countryid: cid },
+          headers: {
+            'RequestVerificationToken': token
+          },
+          type: 'Post',
+          dataType: 'json',
+          success: function (data) {
+            hideLoading();
+            window.dateDisabled = data;
+          },
+          error: function (xhr) {
+            hideLoading();
+            if (xhr.status === 403) {
+              alert('Güvenlik doğrulaması başarısız. Lütfen sayfayı yenileyin.');
+            } else {
+              alert('Tarih bilgileri alınamadı. Lütfen tekrar deneyin.');
+            }
+          }
+        });
       });
 
       // #datepicker change
@@ -707,11 +681,13 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
       $('#apForm').submit(function(e) {
         e.preventDefault();
 
-        // Validate security code
-        var enteredCode = $('input[name=enteredCode]').val();
-        if (enteredCode !== expectedSecurityCode) {
-          Swal.fire({ title: 'Hata!', text: 'Güvenlik kodu hatalı!', icon: 'error', background: '#1d2657', color: '#f15a29' });
-          return;
+        // Validate security code (skip when input hidden, e.g. slot-check-only mock)
+        if ($('input[name=enteredCode]').length) {
+          var enteredCode = $('input[name=enteredCode]').val();
+          if (enteredCode !== expectedSecurityCode) {
+            Swal.fire({ title: 'Hata!', text: 'Güvenlik kodu hatalı!', icon: 'error', background: '#1d2657', color: '#f15a29' });
+            return;
+          }
         }
 
         // Validate emails match

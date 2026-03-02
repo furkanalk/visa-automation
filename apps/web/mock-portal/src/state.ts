@@ -32,7 +32,12 @@ export interface PortalConfig {
 
   // Slot availability
   slots: {
-    availableDates: string[]; // YYYY-MM-DD format
+    /**
+     * REAL AS-VISA semantics: dateDisabled = list of OPEN days.
+     * When true:  /TarihGetir returns next 30 weekdays (open days → slots available).
+     * When false: /TarihGetir returns [] (no open days → no slots).
+     */
+    hasAvailability: boolean;
     availableTimes: string[]; // HH:mm format
     randomizeAvailability: boolean;
     slotDisappearChance: number; // 0-1, chance slot disappears after being shown
@@ -78,7 +83,7 @@ const defaultAsVisaConfig: PortalConfig = {
     code: 'random', // Random 6-digit code each page load; set to fixed string (e.g. '123456') for testing
   },
   slots: {
-    availableDates: getDefaultSlotDates(),
+    hasAvailability: false, // default: no open slots (realistic prod default)
     availableTimes: ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00'],
     randomizeAvailability: false,
     slotDisappearChance: 0,
@@ -89,21 +94,6 @@ const defaultAsVisaConfig: PortalConfig = {
     requireAllFields: true,
   },
 };
-
-function getDefaultSlotDates(): string[] {
-  const dates: string[] = [];
-  const now = new Date();
-  // Add slots for next 14 days (skipping weekends)
-  for (let i = 3; i <= 17; i++) {
-    const date = new Date(now);
-    date.setDate(now.getDate() + i);
-    const dayOfWeek = date.getDay();
-    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-      dates.push(date.toISOString().split('T')[0]);
-    }
-  }
-  return dates;
-}
 
 class MockPortalState {
   private configs: Map<string, PortalConfig> = new Map();
@@ -178,21 +168,44 @@ class MockPortalState {
   }
 
   // Slot availability
-  getAvailableSlots(portalId: string): { dates: string[]; times: string[] } {
+  /**
+   * Returns { openDates, times }.
+   * openDates: YYYY-M-D list (no leading zeros) — REAL AS-VISA semantics:
+   *   dateDisabled = list of OPEN days (confusingly named on real site).
+   *   - hasAvailability=true  → next 30 weekdays (open → slots available)
+   *   - hasAvailability=false → [] (no open days → no slots)
+   * times: available time options in [{value, text}] format matching real SaatGetir response.
+   */
+  getAvailableSlots(portalId: string): { openDates: string[]; times: string[] } {
     const config = this.configs.get(portalId);
     if (!config || !config.enabled) {
-      return { dates: [], times: [] };
+      return { openDates: [], times: [] };
     }
 
-    let dates = [...config.slots.availableDates];
     const times = [...config.slots.availableTimes];
 
-    if (config.slots.randomizeAvailability) {
-      // Randomly filter out some dates
-      dates = dates.filter(() => Math.random() > 0.3);
+    if (!config.slots.hasAvailability) {
+      // No open days → no slots
+      return { openDates: [], times };
     }
 
-    return { dates, times };
+    // Return next 30 weekdays as open dates (YYYY-M-D, no leading zeros)
+    const openDates: string[] = [];
+    const now = new Date();
+    for (let i = 1; openDates.length < 30; i++) {
+      const d = new Date(now);
+      d.setDate(now.getDate() + i);
+      const day = d.getDay();
+      if (day !== 0 && day !== 6) {
+        openDates.push(`${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`);
+      }
+    }
+
+    if (config.slots.randomizeAvailability) {
+      return { openDates: openDates.filter(() => Math.random() > 0.3), times };
+    }
+
+    return { openDates, times };
   }
 
   // Behavior simulation helpers

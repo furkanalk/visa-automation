@@ -1,7 +1,8 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { getDb, CustomerRepository, AuditRepository } from '@visa-automation/db';
+import { getDb, CustomerRepository, AuditRepository, AgentRepository } from '@visa-automation/db';
 import type { CustomerStatus, CustomerPreferences, CustomerFlags, SlotCheckPolicy } from '@visa-automation/db';
 import { JobService } from '../services/job.service.js';
+import { enqueueSyncJob } from '../queue/producer.js';
 import type { ApplicantData } from '@visa-automation/shared';
 
 interface CustomerParams {
@@ -539,6 +540,44 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
+    // Find an idle SYNC agent so the job runs immediately (not queued for async workers)
+    const agentRepo = new AgentRepository(getDb());
+    const allAgents = await agentRepo.findByTenantId(request.tenantId, { status: 'ONLINE', mode: 'SYNC' });
+
+    // An agent is truly idle if it has no current_job_id, OR its current_job_id points to a
+    // job that is no longer RUNNING (stale reference from a crashed/restarted DP container).
+    let idleAgent = allAgents.find((a) => !a.current_job_id);
+    if (!idleAgent) {
+      // Check if any agent has a stale current_job_id (job not actually RUNNING)
+      const db = getDb();
+      for (const agent of allAgents) {
+        if (!agent.current_job_id) continue;
+        const job = await db
+          .selectFrom('jobs')
+          .select('status')
+          .where('id', '=', agent.current_job_id)
+          .executeTakeFirst();
+        if (!job || job.status !== 'RUNNING') {
+          // Stale reference — clear it so this agent can accept a new job
+          await agentRepo.update(request.tenantId, agent.id, { current_job_id: null });
+          agent.current_job_id = null;
+          idleAgent = agent;
+          request.log.warn(
+            { agentId: agent.id, staleJobId: agent.current_job_id, jobStatus: job?.status },
+            'Cleared stale current_job_id from SYNC agent',
+          );
+          break;
+        }
+      }
+    }
+
+    if (!idleAgent) {
+      return reply.status(503).send({
+        success: false,
+        error: { code: 'NO_SYNC_AGENT', message: 'No idle SYNC agent available. Try again in a moment.' },
+      });
+    }
+
     const prefs = (customer.preferences ?? {}) as Record<string, unknown>;
     const applicant: ApplicantData = {
       ...prefs,
@@ -554,7 +593,8 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
         visa_type: 'SCHENGEN',
         priority: customer.priority,
         applicant,
-      });
+        config: { slot_check_only: true, triggered_by: 'manual' },
+      }, { skipQueue: true });
     } catch (err) {
       request.log.error({ err, customerId: customer.id }, 'Failed to create job for customer');
       return reply.status(500).send({
@@ -566,6 +606,28 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
+    // Push directly to the SYNC agent's dedicated queue (visa-sync__<agentId>)
+    await enqueueSyncJob(idleAgent.id, {
+      job_id: result.job_id,
+      tenant_id: request.tenantId,
+      visa_type: 'SCHENGEN',
+      priority: customer.priority,
+      applicant_data: applicant,
+      config: { slot_check_only: true, triggered_by: 'manual' },
+      portal_id: customer.portal_id,
+      attempt_number: 1,
+    });
+
+    // Assign job to the idle SYNC agent
+    await agentRepo.update(request.tenantId, idleAgent.id, {
+      current_job_id: result.job_id,
+    });
+
+    request.log.info(
+      { customerId: customer.id, jobId: result.job_id, agentId: idleAgent.id },
+      'run-slot-check: job created and assigned to SYNC agent',
+    );
+
     await auditRepo.create({
       tenant_id: request.tenantId,
       actor_type: request.actorType ?? 'user',
@@ -575,15 +637,17 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
       resource_type: 'customer',
       resource_id: request.params.id,
       ip_address: request.ip,
-      metadata: { job_id: result.job_id },
+      metadata: { job_id: result.job_id, agent_id: idleAgent.id },
     });
 
     return {
       success: true,
       data: {
-        message: 'Slot check started.',
+        message: `Slot check started on sync agent "${idleAgent.name}". Check the Jobs page for progress.`,
         customer_id: customer.id,
         job_id: result.job_id,
+        agent_id: idleAgent.id,
+        agent_name: idleAgent.name,
       },
     };
   });

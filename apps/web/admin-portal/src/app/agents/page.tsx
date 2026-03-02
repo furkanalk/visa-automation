@@ -6,13 +6,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { useAgents, useCreateAgent, useUpdateAgent, useDeleteAgent } from "@/hooks/use-agents";
+import { useAgents, useCreateAgent, useUpdateAgent, useDeleteAgent, useForceStopAgent } from "@/hooks/use-agents";
 import { cpApi, type Agent } from "@/lib/api";
 import { AgentModal } from "@/components/agents/agent-modal";
 import { AgentSwimlanes } from "@/components/agents/agent-swimlanes";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SaveBanner } from "@/components/ui/save-banner";
-import { Bot, Plus, RefreshCw, Trash2, Power, PowerOff, Settings2, CheckSquare, Square, Layers, Loader2, Edit, AlertCircle, LayoutGrid, Columns, ChevronDown, Globe } from "lucide-react";
+import { Bot, Plus, RefreshCw, Trash2, Power, PowerOff, Settings2, CheckSquare, Square, Layers, Loader2, Edit, AlertCircle, LayoutGrid, Columns, ChevronDown, Globe, StopCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type ViewMode = "grid" | "swimlanes";
@@ -100,6 +100,7 @@ export default function AgentsPage() {
     setTimeout(() => setBanner(null), 5000);
   };
   const { data: agents, isLoading, isError, error, refetch } = useAgents();
+  const forceStopAgent = useForceStopAgent();
   const { data: profiles } = useQuery({
     queryKey: ["profiles"],
     queryFn: () => cpApi.getProfiles(),
@@ -199,6 +200,15 @@ export default function AgentsPage() {
   const handleToggleStatus = async (agent: Agent) => {
     const newStatus = agent.status === "ONLINE" ? "OFFLINE" : "ONLINE";
     await updateAgent.mutateAsync({ id: agent.id, data: { status: newStatus } });
+  };
+
+  const handleForceStop = async (agent: Agent) => {
+    try {
+      await forceStopAgent.mutateAsync(agent.id);
+      showBanner("success", "Agent force stopped.");
+    } catch (err) {
+      showBanner("error", err instanceof Error ? err.message : "Force stop failed.");
+    }
   };
 
   const handleDeleteClick = (id: string) => {
@@ -547,6 +557,7 @@ export default function AgentsPage() {
           getProfileName={getProfileName}
           onEditAgent={handleOpenEditModal}
           onToggleStatus={handleToggleStatus}
+          onForceStop={handleForceStop}
           onDeleteAgent={handleDeleteClick}
           onMoveAgent={handleMoveAgent}
         />
@@ -667,7 +678,7 @@ export default function AgentsPage() {
                       </span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 mt-4 pt-4 border-t border-gray-100 dark:border-slate-700">
+                  <div className="flex items-center gap-2 mt-4 pt-4 border-t border-gray-100 dark:border-slate-700 flex-wrap">
                     <Button
                       size="sm"
                       variant="outline"
@@ -680,7 +691,6 @@ export default function AgentsPage() {
                       size="sm"
                       variant="outline"
                       onClick={() => handleToggleStatus(agent)}
-                      disabled={agent.current_job_id !== null}
                     >
                       {agent.status === "ONLINE" ? (
                         <>
@@ -694,6 +704,24 @@ export default function AgentsPage() {
                         </>
                       )}
                     </Button>
+                    {(agent.status === "ONLINE" || agent.status === "DRAINING") && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-900/20"
+                        onClick={() => handleForceStop(agent)}
+                        disabled={forceStopAgent.isPending}
+                      >
+                        {forceStopAgent.isPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <>
+                            <StopCircle className="h-3 w-3 mr-1" />
+                            Force stop
+                          </>
+                        )}
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       variant="destructive"

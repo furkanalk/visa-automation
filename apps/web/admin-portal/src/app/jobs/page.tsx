@@ -737,10 +737,38 @@ function JobDetailModal({
                 </CardHeader>
                 <CardContent className="py-2">
                   <pre className="text-xs bg-gray-50 dark:bg-slate-900 p-3 rounded overflow-x-auto">
-                    {JSON.stringify(job.applicant_data, null, 2)}
+                    {JSON.stringify(
+                      Object.fromEntries(
+                        Object.entries((job.applicant_data as Record<string, unknown>) ?? {}).filter(
+                          ([k]) => k !== "open_dates" && k !== "portal_id"
+                        )
+                      ),
+                      null, 2
+                    )}
                   </pre>
                 </CardContent>
               </Card>
+
+              {/* Open Dates (scout data) */}
+              {Array.isArray((job.applicant_data as Record<string, unknown>)?.open_dates) && (
+                <Card>
+                  <CardHeader className="py-3">
+                    <CardTitle className="text-sm">Open Dates</CardTitle>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Available appointment dates found by scout ({((job.applicant_data as Record<string, unknown>).open_dates as string[]).length} dates)
+                    </p>
+                  </CardHeader>
+                  <CardContent className="py-2">
+                    <div className="flex flex-wrap gap-1">
+                      {(((job.applicant_data as Record<string, unknown>).open_dates as string[]) ?? []).map((d) => (
+                        <span key={d} className="text-xs bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800 rounded px-2 py-0.5">
+                          {d}
+                        </span>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Config */}
               <Card>
@@ -752,9 +780,45 @@ function JobDetailModal({
                     </p>
                   )}
                 </CardHeader>
-                <CardContent className="py-2">
+                <CardContent className="py-2 space-y-3">
+                  {/* Job metadata */}
+                  <div className="grid grid-cols-1 gap-1 text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-400 dark:text-gray-500 w-20 shrink-0">Job ID</span>
+                      <span className="font-mono text-gray-700 dark:text-gray-300 break-all">{job.id}</span>
+                    </div>
+                    {(runs?.items?.[0]?.agent_id || runs?.items?.[0]?.agent_name) && (
+                      <>
+                        <div className="flex items-center gap-2">
+                          <span className="text-gray-400 dark:text-gray-500 w-20 shrink-0">Agent</span>
+                          <span className="text-gray-700 dark:text-gray-300">{runs.items[0].agent_name ?? '—'}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-gray-400 dark:text-gray-500 w-20 shrink-0">Agent ID</span>
+                          <span className="font-mono text-gray-700 dark:text-gray-300 break-all">{runs.items[0].agent_id ?? '—'}</span>
+                        </div>
+                      </>
+                    )}
+                    {(job.config as Record<string, unknown>)?.triggered_by != null && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-400 dark:text-gray-500 w-20 shrink-0">Triggered by</span>
+                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${
+                          String((job.config as Record<string, unknown>).triggered_by) === 'manual'
+                            ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
+                            : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
+                        }`}>
+                          {String((job.config as Record<string, unknown>).triggered_by) === 'manual' ? '👤 Manual' : '🤖 Auto'}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                   <pre className="text-xs bg-gray-50 dark:bg-slate-900 p-3 rounded overflow-x-auto">
-                    {JSON.stringify(job.config, null, 2)}
+                    {JSON.stringify(
+                      Object.keys((job.config as Record<string, unknown>) ?? {}).length > 0
+                        ? job.config
+                        : { slot_check_only: false },
+                      null, 2
+                    )}
                   </pre>
                 </CardContent>
               </Card>
@@ -824,6 +888,7 @@ function getStateTransitionTitle(payload: Record<string, unknown> | null): strin
 
   if (reason && typeof reason === "string") {
     const r = reason.toLowerCase();
+    if (r.includes("no slot found")) return "No slot";
     if (r.includes("slot found") || r.includes("notified")) return "Slot found";
     if (r.includes("hitl") && r.includes("triggered")) return hitlType ? `HITL: ${hitlType}` : "HITL triggered";
     if (r.includes("requeued") && r.includes("hitl")) return "Requeued after HITL";

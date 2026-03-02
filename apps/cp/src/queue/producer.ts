@@ -5,6 +5,8 @@ import type { JobQueuePayload } from '@visa-automation/shared';
 
 let queue: Queue<JobQueuePayload> | null = null;
 let slotCheckQueue: Queue<JobQueuePayload> | null = null;
+/** Per-agent SYNC queues — keyed by agentId */
+const syncQueues = new Map<string, Queue<JobQueuePayload>>();
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -138,4 +140,51 @@ export async function closeQueue(): Promise<void> {
     await slotCheckQueue.close();
     slotCheckQueue = null;
   }
+}
+
+/**
+ * Get (or create) the dedicated BullMQ queue for a specific SYNC agent.
+ * Queue name: "visa-sync__<agentId>"
+ */
+async function getSyncAgentQueue(agentId: string): Promise<Queue<JobQueuePayload>> {
+  if (!syncQueues.has(agentId)) {
+    const settingsRepo = new SystemSettingsRepository(getDb());
+    const completedRetentionHours = await settingsRepo.getNumber(null, 'queue', 'completed_retention_hours', 24);
+    const failedRetentionHours = await settingsRepo.getNumber(null, 'queue', 'failed_retention_hours', 168);
+    const completedMaxCount = await settingsRepo.getNumber(null, 'queue', 'completed_max_count', 1000);
+    const failedMaxCount = await settingsRepo.getNumber(null, 'queue', 'failed_max_count', 5000);
+
+    const q = new Queue<JobQueuePayload>(QUEUE_NAMES.SYNC_AGENT_PREFIX + agentId, {
+      connection: getConnection(),
+      defaultJobOptions: {
+        attempts: 1,
+        removeOnComplete: { age: completedRetentionHours * 3600, count: completedMaxCount },
+        removeOnFail: { age: failedRetentionHours * 3600, count: failedMaxCount },
+      },
+    });
+    syncQueues.set(agentId, q);
+  }
+  return syncQueues.get(agentId)!;
+}
+
+/**
+ * Enqueue a job directly to a specific SYNC agent's dedicated queue.
+ * The SyncAgentRunner on DP subscribes each agent to "visa-sync__<agentId>".
+ * This replaces the previous current_job_id polling mechanism.
+ */
+export async function enqueueSyncJob(
+  agentId: string,
+  payload: JobQueuePayload
+): Promise<string> {
+  const q = await getSyncAgentQueue(agentId);
+  const clampedPriority = Math.max(0, Math.min(100, payload.priority));
+  const job = await q.add(
+    `sync-job-${payload.job_id}`,
+    payload,
+    {
+      priority: 100 - clampedPriority,
+      jobId: payload.job_id,
+    }
+  );
+  return job.id ?? payload.job_id;
 }

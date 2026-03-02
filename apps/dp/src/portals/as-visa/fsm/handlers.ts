@@ -34,6 +34,44 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
   [JOB_STATES.SLOT_SEARCHING]: async (ctx) => {
     const repo = new JobRepository(db.instance);
 
+    const slotCheckOnly = (ctx.payload.config as Record<string, unknown> | undefined)?.slot_check_only === true;
+
+    // Fast-path: scout already found open dates and injected them into applicant_data.
+    // Skip portal interaction entirely — no need to re-check /TarihGetir.
+    const preloadedDates = (ctx.payload.applicant_data as Record<string, unknown> | undefined)?.open_dates;
+    if (!slotCheckOnly && Array.isArray(preloadedDates) && preloadedDates.length > 0) {
+      ctx.logger.info({ jobId: ctx.jobId, dateCount: preloadedDates.length }, 'SLOT_SEARCHING: open_dates preloaded by scout, skipping portal check');
+      // Do NOT notify again — scout already sent the SLOT FOUND notification.
+      // Skip to booking: the form is already filled (FORM_FILLING ran before us).
+      let confirmationNumber: string | undefined;
+      try {
+        await ctx.page.click(S.submit);
+        const swal = ctx.page.locator(S.swalConfirm);
+        const dialogVisible = await swal.isVisible().catch(() => false);
+        if (dialogVisible) await swal.click();
+        const timeoutMs = ctx.portalConfig.timeouts.navigationMs;
+        await ctx.page.locator(S.confirmation.number).first().waitFor({ state: 'visible', timeout: timeoutMs }).catch(() => {});
+        const el = ctx.page.locator(S.confirmation.number).first();
+        const text = await el.getAttribute('data-confirmation').catch(() => null) ?? await el.textContent().catch(() => null);
+        if (text) confirmationNumber = text.replace(/^Confirmation:\s*/i, '').trim();
+      } catch (err) {
+        ctx.logger.warn({ err, jobId: ctx.jobId }, 'Book step failed (preloaded path), halting at SLOT_FOUND');
+        throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND });
+      }
+      if (confirmationNumber) {
+        ctx.logger.info({ jobId: ctx.jobId, confirmationNumber }, 'Appointment booked (preloaded path)');
+        throw new FSMHalt({
+          lastState: JOB_STATES.COMPLETED,
+          confirmationNumber,
+          meta: { bookedAt: new Date().toISOString(), dates: preloadedDates },
+        });
+      }
+      throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND });
+    }
+
+    // shouldAbort: DB'ye her poll'da değil, 30s'de bir kontrol et (cancel latency kabul edilebilir)
+    let lastAbortCheckAt = 0;
+    const ABORT_CHECK_INTERVAL_MS = 30_000;
     const res = await slotHunt({
       page: ctx.page,
       baseUrl: ctx.portalConfig.baseUrl,
@@ -45,15 +83,19 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
         pollDelayMaxMs: 3000,
       },
       shouldAbort: async () => {
+        const now = Date.now();
+        if (now - lastAbortCheckAt < ABORT_CHECK_INTERVAL_MS) return false;
+        lastAbortCheckAt = now;
         const j = await repo.findById(ctx.jobId);
         return j?.status === JOB_STATES.CANCELLED;
       },
       applicantData: (ctx.payload.applicant_data ?? {}) as Record<string, unknown>,
+      slotCheckOnly,
+      logger: ctx.logger,
     });
 
     // Security code or blocked (captcha/cloudflare): for slot-check-only we abort and retry; else HITL
     if (res.needsHitl) {
-      const slotCheckOnly = (ctx.payload.config as Record<string, unknown> | undefined)?.slot_check_only === true;
       if (slotCheckOnly) {
         ctx.logger.info({ jobId: ctx.jobId, reason: res.reason }, 'Slot check aborted (security code or blocked); will retry');
         throw new FSMHalt({
@@ -91,7 +133,6 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
 
     if (res.found) {
       ctx.logger.info({ jobId: ctx.jobId, dates: res.dates }, 'Slot found');
-      const slotCheckOnly = (ctx.payload.config as Record<string, unknown> | undefined)?.slot_check_only === true;
 
       if (slotCheckOnly) {
         // Scout job: notify ops and ask CP to create customer jobs; do not book
@@ -105,9 +146,13 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
           payload: ctx.payload,
           logger: ctx.logger,
         });
-        const slotOpenResult = await callSlotOpen(ctx.tenantId, ctx.portalConfig.portalId);
-        ctx.logger.info({ jobId: ctx.jobId, jobsCreated: slotOpenResult?.jobs_created }, 'Slot-open: customer jobs created');
-        throw new FSMHalt({ lastState: JOB_STATES.COMPLETED, meta: { slot_check: true, jobs_created: slotOpenResult?.jobs_created } });
+        // Pass triggered_by from scout job config so CP routes booking jobs correctly:
+        //   'manual'       → SYNC agent (operator watching)
+        //   'watcher_auto' → ASYNC queue (background, default)
+        const triggeredBy = (ctx.payload.config as Record<string, unknown> | undefined)?.triggered_by as 'manual' | 'watcher_auto' | undefined;
+        const slotOpenResult = await callSlotOpen(ctx.tenantId, ctx.portalConfig.portalId, res.dates ?? [], ctx.jobId, triggeredBy ?? 'watcher_auto');
+        ctx.logger.info({ jobId: ctx.jobId, jobsCreated: slotOpenResult?.jobs_created, skipped: slotOpenResult?.skipped }, 'Slot-open: customer jobs created');
+        throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND, meta: { slot_check: true, jobs_created: slotOpenResult?.jobs_created } });
       }
 
       await notifySlotFound({
@@ -151,7 +196,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
       throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND });
     }
 
-    // no slot → FSM will transition to WAITING_SLOT
+    // no slot → complete this job (one job = one slot check); watcher/scheduler creates new job for next check
     const prev = await getSlotStatus(ctx.jobId);
     await setSlotStatus(ctx.jobId, 'closed');
     if (prev === 'open') {
@@ -180,8 +225,12 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
         ctx.logger.warn({ err, jobId: ctx.jobId, reason: res.reason }, 'Evidence screenshot upload failed');
       }
     }
-    ctx.logger.info({ jobId: ctx.jobId, reason: res.reason }, 'No slot found, waiting');
-    // Halt so we do not advance to SLOT_FOUND (only advance when res.found is true and we throw above)
+    // Scout (slot_check_only): one job = one check → job completes; watcher creates new job. Normal agents: WAITING_SLOT + retry same job.
+    if (slotCheckOnly) {
+      ctx.logger.info({ jobId: ctx.jobId, reason: res.reason }, 'No slot found; completing job');
+      throw new FSMHalt({ lastState: JOB_STATES.COMPLETED, slotFound: false });
+    }
+    ctx.logger.info({ jobId: ctx.jobId, reason: res.reason }, 'No slot found, waiting (retry same job)');
     throw new FSMHalt({ lastState: JOB_STATES.WAITING_SLOT });
   },
 };

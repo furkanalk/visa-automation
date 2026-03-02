@@ -17,6 +17,7 @@ import {
   Edit,
   Trash2,
   ArrowRight,
+  StopCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +28,7 @@ interface AgentSwimlanesProps {
   getProfileName?: (profileId: string | null) => string | null;
   onEditAgent: (agent: Agent) => void;
   onToggleStatus: (agent: Agent) => void;
+  onForceStop?: (agent: Agent) => void;
   onDeleteAgent: (id: string) => void;
   onMoveAgent: (agentId: string, newPortals: string[]) => void;
 }
@@ -52,6 +54,7 @@ function AgentCard({
   profileName,
   onEdit,
   onToggle,
+  onForceStop,
   onDelete,
   onMove,
   allPortals,
@@ -61,6 +64,7 @@ function AgentCard({
   profileName?: string | null;
   onEdit: () => void;
   onToggle: () => void;
+  onForceStop?: () => void;
   onDelete: () => void;
   onMove: (newPortals: string[]) => void;
   allPortals: PortalConfig[];
@@ -134,6 +138,15 @@ function AgentCard({
                     </>
                   )}
                 </button>
+                {onForceStop && (agent.status === "ONLINE" || agent.status === "DRAINING") && (
+                  <button
+                    className="w-full px-3 py-2 text-left text-sm hover:bg-amber-50 dark:hover:bg-amber-900/20 flex items-center gap-2 text-amber-600 dark:text-amber-400"
+                    onClick={() => { onForceStop(); setShowMenu(false); }}
+                  >
+                    <StopCircle className="h-3.5 w-3.5" />
+                    Force stop
+                  </button>
+                )}
                 <div className="relative">
                   <button
                     className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-slate-700 flex items-center justify-between gap-2"
@@ -227,6 +240,7 @@ function PortalSwimlane({
   getProfileName,
   onEditAgent,
   onToggleStatus,
+  onForceStop,
   onDeleteAgent,
   onMoveAgent,
   allPortals,
@@ -237,6 +251,7 @@ function PortalSwimlane({
   getProfileName?: (profileId: string | null) => string | null;
   onEditAgent: (agent: Agent) => void;
   onToggleStatus: (agent: Agent) => void;
+  onForceStop?: (agent: Agent) => void;
   onDeleteAgent: (id: string) => void;
   onMoveAgent: (agentId: string, newPortals: string[]) => void;
   allPortals: PortalConfig[];
@@ -281,6 +296,7 @@ function PortalSwimlane({
               profileName={getProfileName?.(agent.profile_id ?? null) ?? "Default"}
               onEdit={() => onEditAgent(agent)}
               onToggle={() => onToggleStatus(agent)}
+              onForceStop={onForceStop ? () => onForceStop(agent) : undefined}
               onDelete={() => onDeleteAgent(agent.id)}
               onMove={(newPortals) => onMoveAgent(agent.id, newPortals)}
               allPortals={allPortals}
@@ -299,6 +315,7 @@ export function AgentSwimlanes({
   getProfileName,
   onEditAgent,
   onToggleStatus,
+  onForceStop,
   onDeleteAgent,
   onMoveAgent,
 }: AgentSwimlanesProps) {
@@ -330,6 +347,7 @@ export function AgentSwimlanes({
           getProfileName={getProfileName}
           onEditAgent={onEditAgent}
           onToggleStatus={onToggleStatus}
+          onForceStop={onForceStop}
           onDeleteAgent={onDeleteAgent}
           onMoveAgent={onMoveAgent}
           allPortals={portals}
@@ -344,6 +362,7 @@ export function AgentSwimlanes({
           getProfileName={getProfileName}
           onEditAgent={onEditAgent}
           onToggleStatus={onToggleStatus}
+          onForceStop={onForceStop}
           onDeleteAgent={onDeleteAgent}
           onMoveAgent={onMoveAgent}
           allPortals={portals}

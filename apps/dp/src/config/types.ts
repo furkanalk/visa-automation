@@ -55,6 +55,8 @@ export interface PortalSlotHunt {
   maxPolls: number;
   pollDelayMinMs: number;
   pollDelayMaxMs: number;
+  /** Max iterations to wait for dateDisabled to become ready before aborting. Default: 20. */
+  maxReadyWaits?: number;
 }
 
 export interface PortalConfig {

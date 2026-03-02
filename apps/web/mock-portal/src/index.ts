@@ -101,6 +101,20 @@ app.get('/api/stats', (req, res) => {
 // AS-Visa Mock Portal Routes
 // ============================================
 
+// TarihGetir: same as real site — returns OPEN dates (dateDisabled real semantics)
+// dateDisabled = list of OPEN days. Empty = no open days = no slots.
+app.post('/AnBir/Macaristan/TarihGetir', (req, res) => {
+  const { openDates } = mockState.getAvailableSlots('as-visa');
+  res.type('json').json(openDates);
+});
+
+// SaatGetir: returns available times for selected date, same format as real site [{value, text}]
+app.post('/AnBir/Macaristan/SaatGetir', (req, res) => {
+  const { times } = mockState.getAvailableSlots('as-visa');
+  const result = times.map((t) => ({ value: t, text: t }));
+  res.type('json').json(result);
+});
+
 // Main form page
 app.get('/as-visa', async (req, res) => {
   const config = mockState.getConfig('as-visa');
@@ -145,27 +159,22 @@ app.get('/as-visa', async (req, res) => {
     `);
   }
 
-  // Get available slots
-  const { dates, times } = mockState.getAvailableSlots('as-visa');
+  // Get available slots (openDates = real AS-VISA semantics: list of open days)
+  const { openDates, times } = mockState.getAvailableSlots('as-visa');
 
   // Get security code
   const securityCode = config.security.code === 'random'
     ? String(Math.floor(100000 + Math.random() * 900000))
     : config.security.code;
 
-  // Convert dates to datepicker format (YYYY-M-D without leading zeros)
-  const formattedDates = dates.map((d) => {
-    const [year, month, day] = d.split('-');
-    return `${year}-${parseInt(month, 10)}-${parseInt(day, 10)}`;
-  });
-
-  // Render page
+  // Render page — pass openDates as blockedDates param (template uses this as dateDisabled JS var)
   const html = renderPage1({
-    availableDates: formattedDates,
+    blockedDates: openDates,
     availableTimes: times,
     showCaptcha: config.captcha.enabled,
     captchaAutoSolve: config.captcha.autoSolveDelayMs > 0,
     captchaAutoSolveDelayMs: config.captcha.autoSolveDelayMs,
+    showSecurityCode: false, // Scout only checks slots; no enteredCode input → no security_code abort
     securityCode,
     skipInfoPopup: true, // Skip for faster testing
     skipBotDetection: true, // Skip for automation

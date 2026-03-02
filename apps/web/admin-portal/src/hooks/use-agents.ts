@@ -37,6 +37,17 @@ export function useUpdateAgent() {
   });
 }
 
+export function useForceStopAgent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => cpApi.forceStopAgent(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
+      queryClient.invalidateQueries({ queryKey: ["job-statuses"] });
+    },
+  });
+}
+
 export function useDeleteAgent() {
   const queryClient = useQueryClient();
   return useMutation({

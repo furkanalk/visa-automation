@@ -1,6 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { getDb, WatcherRepository, PortalConfigRepository, CustomerRepository, ProfileRepository, AgentRepository } from '@visa-automation/db';
-import type { ApplicantData } from '@visa-automation/shared';
 import { getLivenessForTenant } from '../services/portal-liveness.js';
 import { JobService } from '../services/job.service.js';
 import { capturePortalSnapshot } from '../services/snapshot-capture.js';
@@ -30,7 +29,8 @@ export interface WatcherRunResult {
 export async function runWatcherForTenant(
   logger: FastifyBaseLogger,
   tenantId: string,
-  portalIds: string[]
+  portalIds: string[],
+  triggeredBy: 'manual' | 'watcher_auto' = 'watcher_auto',
 ): Promise<WatcherRunResult> {
   const db = getDb();
   const watcherRepo = new WatcherRepository(db);
@@ -74,19 +74,13 @@ export async function runWatcherForTenant(
     }
 
     try {
-      const first = customers[0];
-      const prefs = (first.preferences ?? {}) as Record<string, unknown>;
-      const applicant: ApplicantData = {
-        ...prefs,
-        name: (typeof prefs.name === 'string' ? prefs.name : null) || first.display_name,
-      };
       const { job_id } = await jobService.createJob({
         tenant_id: tenantId,
         portal_id: portalId,
         visa_type: 'SCHENGEN',
-        priority: first.priority,
-        applicant,
-        config: { slot_check_only: slotCheckOnly },
+        priority: 5,
+        applicant: {} as import('@visa-automation/shared').ApplicantData,
+        config: { slot_check_only: slotCheckOnly, triggered_by: triggeredBy },
       });
       createdJobIds.push(job_id);
       jobsCreated++;
