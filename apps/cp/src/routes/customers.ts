@@ -587,13 +587,14 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
     let result: { job_id: string };
     try {
       const jobService = new JobService();
+      const jobConfig = { slot_check_only: true, triggered_by: 'manual' as const, ...(request.actorName ? { triggered_by_name: request.actorName } : {}) };
       result = await jobService.createJob({
         tenant_id: request.tenantId,
         portal_id: customer.portal_id,
         visa_type: 'SCHENGEN',
         priority: customer.priority,
         applicant,
-        config: { slot_check_only: true, triggered_by: 'manual' },
+        config: jobConfig,
       }, { skipQueue: true });
     } catch (err) {
       request.log.error({ err, customerId: customer.id }, 'Failed to create job for customer');
@@ -607,13 +608,14 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
     }
 
     // Push directly to the SYNC agent's dedicated queue (visa-sync__<agentId>)
+    const jobConfig2 = { slot_check_only: true, triggered_by: 'manual' as const, ...(request.actorName ? { triggered_by_name: request.actorName } : {}) };
     await enqueueSyncJob(idleAgent.id, {
       job_id: result.job_id,
       tenant_id: request.tenantId,
       visa_type: 'SCHENGEN',
       priority: customer.priority,
       applicant_data: applicant,
-      config: { slot_check_only: true, triggered_by: 'manual' },
+      config: jobConfig2,
       portal_id: customer.portal_id,
       attempt_number: 1,
     });

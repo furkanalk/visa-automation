@@ -1,6 +1,7 @@
 import type { FastifyPluginCallback } from 'fastify';
 import { randomBytes } from 'crypto';
-import { getDb, StaffRepository, AuditRepository } from '@visa-automation/db';
+import bcrypt from 'bcryptjs';
+import { getDb, StaffRepository, AuditRepository, SystemSettingsRepository } from '@visa-automation/db';
 import { sendInviteEmail } from './auth.js';
 import type { StaffStatus, StaffRole } from '@visa-automation/db';
 
@@ -33,6 +34,10 @@ interface UpdateStaffBody {
   permissions?: string[];
   settings?: Record<string, unknown>;
   avatar_url?: string;
+}
+
+interface SetPasswordBody {
+  password: string;
 }
 
 interface ActivityLogQuery {
@@ -198,14 +203,20 @@ export const staffRoutes: FastifyPluginCallback = (app, _opts, done) => {
       changes: { after: { email, name, role } },
     });
 
-    const emailSent = await sendInviteEmail(app, request.tenantId, email, name, inviteToken);
+    const emailSent = await sendInviteEmail(app, request.tenantId, email, name, inviteToken, role);
     if (!emailSent) {
       request.log.warn({ staffId: staff.id, email }, 'Staff created but invite email could not be sent');
     }
 
+    const baseUrl = await new SystemSettingsRepository(getDb()).getString(
+      null, 'general', 'admin_portal_url',
+      process.env.ADMIN_PORTAL_URL ?? 'http://localhost:3002'
+    );
+    const inviteUrl = `${baseUrl.replace(/\/$/, '')}/register?token=${inviteToken}`;
+
     return {
       success: true,
-      data: staff,
+      data: { ...staff, email_sent: emailSent, invite_url: emailSent ? undefined : inviteUrl },
     };
   });
 
@@ -480,6 +491,109 @@ export const staffRoutes: FastifyPluginCallback = (app, _opts, done) => {
     return {
       success: true,
       data: staff,
+    };
+  });
+
+  /**
+   * Set password for a staff member (super_admin only)
+   * POST /cp/staff/:id/set-password
+   */
+  app.post<{ Params: StaffParams; Body: SetPasswordBody }>('/staff/:id/set-password', async (request, reply) => {
+    const roles = (request as any).roles ?? [];
+    if (!roles.includes('super_admin')) {
+      return reply.status(403).send({
+        success: false,
+        error: { code: 'NO_PERMISSION', message: 'Only super_admin can set staff passwords.' },
+      });
+    }
+
+    const existing = await staffRepo.findById(request.tenantId, request.params.id);
+    if (!existing) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'STAFF_NOT_FOUND', message: 'Staff member not found' },
+      });
+    }
+
+    const { password } = request.body;
+    if (!password || password.length < 8) {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'INVALID_PASSWORD', message: 'Password must be at least 8 characters.' },
+      });
+    }
+
+    const password_hash = await bcrypt.hash(password, 10);
+    await staffRepo.update(request.tenantId, request.params.id, { password_hash } as any);
+
+    await auditRepo.create({
+      tenant_id: request.tenantId,
+      actor_id: request.actorId,
+      actor_type: request.actorType ?? 'user',
+      action: 'staff.set_password',
+      resource_type: 'staff_member',
+      resource_id: request.params.id,
+      changes: { after: { note: 'Password changed by super_admin' } },
+    });
+
+    return {
+      success: true,
+      data: { message: 'Password updated successfully.' },
+    };
+  });
+
+  /**
+   * Resend invite email to a pending staff member
+   * POST /cp/staff/:id/resend-invite
+   */
+  app.post<{ Params: StaffParams }>('/staff/:id/resend-invite', async (request, reply) => {
+    const roles = (request as any).roles ?? [];
+    if (!roles.includes('super_admin') && !roles.includes('admin')) {
+      return reply.status(403).send({
+        success: false,
+        error: { code: 'NO_PERMISSION', message: 'Only admin or super_admin can resend invites.' },
+      });
+    }
+
+    const existing = await staffRepo.findById(request.tenantId, request.params.id);
+    if (!existing) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'STAFF_NOT_FOUND', message: 'Staff member not found' },
+      });
+    }
+
+    if (existing.status !== 'pending') {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'NOT_PENDING', message: 'Staff member is not in pending state.' },
+      });
+    }
+
+    // Re-generate invite token
+    const inviteToken = randomBytes(32).toString('hex');
+    const inviteTokenExpiresAt = new Date();
+    inviteTokenExpiresAt.setDate(inviteTokenExpiresAt.getDate() + 7);
+
+    await staffRepo.update(request.tenantId, existing.id, {
+      invite_token: inviteToken,
+      invite_token_expires_at: inviteTokenExpiresAt,
+    } as any);
+
+    const baseUrl = await new SystemSettingsRepository(getDb()).getString(
+      null, 'general', 'admin_portal_url',
+      process.env.ADMIN_PORTAL_URL ?? 'http://localhost:3002'
+    );
+    const inviteUrl = `${baseUrl.replace(/\/$/, '')}/register?token=${inviteToken}`;
+
+    const emailSent = await sendInviteEmail(app, request.tenantId, existing.email, existing.name, inviteToken, existing.role);
+    if (!emailSent) {
+      request.log.warn({ staffId: existing.id, email: existing.email }, 'Resend invite: email could not be sent');
+    }
+
+    return {
+      success: true,
+      data: { email_sent: emailSent, invite_url: emailSent ? undefined : inviteUrl },
     };
   });
 

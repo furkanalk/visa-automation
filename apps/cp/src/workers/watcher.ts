@@ -31,6 +31,7 @@ export async function runWatcherForTenant(
   tenantId: string,
   portalIds: string[],
   triggeredBy: 'manual' | 'watcher_auto' = 'watcher_auto',
+  triggeredByName?: string,
 ): Promise<WatcherRunResult> {
   const db = getDb();
   const watcherRepo = new WatcherRepository(db);
@@ -74,13 +75,18 @@ export async function runWatcherForTenant(
     }
 
     try {
+      const jobConfig = {
+        slot_check_only: slotCheckOnly,
+        triggered_by: triggeredBy,
+        ...(triggeredByName ? { triggered_by_name: triggeredByName } : {}),
+      };
       const { job_id } = await jobService.createJob({
         tenant_id: tenantId,
         portal_id: portalId,
         visa_type: 'SCHENGEN',
         priority: 5,
         applicant: {} as import('@visa-automation/shared').ApplicantData,
-        config: { slot_check_only: slotCheckOnly, triggered_by: triggeredBy },
+        config: jobConfig,
       });
       createdJobIds.push(job_id);
       jobsCreated++;

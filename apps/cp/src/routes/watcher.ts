@@ -331,7 +331,7 @@ export const watcherRoutes: FastifyPluginAsync = async (app) => {
    * Creates and enqueues one job per active customer for that portal. Requires X-Internal-Secret.
    * POST /cp/watcher/slot-open
    */
-  app.post<{ Body: { tenant_id: string; portal_id: string; open_dates?: string[]; scout_job_id?: string; triggered_by?: 'manual' | 'watcher_auto' } }>('/slot-open', async (request, reply) => {
+  app.post<{ Body: { tenant_id: string; portal_id: string; open_dates?: string[]; scout_job_id?: string; triggered_by?: 'manual' | 'watcher_auto'; triggered_by_name?: string } }>('/slot-open', async (request, reply) => {
     const secret = request.headers['x-internal-secret'] as string | undefined;
     const expected = process.env.CP_INTERNAL_SECRET;
     if (!expected || secret !== expected) {
@@ -340,7 +340,7 @@ export const watcherRoutes: FastifyPluginAsync = async (app) => {
         error: { code: 'UNAUTHORIZED', message: 'Invalid or missing X-Internal-Secret' },
       });
     }
-    const { tenant_id, portal_id, open_dates = [], scout_job_id, triggered_by = 'watcher_auto' } = request.body ?? {};
+    const { tenant_id, portal_id, open_dates = [], scout_job_id, triggered_by = 'watcher_auto', triggered_by_name } = request.body ?? {};
     if (!tenant_id || !portal_id) {
       return reply.status(400).send({
         success: false,
@@ -412,7 +412,11 @@ export const watcherRoutes: FastifyPluginAsync = async (app) => {
           name: (typeof prefs.name === 'string' ? prefs.name : null) || customer.display_name,
           open_dates: filteredDates.length > 0 ? filteredDates : open_dates,
         };
-        const jobConfig = { slot_check_only: false, triggered_by };
+        const jobConfig = {
+          slot_check_only: false,
+          triggered_by,
+          ...(triggered_by_name ? { triggered_by_name } : {}),
+        };
 
         if (routeToSync && syncAgent) {
           // Manual trigger → SYNC agent dedicated queue
@@ -655,6 +659,11 @@ export const watcherRoutes: FastifyPluginAsync = async (app) => {
     };
 
     // Create the booking job (no queue — pushed directly to agent's dedicated sync queue below)
+    const grabJobConfig = {
+      slot_check_only: false,
+      triggered_by: 'manual' as const,
+      ...(request.actorName ? { triggered_by_name: request.actorName } : {}),
+    };
     let jobResult: { job_id: string };
     try {
       jobResult = await jobService.createJob({
@@ -663,7 +672,7 @@ export const watcherRoutes: FastifyPluginAsync = async (app) => {
         visa_type: 'SCHENGEN',
         priority: customer.priority,
         applicant,
-        config: { slot_check_only: false, triggered_by: 'manual' },
+        config: grabJobConfig,
       }, { skipQueue: true });
     } catch (err) {
       request.log.error({ err, customer_id }, 'grab-booking: failed to create job');
@@ -681,7 +690,7 @@ export const watcherRoutes: FastifyPluginAsync = async (app) => {
       visa_type: 'SCHENGEN',
       priority: customer.priority,
       applicant_data: applicant,
-      config: { slot_check_only: false, triggered_by: 'manual' },
+      config: grabJobConfig,
       portal_id: customer.portal_id,
       attempt_number: 1,
     });
@@ -773,6 +782,7 @@ export const watcherRoutes: FastifyPluginAsync = async (app) => {
       request.tenantId,
       portalsToCheck,
       'manual',
+      request.actorName,
     );
     const { jobsCreated, createdJobIds, upPortalIds, downPortalIds, upPortalsWithNoCustomers } = result;
     request.log.info(
