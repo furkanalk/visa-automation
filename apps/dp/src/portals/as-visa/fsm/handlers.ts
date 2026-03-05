@@ -150,7 +150,8 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
         //   'manual'       → SYNC agent (operator watching)
         //   'watcher_auto' → ASYNC queue (background, default)
         const triggeredBy = (ctx.payload.config as Record<string, unknown> | undefined)?.triggered_by as 'manual' | 'watcher_auto' | undefined;
-        const slotOpenResult = await callSlotOpen(ctx.tenantId, ctx.portalConfig.portalId, res.dates ?? [], ctx.jobId, triggeredBy ?? 'watcher_auto');
+        const triggeredByName = (ctx.payload.config as Record<string, unknown> | undefined)?.triggered_by_name as string | undefined;
+        const slotOpenResult = await callSlotOpen(ctx.tenantId, ctx.portalConfig.portalId, res.dates ?? [], ctx.jobId, triggeredBy ?? 'watcher_auto', triggeredByName);
         ctx.logger.info({ jobId: ctx.jobId, jobsCreated: slotOpenResult?.jobs_created, skipped: slotOpenResult?.skipped }, 'Slot-open: customer jobs created');
         throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND, meta: { slot_check: true, jobs_created: slotOpenResult?.jobs_created } });
       }

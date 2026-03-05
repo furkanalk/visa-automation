@@ -52,6 +52,8 @@ export interface JobConfig {
    *   'watcher_auto' source → booking job goes to ASYNC queue (background)
    */
   triggered_by?: 'manual' | 'watcher_auto';
+  /** Display name of the staff member who triggered this job (only set for 'manual'). */
+  triggered_by_name?: string;
   [key: string]: unknown;
 }
 

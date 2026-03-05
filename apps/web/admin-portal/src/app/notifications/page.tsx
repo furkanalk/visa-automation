@@ -48,6 +48,7 @@ export default function NotificationsPage() {
   const [webhookEnabled, setWebhookEnabled] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState("");
   const [webhookSecret, setWebhookSecret] = useState("");
+  const [testEmailTo, setTestEmailTo] = useState("visorhq.notify@outlook.com");
 
   // Fetch current settings
   const { data: settings, isLoading, refetch } = useQuery({
@@ -84,11 +85,11 @@ export default function NotificationsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notify-settings"] });
       setSaveMessage({ type: "success", text: "Saved." });
-      setTimeout(() => setSaveMessage(null), 3000);
+      setTimeout(() => setSaveMessage(null), 6000);
     },
     onError: (error: Error) => {
       setSaveMessage({ type: "error", text: error.message });
-      setTimeout(() => setSaveMessage(null), 5000);
+      setTimeout(() => setSaveMessage(null), 10000);
     },
   });
 
@@ -97,7 +98,7 @@ export default function NotificationsPage() {
     mutationFn: () =>
       cpApi.testTelegram(
         undefined,
-        `🔔 Visa Automation – Test\n\nThis is a test from the Admin Portal.\nSent at: ${new Date().toISOString()}`
+        `🔔 Vizeself – Test\n\nThis is a test from the Admin Portal.\nSent at: ${new Date().toISOString()}`
       ),
     onSuccess: (data) => {
       const sent = (data?.details as { sent?: number })?.sent;
@@ -106,11 +107,11 @@ export default function NotificationsPage() {
           ? `Test message sent to ${sent} chat(s) (Ops, Bookings, Watcher).`
           : "Test message sent.";
       setSaveMessage({ type: "success", text });
-      setTimeout(() => setSaveMessage(null), 3000);
+      setTimeout(() => setSaveMessage(null), 6000);
     },
     onError: (error: Error) => {
       setSaveMessage({ type: "error", text: `Telegram test failed: ${error.message}` });
-      setTimeout(() => setSaveMessage(null), 5000);
+      setTimeout(() => setSaveMessage(null), 10000);
     },
   });
 
@@ -123,15 +124,15 @@ export default function NotificationsPage() {
         smtp_pass: isSuperAdmin && smtpPass ? smtpPass : undefined,
         smtp_from: smtpFrom || undefined,
         smtp_secure: smtpSecure,
-        to: settings?.fallback_email || settings?.email_override || smtpFrom || undefined,
+        to: testEmailTo || undefined,
       }),
     onSuccess: () => {
-      setSaveMessage({ type: "success", text: "Saved." });
-      setTimeout(() => setSaveMessage(null), 3000);
+      setSaveMessage({ type: "success", text: "Test email sent." });
+      setTimeout(() => setSaveMessage(null), 6000);
     },
     onError: (error: Error) => {
       setSaveMessage({ type: "error", text: `Email test failed: ${error.message}` });
-      setTimeout(() => setSaveMessage(null), 5000);
+      setTimeout(() => setSaveMessage(null), 10000);
     },
   });
 
@@ -402,6 +403,17 @@ export default function NotificationsPage() {
               />
               <span className="text-sm text-gray-700 dark:text-gray-300">Use TLS/SSL</span>
             </label>
+            <div>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Test Recipient</label>
+              <Input
+                placeholder="test@example.com"
+                value={testEmailTo}
+                onChange={(e) => setTestEmailTo(e.target.value)}
+                className="mt-1"
+                disabled={!emailEnabled}
+              />
+              <p className="text-xs text-gray-500 mt-1">Address used when clicking "Test Email".</p>
+            </div>
             <Button
               variant="outline"
               onClick={() => testEmailMutation.mutate()}

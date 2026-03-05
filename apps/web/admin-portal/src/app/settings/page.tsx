@@ -8,15 +8,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { cpApi } from "@/lib/api";
-import { Save, RefreshCw, Server, Building, Loader2, Globe, FlaskConical, ExternalLink, Briefcase, ScrollText } from "lucide-react";
+import { Save, RefreshCw, Building, Loader2, Globe, FlaskConical, ExternalLink, Briefcase, ScrollText, Settings, ChevronDown, ChevronRight, AlertCircle, RotateCcw, Sliders } from "lucide-react";
 import { SaveBanner } from "@/components/ui/save-banner";
 import { useAuthStore } from "@/stores/auth";
+import { settingsApi, type SystemSetting } from "@/lib/api";
 
-const DEFAULT_MOCK_URLS: Record<string, string> = {
-  "as-visa": "http://localhost:3004/as-visa",
-};
+const DEFAULT_MOCK_URLS: Record<string, string> = {};
 
-type SettingsTab = "general" | "mock" | "queue" | "audit";
+type SettingsTab = "general" | "mock" | "queue" | "audit" | "config";
 
 export default function SettingsPage() {
   const searchParams = useSearchParams();
@@ -24,7 +23,7 @@ export default function SettingsPage() {
   const { user } = useAuthStore();
   const tabParam = searchParams.get("tab");
   const [activeTab, setActiveTab] = useState<SettingsTab>(
-    tabParam === "mock" ? "mock" : tabParam === "queue" ? "queue" : tabParam === "audit" ? "audit" : "general"
+    tabParam === "mock" ? "mock" : tabParam === "queue" ? "queue" : tabParam === "audit" ? "audit" : tabParam === "config" ? "config" : "general"
   );
   const [saveMessage, setSaveMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
@@ -32,11 +31,13 @@ export default function SettingsPage() {
     if (tabParam === "mock") setActiveTab("mock");
     else if (tabParam === "queue") setActiveTab("queue");
     else if (tabParam === "audit") setActiveTab("audit");
+    else if (tabParam === "config") setActiveTab("config");
   }, [tabParam]);
 
   // API settings (stored in localStorage)
   const [cpApiUrl, setCpApiUrl] = useState("");
   const [publicApiUrl, setPublicApiUrl] = useState("");
+  const [adminPortalUrl, setAdminPortalUrl] = useState("");
 
   // Load settings from localStorage
   useEffect(() => {
@@ -44,30 +45,135 @@ export default function SettingsPage() {
     setPublicApiUrl(localStorage.getItem("public_api_url") || process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000");
   }, []);
 
-  // System status
-  const { data: systemStatus, isLoading: statusLoading, refetch: refetchStatus } = useQuery({
-    queryKey: ["system-status"],
-    queryFn: () => cpApi.getSystemStatus(),
-    retry: false,
-  });
-
-  // Health check
-  const { data: health, isLoading: healthLoading, refetch: refetchHealth } = useQuery({
-    queryKey: ["health"],
-    queryFn: () => cpApi.getHealth(),
-    retry: false,
-  });
+  // Load admin_portal_url from DB
+  useEffect(() => {
+    cpApi.settings.getCategory("general")
+      .then((cat) => {
+        const val = cat?.admin_portal_url;
+        if (val && typeof val === "string") setAdminPortalUrl(val);
+        else setAdminPortalUrl(process.env.NEXT_PUBLIC_CP_API_URL?.replace(":3001", ":3000") ?? "http://localhost:3000");
+      })
+      .catch(() => setAdminPortalUrl("http://localhost:3000"));
+  }, []);
 
   const handleSaveApiSettings = () => {
-    localStorage.setItem("cp_api_url", cpApiUrl);
-    localStorage.setItem("public_api_url", publicApiUrl);
+    // Only Admin Portal URL is user-editable here (stored in DB, read by CP for invite emails).
+    // CP API URL and Public API URL come from build-time env vars — read-only.
+    if (adminPortalUrl.trim()) {
+      cpApi.settings.setValue("general", "admin_portal_url", adminPortalUrl.trim())
+        .catch(() => {});
+    }
     setSaveMessage({ type: "success", text: "Saved." });
     setTimeout(() => setSaveMessage(null), 5000);
   };
 
-  const handleRefreshStatus = () => {
-    refetchStatus();
-    refetchHealth();
+  // ── Config tab state ──────────────────────────────────────────────────────
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
+  const [editedValues, setEditedValues] = useState<Map<string, { category: string; key: string; value: unknown; originalValue: unknown }>>(new Map());
+
+  const { data: allSettings, isLoading: configLoading, isError: configError, error: configErr, refetch: refetchConfig } = useQuery({
+    queryKey: ["system-settings"],
+    queryFn: () => settingsApi.getList(),
+    enabled: activeTab === "config",
+  });
+
+  const configSaveMutation = useMutation({
+    mutationFn: async (updates: Array<{ category: string; key: string; value: unknown }>) => {
+      await settingsApi.bulkUpdate(updates);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["system-settings"] });
+      setEditedValues(new Map());
+      setSaveMessage({ type: "success", text: "Settings saved successfully." });
+      setTimeout(() => setSaveMessage(null), 5000);
+    },
+    onError: (err) => {
+      setSaveMessage({ type: "error", text: err instanceof Error ? err.message : "Failed to save." });
+      setTimeout(() => setSaveMessage(null), 5000);
+    },
+  });
+
+  const groupedSettings = (() => {
+    if (!allSettings?.items) return new Map<string, SystemSetting[]>();
+    const seen = new Set<string>();
+    const grouped = new Map<string, SystemSetting[]>();
+    for (const setting of allSettings.items) {
+      const k = `${setting.category}.${setting.key}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (!grouped.has(setting.category)) grouped.set(setting.category, []);
+      grouped.get(setting.category)!.push(setting);
+    }
+    return grouped;
+  })();
+
+  const getEditKey = (cat: string, key: string) => `${cat}.${key}`;
+
+  const handleConfigValueChange = (setting: SystemSetting, newValue: string) => {
+    const editKey = getEditKey(setting.category, setting.key);
+    let parsed: unknown = newValue;
+    if (setting.value_type === "number") parsed = parseFloat(newValue) || 0;
+    else if (setting.value_type === "boolean") parsed = newValue === "true";
+    else if (setting.value_type === "json" || setting.value_type === "array") {
+      try { parsed = JSON.parse(newValue); } catch { parsed = newValue; }
+    }
+    if (JSON.stringify(parsed) === JSON.stringify(setting.value)) {
+      const next = new Map(editedValues); next.delete(editKey); setEditedValues(next);
+    } else {
+      setEditedValues(new Map(editedValues).set(editKey, { category: setting.category, key: setting.key, value: parsed, originalValue: setting.value }));
+    }
+  };
+
+  const getConfigDisplayValue = (setting: SystemSetting): string => {
+    const ed = editedValues.get(getEditKey(setting.category, setting.key));
+    const val = ed ? ed.value : setting.value;
+    if (setting.value_type === "json" || setting.value_type === "array") return JSON.stringify(val, null, 2);
+    return String(val);
+  };
+
+  const getDisplayType = (setting: SystemSetting): string => {
+    if (setting.value_type === "boolean") return "boolean";
+    if (setting.value_type === "json") return "json";
+    if (setting.value_type === "array") return "array";
+    if (setting.value_type === "string") return "string";
+    if (setting.value_type === "number") {
+      const val = editedValues.get(getEditKey(setting.category, setting.key))?.value ?? setting.value;
+      const n = typeof val === "number" ? val : Number(val);
+      return Number.isInteger(n) ? "integer" : "float";
+    }
+    return setting.value_type;
+  };
+
+  const getUnit = (setting: SystemSetting): string | null => {
+    const k = setting.key.toLowerCase();
+    const d = (setting.description ?? "").toLowerCase();
+    if (k.endsWith("_ms") || d.includes("millisecond")) return "ms";
+    if (k.endsWith("_seconds") || k.includes("ttl_seconds") || d.includes("second")) return "s";
+    if (k.includes("_minutes") || d.includes("minute")) return "min";
+    if (k.includes("_hours") || d.includes("hour")) return "h";
+    if (k.includes("viewport_width") || k.includes("viewport_height")) return "px";
+    if (k.includes("per_minute") || k.includes("actions_per_minute")) return "/min";
+    return null;
+  };
+
+  const getCategoryDescription = (category: string): string => {
+    const map: Record<string, string> = {
+      system: "Agent-pool (async/sync counts, max per worker), heartbeat, config refresh",
+      job: "Job processing and retry settings",
+      queue: "Queue management and retention",
+      portal: "Portal automation timeouts and pacing",
+      slot_hunt: "Slot hunting behavior",
+      hitl: "Human-in-the-loop settings",
+      notify: "Notification deduplication",
+      browser: "Browser viewport settings",
+      pagination: "API pagination defaults",
+      watcher: "Site drift watcher",
+      audit: "Audit log settings",
+      features: "Feature flags",
+      fsm: "State machine settings",
+      health: "Health check parameters",
+    };
+    return map[category] ?? "Configuration settings";
   };
 
   // Mock tab: settings and portals
@@ -123,13 +229,13 @@ export default function SettingsPage() {
   const mockSaveMutation = useMutation({    mutationFn: async () => {
       const updates = [
         { category: "mock", key: "enabled", value: mockEnabled },
-        { category: "mock", key: "default_base_url", value: mockDefaultBaseUrl.trim() || "" },
+        // default_base_url is read-only (set via MOCK_PORTAL_BASE_URL env var)
         { category: "mock", key: "portal_urls", value: portalUrls },
       ];
       await cpApi.settings.bulkUpdate(updates);
     },
     onSuccess: () => {
-      const nextMock = { enabled: mockEnabled, default_base_url: mockDefaultBaseUrl.trim() || undefined, portal_urls: portalUrls };
+      const nextMock = { enabled: mockEnabled, default_base_url: mockDefaultBaseUrl || undefined, portal_urls: portalUrls };
       queryClient.setQueryData(["settings", "mock"], nextMock);
       queryClient.invalidateQueries({ queryKey: ["settings", "mock"] });
       setSaveMessage({ type: "success", text: "Mock settings saved." });
@@ -220,10 +326,6 @@ export default function SettingsPage() {
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Settings</h1>
           <p className="text-gray-500 dark:text-gray-400">System configuration</p>
         </div>
-        <Button variant="outline" onClick={handleRefreshStatus}>
-          <RefreshCw className="h-4 w-4 mr-1" />
-          Refresh Status
-        </Button>
       </div>
 
       {/* Tabs */}
@@ -275,6 +377,18 @@ export default function SettingsPage() {
           <ScrollText className="h-4 w-4" />
           Audit
         </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("config")}
+          className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors flex items-center gap-1.5 ${
+            activeTab === "config"
+              ? "bg-white dark:bg-slate-800 text-gray-900 dark:text-white border border-b-0 border-gray-200 dark:border-slate-700"
+              : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+          }`}
+        >
+          <Sliders className="h-4 w-4" />
+          Config
+        </button>
       </div>
 
       <SaveBanner message={saveMessage} onDismiss={() => setSaveMessage(null)} />
@@ -306,19 +420,20 @@ export default function SettingsPage() {
               </p>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Default base URL</label>
-                <p className="text-xs text-muted-foreground mb-2">
-                  When mock is on, portals without a per-portal URL use this + /portal_id (e.g. http://mock-portal:3004 → as-visa uses http://mock-portal:3004/as-visa). Used by watcher liveness and slot-check.
-                </p>
+                {/* <p className="text-xs text-muted-foreground mb-2">
+                  Read-only — set via <code>MOCK_PORTAL_BASE_URL</code> env var in DP container (requires restart).
+                  Workers get <code>base + "/" + portal_id</code> automatically: adding a new portal needs no env change.
+                </p> */}
                 <Input
                   value={mockDefaultBaseUrl}
-                  onChange={(e) => setMockDefaultBaseUrl(e.target.value)}
+                  disabled
                   placeholder="http://mock-portal:3004"
-                  className="max-w-md mb-4"
+                  className="max-w-md mb-4 font-mono text-xs bg-gray-50 dark:bg-slate-800"
                 />
               </div>
               <div>
                 <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Mock portal URLs (overrides)</h4>
-                <p className="text-xs text-muted-foreground mb-3">Override per portal when mock mode is on. Leave empty to use Default base URL + /portal_id, or real URL if no default.</p>
+                <p className="text-xs text-muted-foreground mb-3">Optional per-portal URL override. Leave empty to use Default base URL + /portal_id automatically.</p>
                 {mockLoading ? (
                   <div className="flex items-center gap-2 text-sm text-gray-500">
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -543,23 +658,35 @@ export default function SettingsPage() {
               <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Control Plane API URL</label>
               <Input
                 value={cpApiUrl}
-                onChange={(e) => setCpApiUrl(e.target.value)}
-                placeholder="http://localhost:3001"
-                className="mt-1"
+                disabled
+                className="mt-1 font-mono text-xs bg-gray-50 dark:bg-slate-800"
               />
+              {/* <p className="text-xs text-gray-400 mt-1">Set via <code>NEXT_PUBLIC_CP_API_URL</code> env var (build-time).</p> */}
             </div>
             <div>
               <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Public API URL</label>
               <Input
                 value={publicApiUrl}
-                onChange={(e) => setPublicApiUrl(e.target.value)}
+                disabled
+                className="mt-1 font-mono text-xs bg-gray-50 dark:bg-slate-800"
+              />
+              {/* <p className="text-xs text-gray-400 mt-1">Set via <code>NEXT_PUBLIC_API_URL</code> env var (build-time).</p> */}
+            </div>
+            <div>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Admin Portal URL</label>
+              <Input
+                value={adminPortalUrl}
+                onChange={(e) => setAdminPortalUrl(e.target.value)}
                 placeholder="http://localhost:3000"
                 className="mt-1"
               />
+              <p className="text-xs text-gray-500 mt-1">
+                Used in staff invite emails. Must be reachable by the email recipient (e.g. <code>https://admin.vizeself.com</code>).
+              </p>
             </div>
             <Button onClick={handleSaveApiSettings}>
               <Save className="h-4 w-4 mr-1" />
-              Save Changes
+              Save
             </Button>
           </CardContent>
         </Card>
@@ -593,124 +720,151 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
-        {/* System Status */}
-        <Card className="md:col-span-2">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-gray-900 dark:text-white">
-              <Server className="h-5 w-5" />
-              System Status
-            </CardTitle>
-            <CardDescription>Current system health and statistics</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {statusLoading || healthLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
-              </div>
-            ) : (
-              <div className="grid gap-4 md:grid-cols-4">
-                <div className="p-4 rounded-lg bg-gray-50 dark:bg-slate-900">
-                  <p className="text-sm text-gray-500 dark:text-gray-400">Version</p>
-                  <p className="text-lg font-semibold text-gray-900 dark:text-white">
-                    {systemStatus?.version || "Unknown"}
-                  </p>
-                </div>
-                <div className="p-4 rounded-lg bg-gray-50 dark:bg-slate-900">
-                  <p className="text-sm text-gray-500 dark:text-gray-400">Uptime</p>
-                  <p className="text-lg font-semibold text-gray-900 dark:text-white">
-                    {systemStatus?.uptime_seconds
-                      ? `${Math.floor(systemStatus.uptime_seconds / 3600)}h ${Math.floor(
-                          (systemStatus.uptime_seconds % 3600) / 60
-                        )}m`
-                      : "Unknown"}
-                  </p>
-                </div>
-                <div className="p-4 rounded-lg bg-gray-50 dark:bg-slate-900">
-                  <p className="text-sm text-gray-500 dark:text-gray-400">Health</p>
-                  <Badge
-                    variant={
-                      health?.status === "healthy"
-                        ? "success"
-                        : health?.status === "degraded"
-                        ? "warning"
-                        : "destructive"
-                    }
-                    className="mt-1"
-                  >
-                    {health?.status || "Unknown"}
-                  </Badge>
-                </div>
-                <div className="p-4 rounded-lg bg-gray-50 dark:bg-slate-900">
-                  <p className="text-sm text-gray-500 dark:text-gray-400">Agents</p>
-                  <p className="text-lg font-semibold text-gray-900 dark:text-white">
-                    {systemStatus?.agent_stats?.online || 0} / {systemStatus?.agent_stats?.total || 0}
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Health Checks */}
-            {health?.checks && Object.keys(health.checks).length > 0 && (
-              <div className="mt-6">
-                <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Health Checks</h4>
-                <div className="space-y-2">
-                  {Object.entries(health.checks).map(([name, check]) => (
-                    <div
-                      key={name}
-                      className="flex items-center justify-between p-3 rounded-lg bg-gray-50 dark:bg-slate-900"
-                    >
-                      <span className="text-sm font-medium text-gray-900 dark:text-white">{name}</span>
-                      <div className="flex items-center gap-2">
-                        {check.latency_ms !== undefined && (
-                          <span className="text-xs text-gray-500">{check.latency_ms}ms</span>
-                        )}
-                        <Badge
-                          variant={
-                            check.status === "healthy"
-                              ? "success"
-                              : check.status === "degraded"
-                              ? "warning"
-                              : "destructive"
-                          }
-                        >
-                          {check.status}
-                        </Badge>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Job Stats */}
-            {systemStatus?.job_stats && (
-              <div className="mt-6">
-                <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Job Statistics</h4>
-                <div className="grid gap-4 md:grid-cols-3">
-                  <div className="p-4 rounded-lg bg-gray-50 dark:bg-slate-900">
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Total Jobs</p>
-                    <p className="text-2xl font-semibold text-gray-900 dark:text-white">
-                      {systemStatus.job_stats.total}
-                    </p>
-                  </div>
-                  <div className="p-4 rounded-lg bg-gray-50 dark:bg-slate-900">
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Active Jobs</p>
-                    <p className="text-2xl font-semibold text-blue-600">
-                      {systemStatus.job_stats.active}
-                    </p>
-                  </div>
-                  <div className="p-4 rounded-lg bg-gray-50 dark:bg-slate-900">
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Completed Jobs</p>
-                    <p className="text-2xl font-semibold text-green-600">
-                      {systemStatus.job_stats.completed}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
       </div>
+      )}
+
+      {activeTab === "config" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              Runtime-configurable settings stored in DB. Changes take effect without restart (CP polls for updates).
+            </p>
+            <div className="flex items-center gap-2">
+              {editedValues.size > 0 && (
+                <Badge variant="outline" className="bg-yellow-50 dark:bg-yellow-900/20">
+                  {editedValues.size} unsaved change{editedValues.size !== 1 ? "s" : ""}
+                </Badge>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => refetchConfig()}
+                disabled={configLoading}
+              >
+                <RefreshCw className="h-4 w-4 mr-1" />
+                Refresh
+              </Button>
+              <Button
+                onClick={() => configSaveMutation.mutate(Array.from(editedValues.values()).map((v) => ({ category: v.category, key: v.key, value: v.value })))}
+                disabled={editedValues.size === 0 || configSaveMutation.isPending}
+                size="sm"
+              >
+                {configSaveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
+                Save Changes
+              </Button>
+            </div>
+          </div>
+
+          {configLoading && (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-16">
+                <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+                <p className="text-gray-500 dark:text-gray-400">Loading configuration…</p>
+              </CardContent>
+            </Card>
+          )}
+          {configError && (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-16">
+                <AlertCircle className="h-12 w-12 text-red-400 mb-4" />
+                <p className="text-gray-500 dark:text-gray-400 font-medium">Failed to load configuration</p>
+                <p className="text-sm text-gray-400 mt-1 text-center max-w-md">
+                  {configErr instanceof Error ? configErr.message : "API server may be unavailable"}
+                </p>
+                <Button variant="outline" onClick={() => refetchConfig()} className="mt-4">
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Try Again
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {!configLoading && !configError && Array.from(groupedSettings.entries()).map(([category, categorySettings]) => (
+            <Card key={category}>
+              <CardHeader
+                className="cursor-pointer hover:bg-muted/50 transition-colors py-3"
+                onClick={() => {
+                  setExpandedCategories((prev) => {
+                    const next = new Set(prev);
+                    next.has(category) ? next.delete(category) : next.add(category);
+                    return next;
+                  });
+                }}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {expandedCategories.has(category) ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                    <Settings className="h-4 w-4 text-muted-foreground" />
+                    <CardTitle className="text-sm capitalize">{category.replace(/_/g, " ")}</CardTitle>
+                    <Badge variant="secondary" className="ml-1 text-xs">{categorySettings.length}</Badge>
+                  </div>
+                  <CardDescription className="text-xs">{getCategoryDescription(category)}</CardDescription>
+                </div>
+              </CardHeader>
+
+              {expandedCategories.has(category) && (
+                <CardContent>
+                  <div className="space-y-3">
+                    {categorySettings.map((setting) => {
+                      const editKey = getEditKey(setting.category, setting.key);
+                      const isEdited = editedValues.has(editKey);
+                      return (
+                        <div
+                          key={setting.id}
+                          className={`p-3 rounded-lg border ${isEdited ? "border-yellow-300 bg-yellow-50/50 dark:border-yellow-600 dark:bg-yellow-900/20" : "border-border"}`}
+                        >
+                          <div className="flex items-start justify-between gap-4 mb-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono text-sm font-medium">{setting.key}</span>
+                              <Badge variant="outline" className="text-xs">{getDisplayType(setting)}</Badge>
+                              {getUnit(setting) && <span className="text-xs text-gray-500 font-mono">({getUnit(setting)})</span>}
+                              {setting.isGlobal && <Badge variant="secondary" className="text-xs">Global</Badge>}
+                              {setting.is_sensitive && <Badge variant="destructive" className="text-xs">Sensitive</Badge>}
+                            </div>
+                            {isEdited && (
+                              <Button variant="ghost" size="sm" onClick={() => { const next = new Map(editedValues); next.delete(editKey); setEditedValues(next); }}>
+                                <RotateCcw className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                          {setting.description && <p className="text-xs text-muted-foreground mb-2">{setting.description}</p>}
+                          <div className="mt-1">
+                            {setting.value_type === "boolean" ? (
+                              <select
+                                className="w-full px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-slate-700 text-gray-700 dark:text-gray-200 text-sm outline-none focus:ring-2 focus:ring-blue-400"
+                                value={getConfigDisplayValue(setting)}
+                                onChange={(e) => handleConfigValueChange(setting, e.target.value)}
+                              >
+                                <option value="true">true</option>
+                                <option value="false">false</option>
+                              </select>
+                            ) : setting.value_type === "json" || setting.value_type === "array" ? (
+                              <textarea
+                                className="w-full px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-slate-700 text-gray-700 dark:text-gray-200 text-sm outline-none focus:ring-2 focus:ring-blue-400 font-mono min-h-[80px]"
+                                value={getConfigDisplayValue(setting)}
+                                onChange={(e) => handleConfigValueChange(setting, e.target.value)}
+                              />
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <Input
+                                  type={setting.value_type === "number" ? "number" : "text"}
+                                  value={getConfigDisplayValue(setting)}
+                                  onChange={(e) => handleConfigValueChange(setting, e.target.value)}
+                                  className="font-mono text-sm flex-1"
+                                />
+                                {getUnit(setting) && <span className="text-xs text-gray-500 font-medium shrink-0 w-8">{getUnit(setting)}</span>}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </CardContent>
+              )}
+            </Card>
+          ))}
+        </div>
       )}
     </div>
   );

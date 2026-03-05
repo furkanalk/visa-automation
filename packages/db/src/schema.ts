@@ -563,6 +563,7 @@ export interface StaffMembersTable {
   settings: ColumnType<StaffSettings, StaffSettings | undefined, StaffSettings>;
   metrics: ColumnType<StaffMetrics, StaffMetrics | undefined, StaffMetrics>;
   last_active_at: Date | null;
+  is_system: ColumnType<boolean, boolean | undefined, boolean>;
   created_at: ColumnType<Date, Date | undefined, never>;
   updated_at: ColumnType<Date, Date | undefined, Date>;
 }

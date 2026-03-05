@@ -8,8 +8,7 @@ import { Input } from "@/components/ui/input";
 import { useAuthStore } from "@/stores/auth";
 import { useThemeStore } from "@/stores/theme";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
-import { staffApi } from "@/lib/api";
-import { Lock } from "lucide-react";
+import { Lock, ShieldX, AlertCircle } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -18,6 +17,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [errorCode, setErrorCode] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -27,23 +27,20 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setErrorCode("");
     setLoading(true);
 
     try {
-      const staff = await staffApi.getByEmail(email);
-      if (staff?.status === "suspended") {
-        setError("This account is suspended. Contact administrator for help.");
-        setLoading(false);
-        return;
-      }
       const success = await login(email, password);
       if (success) {
         router.push("/");
       } else {
         setError("Invalid email or password");
       }
-    } catch {
-      setError("Login failed. Please try again.");
+    } catch (err) {
+      const code = (err as any).code ?? "";
+      setErrorCode(code);
+      setError(err instanceof Error ? err.message : "Login failed. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -61,16 +58,32 @@ export default function LoginPage() {
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 dark:bg-primary/20">
             <Lock className="h-6 w-6 text-primary" />
           </div>
-          <CardTitle className="text-2xl text-gray-900 dark:text-white">Welcome back</CardTitle>
+          <CardTitle className="text-2xl text-gray-900 dark:text-white">Welcome</CardTitle>
           <CardDescription>
-            Sign in to Visor Manager
+            Sign in to Vizeself Manager
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
-              <div className="rounded-md bg-red-50 dark:bg-red-900/20 p-3 text-sm text-red-600 dark:text-red-400">
-                {error}
+              <div className={`flex gap-3 rounded-md p-3 text-sm ${
+                errorCode === "ACCOUNT_SUSPENDED"
+                  ? "bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-800"
+                  : errorCode === "ACCOUNT_PENDING"
+                  ? "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800"
+                  : "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800"
+              }`}>
+                {errorCode === "ACCOUNT_SUSPENDED" ? (
+                  <ShieldX className="h-4 w-4 mt-0.5 shrink-0" />
+                ) : (
+                  <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                )}
+                <div>
+                  <p className="font-medium">{error}</p>
+                  {errorCode === "ACCOUNT_SUSPENDED" && (
+                    <p className="text-xs mt-1 opacity-80">Contact your administrator to restore access.</p>
+                  )}
+                </div>
               </div>
             )}
             <div>
@@ -100,8 +113,7 @@ export default function LoginPage() {
             </Button>
           </form>
           <div className="mt-6 text-center text-sm text-gray-500 dark:text-gray-400">
-            <p>Demo credentials:</p>
-            <p className="font-mono text-xs mt-1">admin@visa-automation.local / admin123</p>
+            <p>Use your admin credentials.</p>
           </div>
         </CardContent>
       </Card>

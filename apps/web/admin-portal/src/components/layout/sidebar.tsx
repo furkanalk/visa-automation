@@ -20,7 +20,6 @@ import {
   Settings,
   LogOut,
   Users,
-  Sliders,
   UserCog,
   Loader2,
   CalendarSearch,
@@ -39,7 +38,6 @@ const navigation = [
   { name: "Watcher", href: "/watcher", icon: Eye },
   { name: "Slots", href: "/slots", icon: CalendarSearch },
   { name: "Audit Logs", href: "/audit", icon: ScrollText },
-  { name: "Config", href: "/config", icon: Sliders },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
@@ -99,7 +97,12 @@ export function Sidebar() {
       )}
     >
       <div className="flex h-16 shrink-0 items-center justify-between px-4">
-        <span className="text-xl font-bold text-white">Visor Manager</span>
+        <div className="flex flex-col">
+          <span className="text-xl font-bold text-white leading-tight">Vizeself Manager</span>
+          {systemStatus?.version && (
+            <span className="text-[10px] text-gray-500 leading-tight font-mono">v{systemStatus.version}</span>
+          )}
+        </div>
         <ThemeToggle size="sm" />
       </div>
       {/* Live | Mock: subtle pill with liveness (Healthy / Unstable / Down) */}

@@ -20,7 +20,7 @@ const getTenantId = () =>
 const getRoles = (): string | undefined => {
   if (typeof window === "undefined") return undefined;
   try {
-    const raw = localStorage.getItem("visa-automation-auth");
+    const raw = sessionStorage.getItem("visa-automation-auth");
     if (!raw) return undefined;
     const state = JSON.parse(raw) as { state?: { user?: { role?: string } } };
     return state?.state?.user?.role;
@@ -33,7 +33,7 @@ const getRoles = (): string | undefined => {
 const getActorId = (): string | undefined => {
   if (typeof window === "undefined") return undefined;
   try {
-    const raw = localStorage.getItem("visa-automation-auth");
+    const raw = sessionStorage.getItem("visa-automation-auth");
     if (!raw) return undefined;
     const state = JSON.parse(raw) as { state?: { user?: { id?: string } } };
     return state?.state?.user?.id;
@@ -45,7 +45,7 @@ const getActorId = (): string | undefined => {
 const getActorName = (): string | undefined => {
   if (typeof window === "undefined") return undefined;
   try {
-    const raw = localStorage.getItem("visa-automation-auth");
+    const raw = sessionStorage.getItem("visa-automation-auth");
     if (!raw) return undefined;
     const state = JSON.parse(raw) as { state?: { user?: { name?: string; email?: string } } };
     const user = state?.state?.user;
@@ -1144,6 +1144,14 @@ export interface StaffLeaderboardEntry {
 }
 
 export const staffApi = {
+  // Login with email + password — returns staff info (no password_hash)
+  async login(email: string, password: string, tenantId = 'default'): Promise<{ staff: StaffMember; tenant_id: string }> {
+    return fetchApi<{ staff: StaffMember; tenant_id: string }>(`${getCpApiUrl()}/cp/auth/login`, {
+      method: 'POST',
+      body: JSON.stringify({ email, password, tenant_id: tenantId }),
+    });
+  },
+
   // List staff members
   async list(filters?: {
     status?: StaffStatus;
@@ -1199,8 +1207,8 @@ export const staffApi = {
     role?: StaffRole;
     permissions?: string[];
     settings?: Record<string, unknown>;
-  }): Promise<StaffMember> {
-    return fetchApi<StaffMember>(`${getCpApiUrl()}/cp/staff`, {
+  }): Promise<StaffMember & { email_sent: boolean; invite_url?: string }> {
+    return fetchApi<StaffMember & { email_sent: boolean; invite_url?: string }>(`${getCpApiUrl()}/cp/staff`, {
       method: 'POST',
       body: JSON.stringify(staff),
     });
@@ -1289,6 +1297,22 @@ export const staffApi = {
   // Get leaderboard
   async getLeaderboard(period: 'today' | 'week' | 'month' | 'all' = 'week'): Promise<StaffLeaderboardEntry[]> {
     return fetchApi<StaffLeaderboardEntry[]>(`${getCpApiUrl()}/cp/staff/leaderboard?period=${period}`);
+  },
+
+  // Set password for a staff member (super_admin only)
+  async setPassword(id: string, password: string): Promise<void> {
+    await fetchApi(`${getCpApiUrl()}/cp/staff/${id}/set-password`, {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    });
+  },
+
+  // Resend invite email (or get invite URL if SMTP not configured)
+  async resendInvite(id: string): Promise<{ email_sent: boolean; invite_url?: string }> {
+    return fetchApi<{ email_sent: boolean; invite_url?: string }>(`${getCpApiUrl()}/cp/staff/${id}/resend-invite`, {
+      method: 'POST',
+      body: '{}',
+    });
   },
 
   // Get online staff

@@ -33,6 +33,12 @@ import {
   Activity,
   TrendingUp,
   Timer,
+  Eye,
+  EyeOff,
+  KeyRound,
+  Copy,
+  Check,
+  Send,
 } from "lucide-react";
 
 const ROLE_CONFIG: Record<StaffRole, { label: string; color: string; icon: React.ReactNode }> = {
@@ -67,13 +73,20 @@ const STATUS_CONFIG: Record<StaffStatus, { label: string; color: string }> = {
 };
 
 const PERMISSIONS = [
-  { id: "captcha", label: "Captcha" },
-  { id: "otp", label: "OTP" },
-  { id: "document_review", label: "Document Review" },
-  { id: "manual_booking", label: "Manual Booking" },
-  { id: "escalation", label: "Escalation" },
-  { id: "admin", label: "Admin Panel" },
+  { id: "staff_portal", label: "Staff Portal", description: "Can log in to the Staff Portal (HITL tasks)" },
+  { id: "admin_panel", label: "Admin Panel", description: "Can log in to the Admin Portal (management)" },
+  { id: "captcha", label: "Captcha", description: "Can solve CAPTCHA tasks in Staff Portal" },
+  { id: "otp", label: "OTP", description: "Can solve OTP / Security Code tasks in Staff Portal" },
+  { id: "escalation", label: "Escalation", description: "Can escalate tasks to admin" },
+  { id: "manual_trigger", label: "Manual Trigger", description: "Can manually start jobs, select slots, trigger watcher actions" },
 ];
+
+/** Default permissions pre-filled when creating a new staff member by role. User can override. */
+const DEFAULT_PERMISSIONS_BY_ROLE: Record<StaffRole, string[]> = {
+  staff: ["staff_portal", "captcha", "otp", "escalation"],
+  admin: ["staff_portal", "admin_panel", "captcha", "otp", "escalation", "manual_trigger"],
+  super_admin: [],
+};
 
 export default function StaffPage() {
   const queryClient = useQueryClient();
@@ -93,12 +106,20 @@ export default function StaffPage() {
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   const [dropdownAnchor, setDropdownAnchor] = useState<{ top: number; right: number } | null>(null);
 
+  // Invite result dialog (shown when SMTP not configured)
+  const [inviteResult, setInviteResult] = useState<{ staffName: string; inviteUrl: string } | null>(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
+
+  // Password change state (super_admin only)
+  const [newPassword, setNewPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+
   // Form state
   const [formData, setFormData] = useState({
     email: "",
     name: "",
     role: "staff" as StaffRole,
-    permissions: [] as string[],
+    permissions: DEFAULT_PERMISSIONS_BY_ROLE["staff"] as string[],
   });
   const [formErrors, setFormErrors] = useState<{ email?: string }>({});
 
@@ -121,12 +142,16 @@ export default function StaffPage() {
   // Mutations
   const createMutation = useMutation({
     mutationFn: staffApi.create,
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["staff-list"] });
       queryClient.invalidateQueries({ queryKey: ["staff-dashboard"] });
       setIsModalOpen(false);
       resetForm();
-      showBanner("success", "Saved.");
+      if (!result.email_sent && result.invite_url) {
+        setInviteResult({ staffName: result.name, inviteUrl: result.invite_url });
+      } else {
+        showBanner("success", "Staff created. Invite email sent.");
+      }
     },
     onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to save."),
   });
@@ -173,9 +198,37 @@ export default function StaffPage() {
     onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to update."),
   });
 
+  const setPasswordMutation = useMutation({
+    mutationFn: ({ id, password }: { id: string; password: string }) =>
+      staffApi.setPassword(id, password),
+    onSuccess: () => {
+      setNewPassword("");
+      setShowPassword(false);
+      showBanner("success", "Password updated.");
+    },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to update password."),
+  });
+
+  const resendInviteMutation = useMutation({
+    mutationFn: (id: string) => staffApi.resendInvite(id),
+    onSuccess: (result, id) => {
+      setActiveDropdown(null);
+      setDropdownAnchor(null);
+      if (!result.email_sent && result.invite_url) {
+        const staff = staffData?.items.find((s) => s.id === id);
+        setInviteResult({ staffName: staff?.name ?? "Staff", inviteUrl: result.invite_url });
+      } else {
+        showBanner("success", "Invite email re-sent.");
+      }
+    },
+    onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to resend invite."),
+  });
+
   const resetForm = () => {
-    setFormData({ email: "", name: "", role: "staff", permissions: [] });
+    setFormData({ email: "", name: "", role: "staff", permissions: DEFAULT_PERMISSIONS_BY_ROLE["staff"] });
     setFormErrors({});
+    setNewPassword("");
+    setShowPassword(false);
   };
 
   const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
@@ -597,7 +650,15 @@ export default function StaffPage() {
                  </button>
                )}
                {staff.status === "pending" && (
-                 <p className="px-4 py-2 text-xs text-amber-600 dark:text-amber-400">Waiting for registration (invite sent)</p>
+                 <button
+                   className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-slate-700 flex items-center gap-2 text-amber-600"
+                   role="menuitem"
+                   onClick={() => resendInviteMutation.mutate(staff.id)}
+                   disabled={resendInviteMutation.isPending}
+                 >
+                   {resendInviteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                   Resend Invite
+                 </button>
                )}
                <hr className="my-1 border-gray-100 dark:border-slate-700" />
                <button
@@ -671,7 +732,15 @@ export default function StaffPage() {
             <select
               className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800"
               value={formData.role}
-              onChange={(e) => setFormData(prev => ({ ...prev, role: e.target.value as StaffRole }))}
+              onChange={(e) => {
+                const newRole = e.target.value as StaffRole;
+                setFormData(prev => ({
+                  ...prev,
+                  role: newRole,
+                  // Only auto-fill permissions when creating (not editing existing staff)
+                  ...(!editingStaff ? { permissions: DEFAULT_PERMISSIONS_BY_ROLE[newRole] } : {}),
+                }));
+              }}
             >
               {assignableRoles(user?.role).map((r) => (
                 <option key={r} value={r}>{ROLE_CONFIG[r].label}</option>
@@ -680,20 +749,74 @@ export default function StaffPage() {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Permissions</label>
-            <div className="grid grid-cols-2 gap-2">
-              {PERMISSIONS.map(p => (
-                <label key={p.id} className="flex items-center gap-2 p-2 rounded border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={formData.permissions.includes(p.id)}
-                    onChange={() => togglePermission(p.id)}
-                    className="rounded"
-                  />
-                  <span className="text-sm">{p.label}</span>
-                </label>
-              ))}
-            </div>
+            {formData.role === "super_admin" ? (
+              <p className="text-xs text-gray-400 dark:text-gray-500 italic">
+                Super admin bypasses all permission checks — no need to assign permissions.
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                {PERMISSIONS.map(p => (
+                  <label key={p.id} title={p.description} className="flex items-center gap-2 p-2 rounded border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.permissions.includes(p.id)}
+                      onChange={() => togglePermission(p.id)}
+                      className="rounded"
+                    />
+                    <div>
+                      <span className="text-sm font-medium">{p.label}</span>
+                      <p className="text-[10px] text-gray-400 dark:text-gray-500 leading-tight">{p.description}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
+          {/* Password section — only visible when editing */}
+          {editingStaff && (
+            <div className="pt-2 border-t border-gray-100 dark:border-slate-700">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 flex items-center gap-1">
+                <KeyRound className="h-3.5 w-3.5" />
+                Password
+              </label>
+              {user?.role === "super_admin" ? (
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Input
+                      type={showPassword ? "text" : "password"}
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="New password (min 8 chars)"
+                      minLength={8}
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                      onClick={() => setShowPassword((v) => !v)}
+                      tabIndex={-1}
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={newPassword.length < 8 || setPasswordMutation.isPending}
+                    onClick={() => setPasswordMutation.mutate({ id: editingStaff.id, password: newPassword })}
+                  >
+                    {setPasswordMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Set"}
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-slate-600">
+                  <span className="text-gray-400 tracking-widest text-sm">••••••••</span>
+                  <span className="text-xs text-gray-400 ml-auto">Only super_admin can change passwords</span>
+                </div>
+              )}
+            </div>
+          )}
         </form>
       </Modal>
 
@@ -720,6 +843,51 @@ export default function StaffPage() {
           <p className="text-gray-600 dark:text-gray-400">
             Are you sure you want to delete <strong>{staffToDelete.name}</strong>? This action cannot be undone.
           </p>
+        </Modal>
+      )}
+
+      {/* Invite Link Modal (shown when SMTP not configured) */}
+      {inviteResult && (
+        <Modal
+          open={true}
+          onClose={() => { setInviteResult(null); setInviteCopied(false); }}
+          title="Share Invite Link"
+          footer={
+            <Button onClick={() => { setInviteResult(null); setInviteCopied(false); }}>Done</Button>
+          }
+        >
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700">
+              <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+              <div className="text-sm text-amber-800 dark:text-amber-300">
+                <p className="font-medium">Invite email could not be sent</p>
+                <p className="mt-1 text-amber-700 dark:text-amber-400">
+                  Email (SMTP) is not configured in Notifications settings. Share this link manually with <strong>{inviteResult.staffName}</strong>.
+                </p>
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Invite Link</label>
+              <div className="mt-1.5 flex items-center gap-2">
+                <code className="flex-1 px-3 py-2 text-xs bg-gray-100 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-md break-all font-mono select-all">
+                  {inviteResult.inviteUrl}
+                </code>
+                <button
+                  type="button"
+                  className="shrink-0 p-2 rounded-md border border-gray-200 dark:border-slate-600 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors"
+                  onClick={() => {
+                    navigator.clipboard.writeText(inviteResult.inviteUrl);
+                    setInviteCopied(true);
+                    setTimeout(() => setInviteCopied(false), 2000);
+                  }}
+                  title="Copy to clipboard"
+                >
+                  {inviteCopied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 text-gray-500" />}
+                </button>
+              </div>
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">This link expires in 7 days. To enable email invites, configure SMTP in <strong>Notifications → Email</strong>.</p>
+            </div>
+          </div>
         </Modal>
       )}
 

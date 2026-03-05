@@ -2,7 +2,7 @@
 NOTIFY_ACTION_BASE_URL=http://localhost:3001
 # Generate: openssl rand -base64 32 (required for CP + DP)
 NOTIFY_ACTION_TOKEN="4FBLNtaBQQtr3ywvcu63isp6SRdV//hoqo1ZnpJIqH0="
-TELEGRAM_BOT_TOKEN="8331572290:AAEMibUNb33FEAbamRqYMCvQvm0gWEx2-Tg"
+TELEGRAM_BOT_TOKEN="8609950948:AAGT1eVu8KDtVbQucLuCW4qUB4RLGxA0-Y0"
 # Domain-based: CHAT_ID:THREAD_ID (e.g. -1003416093784:3 = ops topic, :5 = bookings topic)
 TELEGRAM_CHAT_IDS_OPS="-1003416093784:3"
 TELEGRAM_CHAT_IDS_BOOKINGS="-1003416093784:5"
@@ -10,10 +10,10 @@ TELEGRAM_CHAT_IDS_BOOKINGS="-1003416093784:5"
 TELEGRAM_CHAT_IDS="-1003416093784"
 
 # Email (SMTP) – e.g. Outlook smtp.office365.com:587; values from env.info or set locally
-SMTP_HOST=smtp.office365.com
-SMTP_PORT=587
-SMTP_USER="visorhq.notify@outlook.com"
-SMTP_PASS="Aj|2;(ki5R1v"
-SMTP_FROM="Visor Visa <visorhq.notify@outlook.com>"
-SMTP_FALLBACK_TO="visorhq.notify@outlook.com"
+; SMTP_HOST=smtp.office365.com
+; SMTP_PORT=587
+; SMTP_USER="visorhq.notify@outlook.com"
+; SMTP_PASS="Aj|2;(ki5R1v"
+; SMTP_FROM="Visor Visa <visorhq.notify@outlook.com>"
+; SMTP_FALLBACK_TO="visorhq.notify@outlook.com"
 # NOTIFY_EMAIL_TO=dev@example.com

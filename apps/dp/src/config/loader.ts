@@ -3,11 +3,17 @@ import type { AgentProfileConfig } from '@visa-automation/shared';
 import { deepMerge } from './merge.js';
 
 /**
- * Mock: when USE_MOCK_PORTAL=true, base URL is overridden (e.g. test).
+ * Mock: when USE_MOCK_PORTAL=true, base URL is overridden.
+ *
+ * MOCK_PORTAL_BASE_URL (env) — base host only, no path, no trailing slash.
+ *   e.g. http://mock-portal:3004
+ *   Each portal gets:  base + "/" + portalId  →  http://mock-portal:3004/as-visa
+ *   Adding a new portal (e.g. "example-site") needs no env change — it just works.
+ *
+ * Legacy MOCK_PORTAL_URL still accepted (full URL including path) for backwards compat.
+ * If set, it applies to ALL portals (use only when there is a single portal).
  */
-const MOCK_PORTAL_URLS: Record<PortalId, string> = {
-  'as-visa': 'http://localhost:3004/as-visa',
-};
+const MOCK_PORTAL_BASE_URL_FALLBACK = 'http://localhost:3004';
 
 function shouldUseMockPortal(): boolean {
   return process.env.USE_MOCK_PORTAL === 'true' || process.env.USE_MOCK_PORTAL === '1';
@@ -15,8 +21,11 @@ function shouldUseMockPortal(): boolean {
 
 function getPortalBaseUrl(portalId: PortalId, configBaseUrl: string): string {
   if (shouldUseMockPortal()) {
-    const mockUrl = process.env.MOCK_PORTAL_URL || MOCK_PORTAL_URLS[portalId];
-    if (mockUrl) return mockUrl;
+    // Legacy: full URL override for all portals (backwards compat)
+    if (process.env.MOCK_PORTAL_URL) return process.env.MOCK_PORTAL_URL;
+    // Preferred: base host, each portal appends its own id
+    const base = (process.env.MOCK_PORTAL_BASE_URL || MOCK_PORTAL_BASE_URL_FALLBACK).replace(/\/$/, '');
+    return `${base}/${portalId}`;
   }
   return configBaseUrl;
 }

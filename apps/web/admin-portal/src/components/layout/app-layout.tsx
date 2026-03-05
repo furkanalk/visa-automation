@@ -6,7 +6,7 @@ import { Sidebar } from "./sidebar";
 import { AuthGuard } from "./auth-guard";
 import { useThemeStore } from "@/stores/theme";
 
-const NO_LAYOUT_PATHS = ["/login"];
+const NO_LAYOUT_PATHS = ["/login", "/register"];
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();

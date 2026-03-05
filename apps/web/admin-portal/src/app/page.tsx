@@ -148,7 +148,7 @@ export default function Dashboard() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
-          <p className="text-gray-500 dark:text-gray-400">Overview of your visa automation system</p>
+          <p className="text-gray-500 dark:text-gray-400">Overview of your Vizeself system</p>
         </div>
         <Button
           variant="outline"

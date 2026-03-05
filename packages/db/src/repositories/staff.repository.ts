@@ -63,7 +63,8 @@ export class StaffRepository {
     let query = this.db
       .selectFrom('staff_members')
       .selectAll()
-      .where('tenant_id', '=', tenantId);
+      .where('tenant_id', '=', tenantId)
+      .where('is_system', '=', false);
 
     if (filters?.status) {
       query = query.where('status', '=', filters.status);
@@ -83,11 +84,12 @@ export class StaffRepository {
       );
     }
 
-    // Count total
+    // Count total (also excludes system accounts)
     const countResult = await this.db
       .selectFrom('staff_members')
       .select((eb) => eb.fn.countAll().as('count'))
       .where('tenant_id', '=', tenantId)
+      .where('is_system', '=', false)
       .executeTakeFirst();
 
     const total = Number(countResult?.count ?? 0);
@@ -103,9 +105,17 @@ export class StaffRepository {
   }
 
   async create(staff: NewStaffMember): Promise<StaffMember> {
+    const values: Record<string, unknown> = { ...staff };
+    if (values.permissions !== undefined) {
+      const arr = Array.isArray(values.permissions) ? values.permissions : [];
+      values.permissions = JSON.stringify(arr);
+    }
+    if (values.settings !== undefined && typeof values.settings === 'object' && values.settings !== null && !Array.isArray(values.settings)) {
+      values.settings = JSON.stringify(values.settings);
+    }
     return this.db
       .insertInto('staff_members')
-      .values(staff)
+      .values(values as unknown as NewStaffMember)
       .returningAll()
       .executeTakeFirstOrThrow();
   }

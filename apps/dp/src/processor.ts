@@ -191,6 +191,7 @@ export async function processJob(
         visaType: (payload as unknown as Record<string, unknown>).visa_type as string | undefined,
         priority: (payload as unknown as Record<string, unknown>).priority as number | undefined,
         triggeredBy: (payload.config as Record<string, unknown> | undefined)?.triggered_by as string | undefined,
+        triggeredByName: (payload.config as Record<string, unknown> | undefined)?.triggered_by_name as string | undefined,
         logger: jobLogger,
       });
     } catch (e) {

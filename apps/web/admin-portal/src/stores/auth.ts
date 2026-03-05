@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { persist, createJSONStorage } from "zustand/middleware";
 
 interface User {
   id: string;
@@ -7,6 +7,7 @@ interface User {
   name: string;
   role: "super_admin" | "admin" | "staff";
   tenant_id: string;
+  permissions: string[];
 }
 
 interface AuthState {
@@ -17,30 +18,6 @@ interface AuthState {
   logout: () => void;
 }
 
-// For MVP: simple hardcoded auth
-const ADMIN_USERS: Record<string, { password: string; user: User }> = {
-  "admin@visa-automation.local": {
-    password: "admin123", // Change in production!
-    user: {
-      id: "admin-1",
-      email: "admin@visa-automation.local",
-      name: "Admin User",
-      role: "super_admin",
-      tenant_id: "default",
-    },
-  },
-  "staff@visa-automation.local": {
-    password: "staff123",
-    user: {
-      id: "staff-1",
-      email: "staff@visa-automation.local",
-      name: "Staff User",
-      role: "staff",
-      tenant_id: "default",
-    },
-  },
-};
-
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
@@ -49,40 +26,67 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: false,
 
       login: async (email: string, password: string) => {
-        // MVP: Simple credential check
-        const userRecord = ADMIN_USERS[email.toLowerCase()];
-        
-        if (userRecord && userRecord.password === password) {
-          const token = btoa(`${email}:${Date.now()}`);
-          // Store tenant_id for API requests
-          if (typeof window !== "undefined") {
-            localStorage.setItem("admin_tenant_id", userRecord.user.tenant_id);
-          }
-          set({
-            user: userRecord.user,
-            token,
-            isAuthenticated: true,
-          });
-          return true;
+        const getCpApiUrl = () =>
+          (typeof window !== "undefined" && localStorage.getItem("cp_api_url")) ||
+          process.env.NEXT_PUBLIC_CP_API_URL ||
+          "http://localhost:3001";
+
+        const res = await fetch(`${getCpApiUrl()}/cp/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password, tenant_id: "default" }),
+        });
+        const body = await res.json() as { success: boolean; data?: { staff: User & { permissions: unknown }; tenant_id: string }; error?: { code: string; message: string } };
+
+        if (!res.ok || !body.success || !body.data) {
+          const code = body.error?.code;
+          const msg = body.error?.message ?? "Login failed";
+          // Re-throw specific errors so the login page can show them properly
+          const err = new Error(msg);
+          (err as any).code = code;
+          throw err;
         }
-        
-        return false;
+
+        const { staff, tenant_id } = body.data;
+        const permissions = Array.isArray(staff.permissions) ? (staff.permissions as string[]) : [];
+
+        // Admin portal requires: super_admin OR admin role OR admin_panel permission
+        const hasAccess =
+          staff.role === "super_admin" ||
+          staff.role === "admin" ||
+          permissions.includes("admin_panel");
+
+        if (!hasAccess) {
+          const err = new Error("Access denied. Admin portal requires admin role or admin_panel permission.");
+          (err as any).code = "ACCESS_DENIED";
+          throw err;
+        }
+
+        if (typeof window !== "undefined") {
+          localStorage.setItem("admin_tenant_id", tenant_id);
+        }
+
+        const token = btoa(`${email}:${Date.now()}`);
+        set({
+          user: { ...staff, permissions, tenant_id },
+          token,
+          isAuthenticated: true,
+        });
+        return true;
       },
 
       logout: () => {
-        // Clear tenant_id on logout
         if (typeof window !== "undefined") {
           localStorage.removeItem("admin_tenant_id");
         }
-        set({
-          user: null,
-          token: null,
-          isAuthenticated: false,
-        });
+        set({ user: null, token: null, isAuthenticated: false });
       },
     }),
     {
       name: "visa-automation-auth",
+      storage: createJSONStorage(() =>
+        typeof window !== "undefined" ? sessionStorage : localStorage
+      ),
       partialize: (state) => ({
         user: state.user,
         token: state.token,

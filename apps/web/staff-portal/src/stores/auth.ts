@@ -1,12 +1,13 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { persist, createJSONStorage } from "zustand/middleware";
 
 export interface StaffUser {
   id: string;
   name: string;
   email: string;
-  role: "staff" | "admin";
+  role: "staff" | "admin" | "super_admin";
   tenant_id: string;
+  permissions: string[];
 }
 
 interface AuthState {
@@ -16,30 +17,6 @@ interface AuthState {
   logout: () => void;
 }
 
-// Mock staff users for MVP
-const MOCK_STAFF: Record<string, { password: string; user: StaffUser }> = {
-  "staff@example.com": {
-    password: "staff123",
-    user: {
-      id: "staff-1",
-      name: "John Staff",
-      email: "staff@example.com",
-      role: "staff",
-      tenant_id: "default",
-    },
-  },
-  "senior@example.com": {
-    password: "senior123",
-    user: {
-      id: "staff-2",
-      name: "Jane Senior",
-      email: "senior@example.com",
-      role: "staff",
-      tenant_id: "default",
-    },
-  },
-};
-
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
@@ -47,21 +24,53 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: false,
 
       login: async (email: string, password: string) => {
-        // MVP: Mock authentication
-        const staffRecord = MOCK_STAFF[email.toLowerCase()];
-        if (staffRecord && staffRecord.password === password) {
-          // Store tenant_id for API requests
-          if (typeof window !== "undefined") {
-            localStorage.setItem("staff_tenant_id", staffRecord.user.tenant_id);
-          }
-          set({ user: staffRecord.user, isAuthenticated: true });
-          return true;
+        const getCpApiUrl = () =>
+          (typeof window !== "undefined" && localStorage.getItem("cp_api_url")) ||
+          process.env.NEXT_PUBLIC_CP_API_URL ||
+          "http://localhost:3001";
+
+        const res = await fetch(`${getCpApiUrl()}/cp/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password, tenant_id: "default" }),
+        });
+        const body = await res.json() as {
+          success: boolean;
+          data?: { staff: StaffUser & { permissions: unknown }; tenant_id: string };
+          error?: { code: string; message: string };
+        };
+
+        if (!res.ok || !body.success || !body.data) {
+          const err = new Error(body.error?.message ?? "Login failed");
+          (err as any).code = body.error?.code;
+          throw err;
         }
-        return false;
+
+        const { staff, tenant_id } = body.data;
+        const permissions = Array.isArray(staff.permissions) ? (staff.permissions as string[]) : [];
+
+        // Staff portal requires: staff/admin/super_admin role AND staff_portal permission
+        // super_admin always has access; admin also has access; staff needs staff_portal permission
+        const hasAccess =
+          staff.role === "super_admin" ||
+          staff.role === "admin" ||
+          permissions.includes("staff_portal");
+
+        if (!hasAccess) {
+          const err = new Error("Access denied. You need the staff_portal permission to access this portal.");
+          (err as any).code = "ACCESS_DENIED";
+          throw err;
+        }
+
+        if (typeof window !== "undefined") {
+          localStorage.setItem("staff_tenant_id", tenant_id);
+        }
+
+        set({ user: { ...staff, permissions, tenant_id }, isAuthenticated: true });
+        return true;
       },
 
       logout: () => {
-        // Clear tenant_id on logout
         if (typeof window !== "undefined") {
           localStorage.removeItem("staff_tenant_id");
         }
@@ -70,6 +79,9 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: "staff-portal-auth",
+      storage: createJSONStorage(() =>
+        typeof window !== "undefined" ? sessionStorage : localStorage
+      ),
     }
   )
 );

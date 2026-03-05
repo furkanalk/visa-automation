@@ -10,6 +10,7 @@ export async function callSlotOpen(
   openDates: string[] = [],
   scoutJobId?: string,
   triggeredBy: 'manual' | 'watcher_auto' = 'watcher_auto',
+  triggeredByName?: string,
 ): Promise<{ jobs_created: number; skipped: number } | null> {
   const cpApiUrl = process.env.CP_API_URL;
   const internalSecret = process.env.CP_INTERNAL_SECRET;
@@ -22,7 +23,14 @@ export async function callSlotOpen(
       'x-tenant-id': tenantId,
       'x-internal-secret': internalSecret,
     },
-    body: JSON.stringify({ tenant_id: tenantId, portal_id: portalId, open_dates: openDates, scout_job_id: scoutJobId, triggered_by: triggeredBy }),
+    body: JSON.stringify({
+      tenant_id: tenantId,
+      portal_id: portalId,
+      open_dates: openDates,
+      scout_job_id: scoutJobId,
+      triggered_by: triggeredBy,
+      ...(triggeredByName ? { triggered_by_name: triggeredByName } : {}),
+    }),
   });
   if (!res.ok) return null;
   const data = (await res.json()) as { success?: boolean; data?: { jobs_created: number; skipped: number } };

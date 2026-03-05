@@ -104,7 +104,10 @@ export async function notifySlotFound(args: {
   await setSlotStatus(args.jobId, 'open');
 
   const triggeredBy = (args.payload?.config as Record<string, unknown> | undefined)?.triggered_by as string | undefined;
-  const triggeredByLine = triggeredBy === 'manual' ? '👤 Manual' : triggeredBy === 'watcher_auto' ? '🤖 Auto' : undefined;
+  const triggeredByName = (args.payload?.config as Record<string, unknown> | undefined)?.triggered_by_name as string | undefined;
+  const triggeredByLine = triggeredByName
+    ? `👤 ${triggeredByName}`
+    : triggeredBy === 'manual' ? '👤 Manual' : triggeredBy === 'watcher_auto' ? '🤖 Auto' : undefined;
   const applicantMaskedSlot = maskApplicant(args.payload?.applicant_data as Record<string, unknown> | undefined);
 
   const text =
@@ -334,6 +337,7 @@ export async function notifyAgentStarted(args: {
   visaType?: string;
   priority?: number;
   triggeredBy?: string;
+  triggeredByName?: string;
   logger: Logger;
 }): Promise<void> {
   const { cpApiUrl, tenantId, internalSecret } = getCpNotifyContext(args.tenantId);
@@ -344,7 +348,9 @@ export async function notifyAgentStarted(args: {
 
   const portalLine = args.portalLabel ? `${args.portalId} / ${args.portalLabel}` : args.portalId;
   const agentLine = args.agentName ?? args.agentId ?? '—';
-  const triggeredByLine = args.triggeredBy === 'manual' ? '👤 Manual' : args.triggeredBy === 'watcher_auto' ? '🤖 Auto' : undefined;
+  const triggeredByLine = args.triggeredByName
+    ? `👤 ${args.triggeredByName}`
+    : args.triggeredBy === 'manual' ? '👤 Manual' : args.triggeredBy === 'watcher_auto' ? '🤖 Auto' : undefined;
   const lines = [
     '🚀 Agent Started',
     '',

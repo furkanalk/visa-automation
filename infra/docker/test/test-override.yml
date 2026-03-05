@@ -6,6 +6,8 @@ services:
     env_file: .env.test
   redis:
     env_file: .env.test
+  bootstrap:
+    env_file: .env.test
   cp:
     env_file: .env.test
     ports:

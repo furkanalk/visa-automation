@@ -206,7 +206,7 @@ export default function JobsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Jobs</h1>
-          <p className="text-gray-500 dark:text-gray-400">Monitor and manage visa automation jobs</p>
+          <p className="text-gray-500 dark:text-gray-400">Monitor and manage Vizeself jobs</p>
         </div>
         <div className="flex items-center gap-2">
           <Button

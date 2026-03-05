@@ -26,7 +26,8 @@ services:
       REDIS_PORT: ${REDIS_PORT}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       USE_MOCK_PORTAL: ${USE_MOCK_PORTAL}
-      MOCK_PORTAL_URL: ${MOCK_PORTAL_URL}
+      MOCK_PORTAL_BASE_URL: ${MOCK_PORTAL_BASE_URL}
+      # MOCK_PORTAL_URL: legacy full-URL override (all portals same URL). Use MOCK_PORTAL_BASE_URL instead.
     depends_on:
       postgres:
         condition: service_healthy
