@@ -1,5 +1,6 @@
 # Caddy: public reverse proxy and TLS. Only this service exposes ports 80/443.
-# Internal services (cp, admin-portal, staff-portal, mock-portal) use expose only; visa-dp is not exposed.
+# Internal services (admin-portal, staff-portal, mock-portal, cp) use expose only.
+# visa-dp has no exposure at all.
 services:
   caddy:
     image: caddy:2-alpine
@@ -15,6 +16,10 @@ services:
     depends_on:
       cp:
         condition: service_healthy
+      admin-portal:
+        condition: service_started
+      staff-portal:
+        condition: service_started
     networks:
       - visa-network
 

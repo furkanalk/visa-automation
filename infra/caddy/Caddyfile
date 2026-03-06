@@ -1,18 +1,38 @@
-# Public reverse proxy and TLS. Replace example.com with your domain and set DNS A record.
-# Caddy serves HTTPS via Let's Encrypt when domain is reachable.
+# Public reverse proxy and TLS termination.
+# DNS A records must point manager/portal/mock to the server IP.
+# Caddy obtains HTTPS certs automatically via Let's Encrypt.
+#
+# CP is internal-only. Portals reach it via Caddy reverse proxy under /cp/ and /api/.
+# This way NEXT_PUBLIC_CP_API_URL = the portal's own public origin (e.g. https://manager.vizeself.com).
 
-api.example.com {
-	reverse_proxy cp:3001
+manager.vizeself.com {
+	# Proxy CP API calls — browser sends to same origin, Caddy forwards internally
+	handle /cp/* {
+		reverse_proxy visa-cp:3001
+	}
+	handle /api/* {
+		reverse_proxy visa-cp:3001
+	}
+	# Admin portal frontend
+	handle {
+		reverse_proxy visa-admin-portal:3002
+	}
 }
 
-admin.example.com {
-	reverse_proxy admin-portal:3002
+portal.vizeself.com {
+	# Proxy CP API calls for staff portal
+	handle /cp/* {
+		reverse_proxy visa-cp:3001
+	}
+	handle /api/* {
+		reverse_proxy visa-cp:3001
+	}
+	# Staff portal frontend
+	handle {
+		reverse_proxy visa-staff-portal:3003
+	}
 }
 
-staff.example.com {
-	reverse_proxy staff-portal:3003
-}
-
-mock.example.com {
-	reverse_proxy mock-portal:3004
+mock.vizeself.com {
+	reverse_proxy visa-mock-portal:3004
 }
