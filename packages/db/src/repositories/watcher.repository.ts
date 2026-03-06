@@ -303,11 +303,12 @@ export class WatcherRepository {
     return Number(result.numDeletedRows ?? 0n);
   }
 
-  /** Delete all snapshots for tenant (manual clear). */
+  /** Delete all snapshots for tenant (manual clear). Archived snapshots are preserved. */
   async deleteAllSnapshots(tenantId: string): Promise<number> {
     const result = await this.db
       .deleteFrom('portal_snapshots')
       .where('tenant_id', '=', tenantId)
+      .where('archived', '=', false)
       .executeTakeFirst();
     return Number(result.numDeletedRows ?? 0n);
   }

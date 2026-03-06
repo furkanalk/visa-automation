@@ -129,7 +129,7 @@ export async function runFSM(
   );
 
   let lastMouseMoveAt = 0;
-  const mouseMoveIntervalMs = portalConfig.mouseMoveIntervalMs ?? 0;
+  const mouseMoveIntervalMs = portalConfig.mouseMoveIntervalMs ?? 15_000;
 
   try {
     // Progress through states
@@ -139,6 +139,7 @@ export async function runFSM(
         const now = Date.now();
         if (now - lastMouseMoveAt >= mouseMoveIntervalMs) {
           lastMouseMoveAt = now;
+          logger.debug({ jobId: job_id }, 'mouse move');
           humanLikeMouseMove(jc.page, portalConfig).catch(() => {});
         }
       }
