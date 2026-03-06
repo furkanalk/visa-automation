@@ -1,13 +1,11 @@
-2) Staff sekmesinde kullanıcılara şifre giriliyor mu? sadece super admin editleyebilmeyi şifreyi dediğin gibi. Mantık şu olmalı:
-Staff listesine yeni bir kullanıcı eklendiğinde, girilen maile bir e posta atılacak ve bu postaya tıklandığında biizm portalda bir register tarzında şifre girme (şifre gir ve şifre gir tekrar) tarzında bir portala yönlendirip ondan sonra kayıt gerçekleşecek tamamen. Bu adımı yapmayan kişi staff listesinde pending olarak duracak. Ne zaman şifresi kayıt olursa database'e (encrypted olarak, ve tabi ki şifre check ederken dycrpyt edileiblmesi bilmiyorum en düzgün şekilde sen yap) pendingden çıkıp normal şekilde listede durabilir bence. Mantık iyi mi? BELKİ SEN DAHA İYİ RAFİNE EDEBİLİRİSN.
+2) sadece super admin editleyebilmeyi admin hesaplarını, adminler de staff hesaplarını. Admin - Admin hesap bilgisi değiştirme yok.
+Şifre kısmı sadece super_admin tarafından editlenebilmeli ve görüntülenebilmeli, diğerleri redacted olarak görmeli. super adminde bu alanlar için göz işareti olsun tıkalyınca göreiblsin.
 
 3) Staff sekmesinde suspend gerçekten girişi engelliyor mu? giriş ypamaya çalışan kişi this account suspended almalı. Contact administrator to get help. falan yazsın.
 
 5) Portals sekmeisnde portallar listeleniyor, bu listelenme kısmında portallarda rate limit enabled disabled, OTP ve CAPTHA modları yazabilir. ayrıca rengini eski haline çevirelim. url gözüken kısım kalsın beğendim.
 
 2) Drainingi check et
-
-3) Şifre kısmı sadece super_admin tarafından editlenebilmeli ve görüntülenebilmeli, diğerleri redacted **** olarak görmeli. super adminde göz işareti olsun tıkalyınca göreiblsin.
 
 3) Mouse hareket etmeli birkaç kere CHECK mock server log
 
