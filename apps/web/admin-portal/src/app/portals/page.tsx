@@ -9,7 +9,7 @@ import { cpApi, type Agent, type PortalConfig } from "@/lib/api";
 import { DragDropPortal } from "@/components/ui/drag-drop-portal";
 import { PortalConfigModal } from "@/components/portals/portal-config-modal";
 import { SaveBanner } from "@/components/ui/save-banner";
-import { Globe, Settings, Power, PowerOff, ArrowLeftRight, Loader2, ChevronDown, ChevronRight, Link2, Users, AlertCircle } from "lucide-react";
+import { Globe, Settings, Power, PowerOff, ArrowLeftRight, Loader2, ChevronDown, ChevronRight, Link2, Users, AlertCircle, Gauge, KeyRound, ShieldCheck } from "lucide-react";
 
 export default function PortalsPage() {
   const queryClient = useQueryClient();
@@ -237,6 +237,21 @@ export default function PortalsPage() {
                 </CardHeader>
                 <CardContent className="pt-0">
                   <div className="space-y-3 text-sm">
+                    {/* Rate limit / OTP / CAPTCHA indicators */}
+                    <div className="flex flex-wrap gap-1.5">
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border ${rateLimitEnabled ? "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-900/20 dark:text-orange-400 dark:border-orange-700" : "bg-gray-50 text-gray-400 border-gray-200 dark:bg-slate-700/50 dark:text-gray-500 dark:border-slate-600"}`}>
+                        <Gauge className="h-3 w-3" />
+                        Rate Limit {rateLimitEnabled ? "On" : "Off"}
+                      </span>
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border ${otpMode && otpMode !== "disabled" ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-700" : "bg-gray-50 text-gray-400 border-gray-200 dark:bg-slate-700/50 dark:text-gray-500 dark:border-slate-600"}`}>
+                        <KeyRound className="h-3 w-3" />
+                        OTP{otpMode && otpMode !== "disabled" ? `: ${otpMode}` : ": off"}
+                      </span>
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border ${captchaMode && captchaMode !== "disabled" ? "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-400 dark:border-purple-700" : "bg-gray-50 text-gray-400 border-gray-200 dark:bg-slate-700/50 dark:text-gray-500 dark:border-slate-600"}`}>
+                        <ShieldCheck className="h-3 w-3" />
+                        CAPTCHA{captchaMode && captchaMode !== "disabled" ? `: ${captchaMode}` : ": off"}
+                      </span>
+                    </div>
                     <button
                       type="button"
                       onClick={() => setExpandedPortalId(isDetailsOpen ? null : portal.id)}
