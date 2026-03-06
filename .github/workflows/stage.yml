@@ -64,6 +64,9 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-admin-portal:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-admin-portal:${{ github.ref_name }}
+          build-args: |
+            NEXT_PUBLIC_CP_API_URL=https://manager.vizeself.com
+            NEXT_PUBLIC_API_URL=https://manager.vizeself.com
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -77,6 +80,8 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-staff-portal:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-staff-portal:${{ github.ref_name }}
+          build-args: |
+            NEXT_PUBLIC_CP_API_URL=https://portal.vizeself.com
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
