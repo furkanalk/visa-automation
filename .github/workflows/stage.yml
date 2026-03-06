@@ -4,11 +4,12 @@ name: Stage
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
+  OWNER: ${{ github.repository_owner }}
 
 jobs:
   build-and-push:
@@ -36,8 +37,8 @@ jobs:
           target: production
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-cp:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-cp:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/visa-cp:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/visa-cp:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -49,8 +50,8 @@ jobs:
           target: production
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-dp:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-dp:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/visa-dp:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/visa-dp:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -62,8 +63,8 @@ jobs:
           target: production
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-admin-portal:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-admin-portal:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/visa-admin-portal:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/visa-admin-portal:latest
           build-args: |
             NEXT_PUBLIC_CP_API_URL=https://manager.vizeself.com
             NEXT_PUBLIC_API_URL=https://manager.vizeself.com
@@ -78,8 +79,8 @@ jobs:
           target: production
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-staff-portal:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-staff-portal:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/visa-staff-portal:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/visa-staff-portal:latest
           build-args: |
             NEXT_PUBLIC_CP_API_URL=https://portal.vizeself.com
           cache-from: type=gha
@@ -93,7 +94,7 @@ jobs:
           target: production
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-mock-portal:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-mock-portal:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/visa-mock-portal:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/visa-mock-portal:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max

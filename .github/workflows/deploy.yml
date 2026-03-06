@@ -1,19 +1,25 @@
 # Deploy: promote to production. Triggered after Validate succeeds, or manually.
 # Gate: repo variable DEPLOY_REQUIRE_APPROVAL = "true" → uses environment "production" (add Required reviewers).
 #       DEPLOY_REQUIRE_APPROVAL = "false" or unset → uses "production-auto" (no approval). Create both environments.
+#
+# Required secrets (Settings → Secrets → Actions):
+#   PROD_SSH_HOST      — server IP or hostname
+#   PROD_SSH_USER      — SSH user (e.g. ubuntu or deploy)
+#   PROD_SSH_KEY       — private key (PEM)
+#   PROD_SSH_PORT      — SSH port (default 22), optional
 name: Deploy
 
 on:
   workflow_run:
     workflows: [Validate]
     types: [completed]
-    branches: [main]
+    branches: [master]
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Image tag (when manual; when auto from Validate, commit SHA is used)"
+        description: "Image tag to deploy (SHA or 'latest')"
         required: false
-        default: "main"
+        default: "latest"
 
 env:
   REGISTRY: ghcr.io
@@ -27,27 +33,55 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set deployment summary
+      - name: Resolve image tag and owner
+        id: meta
         run: |
-          TAG="${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.event.inputs.image_tag || 'main' }}"
-          echo "## Deploy to production" >> $GITHUB_STEP_SUMMARY
-          echo "Use image tag: \`$TAG\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "On your prod server run:" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "# Env: prod uses prod/.env.prod (copy from prod/.env.prod.example, fill secrets)" >> $GITHUB_STEP_SUMMARY
-          echo "cd infra/docker/prod" >> $GITHUB_STEP_SUMMARY
-          echo "cp .env.prod.example .env.prod   # edit .env.prod with real secrets" >> $GITHUB_STEP_SUMMARY
-          echo "export IMAGE_CP=${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-cp:$TAG" >> $GITHUB_STEP_SUMMARY
-          echo "export IMAGE_DP=${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-dp:$TAG" >> $GITHUB_STEP_SUMMARY
-          echo "export IMAGE_ADMIN_PORTAL=${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-admin-portal:$TAG" >> $GITHUB_STEP_SUMMARY
-          echo "export IMAGE_STAFF_PORTAL=${{ env.REGISTRY }}/${{ github.repository_owner }}/visa-staff-portal:$TAG" >> $GITHUB_STEP_SUMMARY
-          echo "docker compose --env-file .env.prod -f compose.yml -f prod-override.yml pull" >> $GITHUB_STEP_SUMMARY
-          echo "docker compose --env-file .env.prod -f compose.yml -f prod-override.yml up -d --no-build" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          TAG="${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.event.inputs.image_tag || 'latest' }}"
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "owner=${OWNER}" >> $GITHUB_OUTPUT
 
-      - name: Output deploy commands
+      - name: Deploy to production server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_SSH_HOST }}
+          username: ${{ secrets.PROD_SSH_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          port: ${{ secrets.PROD_SSH_PORT || 22 }}
+          script: |
+            set -e
+            cd ~/visa-automation/infra/docker/prod
+
+            # Pull latest repo changes
+            git -C ~/visa-automation pull --ff-only
+
+            # Log in to GHCR on the server
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            # Export image tags
+            export IMAGE_CP=${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-cp:${{ steps.meta.outputs.tag }}
+            export IMAGE_DP=${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-dp:${{ steps.meta.outputs.tag }}
+            export IMAGE_ADMIN_PORTAL=${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-admin-portal:${{ steps.meta.outputs.tag }}
+            export IMAGE_STAFF_PORTAL=${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-staff-portal:${{ steps.meta.outputs.tag }}
+            export IMAGE_MOCK_PORTAL=${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-mock-portal:${{ steps.meta.outputs.tag }}
+
+            # Pull new images
+            docker compose --env-file .env.prod -f compose.yml -f prod-override.yml pull
+
+            # Rolling restart
+            docker compose --env-file .env.prod -f compose.yml -f prod-override.yml up -d --no-build --remove-orphans
+
+            # Cleanup old images
+            docker image prune -f
+
+      - name: Deployment summary
         run: |
-          TAG="${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.event.inputs.image_tag || 'main' }}"
-          echo "IMAGE_TAG=$TAG" >> $GITHUB_ENV
-          echo "Deploy with tag: $TAG"
+          echo "## ✅ Deployed to production" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** \`${{ steps.meta.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Owner:** \`${{ steps.meta.outputs.owner }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Images deployed:" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-cp:${{ steps.meta.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-dp:${{ steps.meta.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-admin-portal:${{ steps.meta.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-staff-portal:${{ steps.meta.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY

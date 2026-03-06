@@ -7,7 +7,7 @@ on:
   workflow_run:
     workflows: [Stage]
     types: [completed]
-    branches: [main]
+    branches: [master]
   workflow_dispatch:
 
 jobs:
@@ -40,7 +40,7 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     needs: unit-tests
-    # Optional: run E2E when test stack is up (e.g. after stage deploys to test)
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,10 +57,38 @@ jobs:
       - name: Build
         run: npm run build --workspaces --if-present
 
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set image tag
+        id: tag
+        run: |
+          SHA="${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}"
+          echo "sha=${SHA}" >> $GITHUB_OUTPUT
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "owner=${OWNER}" >> $GITHUB_OUTPUT
+
       - name: Start services (compose)
+        env:
+          IMAGE_CP: ghcr.io/${{ steps.tag.outputs.owner }}/visa-cp:${{ steps.tag.outputs.sha }}
+          IMAGE_DP: ghcr.io/${{ steps.tag.outputs.owner }}/visa-dp:${{ steps.tag.outputs.sha }}
+          IMAGE_ADMIN_PORTAL: ghcr.io/${{ steps.tag.outputs.owner }}/visa-admin-portal:${{ steps.tag.outputs.sha }}
+          IMAGE_STAFF_PORTAL: ghcr.io/${{ steps.tag.outputs.owner }}/visa-staff-portal:${{ steps.tag.outputs.sha }}
+          IMAGE_MOCK_PORTAL: ghcr.io/${{ steps.tag.outputs.owner }}/visa-mock-portal:${{ steps.tag.outputs.sha }}
         run: |
           cd infra/docker/test
           cp .env.test.example .env.test
+          # Inject GHCR image tags into .env.test
+          echo "IMAGE_CP=${IMAGE_CP}" >> .env.test
+          echo "IMAGE_DP=${IMAGE_DP}" >> .env.test
+          echo "IMAGE_ADMIN_PORTAL=${IMAGE_ADMIN_PORTAL}" >> .env.test
+          echo "IMAGE_STAFF_PORTAL=${IMAGE_STAFF_PORTAL}" >> .env.test
+          echo "IMAGE_MOCK_PORTAL=${IMAGE_MOCK_PORTAL}" >> .env.test
+          docker compose --env-file .env.test -f compose.yml -f test-override.yml pull
           docker compose --env-file .env.test -f compose.yml -f test-override.yml up -d --no-build
           sleep 30
           docker compose --env-file .env.test -f compose.yml -f test-override.yml ps
