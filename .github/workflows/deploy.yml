@@ -1,4 +1,6 @@
-# Deploy: promote to production. Triggered after Validate succeeds, or manually.
+# Deploy: promote to production. Triggered after Stage succeeds, or manually.
+# NOTE: Validate (E2E) pipeline is disabled until unit/E2E tests are properly written.
+#       When tests are ready, switch workflow_run back to [Validate].
 # Gate: repo variable DEPLOY_REQUIRE_APPROVAL = "true" → uses environment "production" (add Required reviewers).
 #       DEPLOY_REQUIRE_APPROVAL = "false" or unset → uses "production-auto" (no approval). Create both environments.
 #
@@ -11,7 +13,7 @@ name: Deploy
 
 on:
   workflow_run:
-    workflows: [Validate]
+    workflows: [Stage]
     types: [completed]
     branches: [master]
   workflow_dispatch:
