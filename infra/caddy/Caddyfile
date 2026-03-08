@@ -4,35 +4,36 @@
 #
 # CP is internal-only. Portals reach it via Caddy reverse proxy under /cp/ and /api/.
 # This way NEXT_PUBLIC_CP_API_URL = the portal's own public origin (e.g. https://manager.vizeself.com).
+# NOTE: Hostnames here must match Docker Compose service names (not container_name).
 
 manager.vizeself.com {
 	# Proxy CP API calls — browser sends to same origin, Caddy forwards internally
 	handle /cp/* {
-		reverse_proxy visa-cp:3001
+		reverse_proxy cp:3001
 	}
 	handle /api/* {
-		reverse_proxy visa-cp:3001
+		reverse_proxy cp:3001
 	}
 	# Admin portal frontend
 	handle {
-		reverse_proxy visa-admin-portal:3002
+		reverse_proxy admin-portal:3002
 	}
 }
 
 portal.vizeself.com {
 	# Proxy CP API calls for staff portal
 	handle /cp/* {
-		reverse_proxy visa-cp:3001
+		reverse_proxy cp:3001
 	}
 	handle /api/* {
-		reverse_proxy visa-cp:3001
+		reverse_proxy cp:3001
 	}
 	# Staff portal frontend
 	handle {
-		reverse_proxy visa-staff-portal:3003
+		reverse_proxy staff-portal:3003
 	}
 }
 
 mock.vizeself.com {
-	reverse_proxy visa-mock-portal:3004
+	reverse_proxy mock-portal:3004
 }
