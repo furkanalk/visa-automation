@@ -73,7 +73,7 @@ jobs:
             set -e
 
             DEPLOY_DIR="${{ env.DEPLOY_DIR }}"
-            ENV_FILE="$HOME/visa-automation-env/.env.prod"
+            export ENV_FILE="$HOME/visa-automation-env/.env.prod"
             COMPOSE_DIR="${DEPLOY_DIR}/infra/docker/prod"
 
             cd "${COMPOSE_DIR}"
