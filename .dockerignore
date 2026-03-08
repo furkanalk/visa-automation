@@ -14,4 +14,7 @@ tests/
 infra/
 docs/
 scripts/
+# Bootstrap image needs these two scripts baked in
+!scripts/db/migrate.sh
+!scripts/db/bootstrap-admin.sh
 *.md
