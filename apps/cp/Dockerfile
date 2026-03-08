@@ -16,9 +16,9 @@ COPY packages/shared ./packages/shared
 COPY packages/db ./packages/db
 COPY apps/cp ./apps/cp
 
-RUN npm run build --workspace=packages/shared
-RUN npm run build --workspace=packages/db
-RUN npm run build --workspace=apps/cp
+RUN npm run build --workspace=packages/shared && \
+    npm run build --workspace=packages/db && \
+    npm run build --workspace=apps/cp
 
 # Production
 FROM node:20-alpine AS production

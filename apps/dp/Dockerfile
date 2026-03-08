@@ -22,9 +22,9 @@ COPY packages/db ./packages/db
 COPY apps/dp ./apps/dp
 
 # Build
-RUN npm run build --workspace=packages/shared
-RUN npm run build --workspace=packages/db
-RUN npm run build --workspace=apps/dp
+RUN npm run build --workspace=packages/shared && \
+    npm run build --workspace=packages/db && \
+    npm run build --workspace=apps/dp
 
 # Stage 2: Production with Playwright
 FROM mcr.microsoft.com/playwright:v1.40.0-focal AS production
