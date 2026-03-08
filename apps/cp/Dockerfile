@@ -16,7 +16,8 @@ COPY packages/shared ./packages/shared
 COPY packages/db ./packages/db
 COPY apps/cp ./apps/cp
 
-RUN npm run build --workspace=packages/shared && \
+RUN find . -name "tsconfig.tsbuildinfo" -delete && \
+    npm run build --workspace=packages/shared && \
     npm run build --workspace=packages/db && \
     npm run build --workspace=apps/cp
 

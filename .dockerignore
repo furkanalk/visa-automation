@@ -1,0 +1,20 @@
+**/.git
+**/.gitignore
+**/node_modules
+**/*.log
+
+# TypeScript incremental build info — must be absent so tsc emits fresh output in Docker
+**/tsconfig.tsbuildinfo
+
+# Compiled output — rebuilt inside Docker
+**/dist
+
+# Web apps (not needed for cp/dp images)
+apps/web
+
+# Test / infra
+tests/
+infra/
+docs/
+scripts/
+*.md
