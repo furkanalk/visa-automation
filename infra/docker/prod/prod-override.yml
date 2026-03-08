@@ -6,7 +6,7 @@ services:
       - ${ENV_FILE}
     # ports: intentionally omitted — postgres must NOT be publicly exposed in prod.
     # Base postgres.yml binds ${DB_PORT}:5432; prod-override replaces it with expose-only.
-    ports: []
+    ports: !reset []
     expose:
       - "5432"
     read_only: false
@@ -19,7 +19,7 @@ services:
     env_file: 
       - ${ENV_FILE}
     # ports: intentionally omitted — redis must NOT be publicly exposed in prod.
-    ports: []
+    ports: !reset []
     expose:
       - "6379"
     security_opt:
@@ -27,7 +27,8 @@ services:
     user: redis
 
   bootstrap:
-    env_file: ${ENV_FILE}
+    env_file: 
+      - ${ENV_FILE}
 
   cp:
     env_file: 
