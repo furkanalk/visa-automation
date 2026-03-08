@@ -32,7 +32,7 @@ on:
 env:
   REGISTRY: ghcr.io
   # Infra files are placed here on the server by scp; .env.prod lives alongside.
-  DEPLOY_DIR: ~/visa-automation-infra
+  DEPLOY_DIR: "$HOME/visa-automation-infra"
 
 jobs:
   deploy-prod:
@@ -73,7 +73,7 @@ jobs:
             set -e
 
             DEPLOY_DIR="${{ env.DEPLOY_DIR }}"
-            ENV_FILE=~/visa-automation-env/.env.prod
+            ENV_FILE="$HOME/visa-automation-env/.env.prod"
             COMPOSE_DIR="${DEPLOY_DIR}/infra/docker/prod"
 
             cd "${COMPOSE_DIR}"
