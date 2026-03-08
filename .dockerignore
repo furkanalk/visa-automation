@@ -9,9 +9,6 @@
 # Compiled output — rebuilt inside Docker
 **/dist
 
-# Web apps (not needed for cp/dp images)
-apps/web
-
 # Test / infra
 tests/
 infra/
