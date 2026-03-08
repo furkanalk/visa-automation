@@ -120,6 +120,11 @@ export async function slotHunt(args: {
   // AJAX success callback'i window.dateDisabled'ı güncelleyene kadar kısa bekle (jQuery async)
   await sleep(300);
 
+  // enteredCode pre-fill: only attempt when value is already known (e.g. pre-loaded from applicant_data).
+  // If !slotCheckOnly and enteredCode input exists but value is unknown, do NOT abort here —
+  // slot availability is checked first (polling loop below), and if a slot is found the HITL
+  // mechanism in handlers.ts will prompt the operator for the code before submit.
+  // This allows "run-booking" (slot_check_only=false, no open_dates) to work without a prior scout run.
   if (!slotCheckOnly) {
     const enteredCodeEl = await page.$(S.inputs.enteredCode);
     if (enteredCodeEl) {
@@ -128,9 +133,9 @@ export async function slotHunt(args: {
         await rateLimiter.take();
         await throttler.beforeAction();
         await page.fill(S.inputs.enteredCode, String(code).trim());
-      } else {
-        return { found: false, needsHitl: true };
+        log.debug({}, 'slotHunt: pre-filled enteredCode from applicant_data');
       }
+      // If code unknown, fall through to poll loop — HITL will handle it at submit time if needed.
     }
   }
 

@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Modal } from "@/components/ui/modal";
 import { cpApi, NotifySettings, NotifyRouting } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
 import { SaveBanner } from "@/components/ui/save-banner";
@@ -20,6 +21,7 @@ import {
   Eye,
   EyeOff,
   SlidersHorizontal,
+  Settings2,
 } from "lucide-react";
 
 const REDACTED = "********";
@@ -71,6 +73,7 @@ export default function NotificationsPage() {
   const [testEmailTo, setTestEmailTo] = useState("visorhq.notify@outlook.com");
   const [routing, setRouting] = useState<NotifyRouting>(buildDefaultRouting());
   const [bookingSendToCustomer, setBookingSendToCustomer] = useState(false);
+  const [routingModalOpen, setRoutingModalOpen] = useState(false);
 
   // Fetch current settings
   const { data: settings, isLoading, refetch } = useQuery({
@@ -532,124 +535,190 @@ export default function NotificationsPage() {
         {/* Routing */}
         <Card className="md:col-span-2">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-gray-900 dark:text-white">
-              <SlidersHorizontal className="h-5 w-5" />
-              Notification Routing
-            </CardTitle>
-            <CardDescription>
-              Choose which channels each event type should use. Telegram and Email can be toggled independently per event.
-            </CardDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-gray-900 dark:text-white">
+                  <SlidersHorizontal className="h-5 w-5" />
+                  Notification Routing
+                </CardTitle>
+                <CardDescription className="mt-1">
+                  Per-event channel control — choose which events go to Telegram and/or Email.
+                </CardDescription>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => setRoutingModalOpen(true)}>
+                <Settings2 className="h-4 w-4 mr-1.5" />
+                Configure
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-200 dark:border-gray-700">
-                    <th className="text-left py-2 pr-4 font-medium text-gray-700 dark:text-gray-300 w-48">Event</th>
-                    <th className="text-left py-2 pr-4 font-medium text-gray-700 dark:text-gray-300 w-64">Description</th>
-                    <th className="py-2 px-6 font-medium text-center">
-                      <span className="flex items-center justify-center gap-1.5">
-                        <MessageCircle className="h-4 w-4 text-blue-500" />
-                        Telegram
-                      </span>
-                    </th>
-                    <th className="py-2 px-6 font-medium text-center">
-                      <span className="flex items-center justify-center gap-1.5">
-                        <Mail className="h-4 w-4 text-green-500" />
-                        Email
-                      </span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ROUTING_EVENTS.map((ev, i) => {
-                    const r = routing[ev.key] ?? { telegram: ev.defaultTelegram, email: ev.defaultEmail };
-                    return (
-                      <tr
-                        key={ev.key}
-                        className={`border-b border-gray-100 dark:border-gray-800 ${i % 2 === 0 ? "bg-gray-50/50 dark:bg-gray-800/20" : ""}`}
-                      >
-                        <td className="py-3 pr-4 font-medium text-gray-900 dark:text-white">{ev.label}</td>
-                        <td className="py-3 pr-4 text-gray-500 dark:text-gray-400">{ev.description}</td>
-                        <td className="py-3 px-6 text-center">
-                          <label className="inline-flex items-center cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={r.telegram ?? ev.defaultTelegram}
-                              disabled={!telegramEnabled}
-                              onChange={(e) =>
-                                setRouting((prev) => ({
-                                  ...prev,
-                                  [ev.key]: { ...r, telegram: e.target.checked },
-                                }))
-                              }
-                              className="h-4 w-4 rounded border-gray-300 accent-blue-600"
-                            />
-                          </label>
-                          {!telegramEnabled && (
-                            <span className="block text-xs text-gray-400 mt-0.5">disabled</span>
-                          )}
-                        </td>
-                        <td className="py-3 px-6 text-center">
-                          <label className="inline-flex items-center cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={r.email ?? ev.defaultEmail}
-                              disabled={!emailEnabled}
-                              onChange={(e) =>
-                                setRouting((prev) => ({
-                                  ...prev,
-                                  [ev.key]: { ...r, email: e.target.checked },
-                                }))
-                              }
-                              className="h-4 w-4 rounded border-gray-300 accent-green-600"
-                            />
-                          </label>
-                          {!emailEnabled && (
-                            <span className="block text-xs text-gray-400 mt-0.5">disabled</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            {/* Summary chips */}
+            <div className="flex flex-wrap gap-2">
+              {ROUTING_EVENTS.map((ev) => {
+                const r = routing[ev.key] ?? { telegram: ev.defaultTelegram, email: ev.defaultEmail };
+                const tg = r.telegram ?? ev.defaultTelegram;
+                const em = r.email ?? ev.defaultEmail;
+                return (
+                  <button
+                    key={ev.key}
+                    type="button"
+                    onClick={() => setRoutingModalOpen(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors text-sm cursor-pointer"
+                  >
+                    <span className="font-medium text-gray-800 dark:text-gray-200">{ev.label}</span>
+                    <span className={`h-2 w-2 rounded-full ${tg && telegramEnabled ? "bg-blue-500" : "bg-gray-300 dark:bg-gray-600"}`} title="Telegram" />
+                    <span className={`h-2 w-2 rounded-full ${em && emailEnabled ? "bg-green-500" : "bg-gray-300 dark:bg-gray-600"}`} title="Email" />
+                  </button>
+                );
+              })}
             </div>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-3">
-              Channels must be enabled above (Telegram / Email) for routing to take effect. Unchecking here suppresses the send even when the channel is enabled.
-            </p>
-
-            {/* Customer email toggle */}
-            <div className="mt-5 border-t border-gray-200 dark:border-gray-700 pt-5">
-              <div className="flex items-start gap-4">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <Mail className="h-4 w-4 text-green-500 shrink-0" />
-                    <span className="text-sm font-medium text-gray-900 dark:text-white">Send booking confirmation to customer</span>
-                    <Badge variant="secondary" className="text-xs">Booking</Badge>
-                  </div>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-6">
-                    When enabled, a clean customer-friendly confirmation email is sent directly to the applicant's email address (from <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1 rounded">applicant_data.email</code>). The email shows confirmation number, appointment date, and service — without internal job IDs.
-                  </p>
-                </div>
-                <label className="flex items-center gap-2 cursor-pointer shrink-0 mt-1">
-                  <input
-                    type="checkbox"
-                    checked={bookingSendToCustomer}
-                    onChange={(e) => setBookingSendToCustomer(e.target.checked)}
-                    disabled={!emailEnabled}
-                    className="h-4 w-4 rounded border-gray-300 accent-green-600"
-                  />
-                  <span className="text-sm text-gray-500">{bookingSendToCustomer ? "On" : "Off"}</span>
-                </label>
+            <div className="flex items-center gap-3 mt-3">
+              <span className="flex items-center gap-1 text-xs text-gray-400"><span className="h-2 w-2 rounded-full bg-blue-500 inline-block" /> Telegram active</span>
+              <span className="flex items-center gap-1 text-xs text-gray-400"><span className="h-2 w-2 rounded-full bg-green-500 inline-block" /> Email active</span>
+              <span className="flex items-center gap-1 text-xs text-gray-400"><span className="h-2 w-2 rounded-full bg-gray-300 dark:bg-gray-600 inline-block" /> Off / channel disabled</span>
+            </div>
+            {bookingSendToCustomer && emailEnabled && (
+              <div className="mt-3 flex items-center gap-2 text-xs text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg px-3 py-2">
+                <Mail className="h-3.5 w-3.5 shrink-0" />
+                Customer booking confirmation email is enabled.
               </div>
-              {!emailEnabled && (
-                <p className="text-xs text-amber-600 dark:text-amber-400 mt-2 ml-6">Enable Email (SMTP) above to use this feature.</p>
-              )}
-            </div>
+            )}
           </CardContent>
         </Card>
       </div>
+
+      {/* Routing Modal */}
+      <Modal
+        open={routingModalOpen}
+        onClose={() => setRoutingModalOpen(false)}
+        title="Notification Routing"
+        description="Choose which channels each event type uses. Changes take effect after Save All."
+        size="lg"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setRoutingModalOpen(false)}>
+              Close
+            </Button>
+            <Button
+              onClick={() => {
+                setRoutingModalOpen(false);
+                handleSave();
+              }}
+              disabled={saveMutation.isPending}
+            >
+              {saveMutation.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
+              Save & Close
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-5">
+          {/* Routing table */}
+          <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 dark:bg-gray-800/60 border-b border-gray-200 dark:border-gray-700">
+                  <th className="text-left py-2.5 px-4 font-medium text-gray-700 dark:text-gray-300">Event</th>
+                  <th className="text-left py-2.5 px-4 font-medium text-gray-500 dark:text-gray-400 hidden sm:table-cell">Description</th>
+                  <th className="py-2.5 px-5 font-medium text-center">
+                    <span className="flex items-center justify-center gap-1.5">
+                      <MessageCircle className="h-4 w-4 text-blue-500" />
+                      Telegram
+                    </span>
+                  </th>
+                  <th className="py-2.5 px-5 font-medium text-center">
+                    <span className="flex items-center justify-center gap-1.5">
+                      <Mail className="h-4 w-4 text-green-500" />
+                      Email
+                    </span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {ROUTING_EVENTS.map((ev, i) => {
+                  const r = routing[ev.key] ?? { telegram: ev.defaultTelegram, email: ev.defaultEmail };
+                  return (
+                    <tr
+                      key={ev.key}
+                      className={`border-b border-gray-100 dark:border-gray-800 last:border-0 ${i % 2 === 0 ? "" : "bg-gray-50/60 dark:bg-gray-800/20"}`}
+                    >
+                      <td className="py-3 px-4 font-medium text-gray-900 dark:text-white whitespace-nowrap">{ev.label}</td>
+                      <td className="py-3 px-4 text-gray-500 dark:text-gray-400 hidden sm:table-cell">{ev.description}</td>
+                      <td className="py-3 px-5 text-center">
+                        <label className="inline-flex flex-col items-center gap-0.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={r.telegram ?? ev.defaultTelegram}
+                            disabled={!telegramEnabled}
+                            onChange={(e) =>
+                              setRouting((prev) => ({
+                                ...prev,
+                                [ev.key]: { ...r, telegram: e.target.checked },
+                              }))
+                            }
+                            className="h-4 w-4 rounded border-gray-300 accent-blue-600"
+                          />
+                          {!telegramEnabled && <span className="text-xs text-gray-400">off</span>}
+                        </label>
+                      </td>
+                      <td className="py-3 px-5 text-center">
+                        <label className="inline-flex flex-col items-center gap-0.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={r.email ?? ev.defaultEmail}
+                            disabled={!emailEnabled}
+                            onChange={(e) =>
+                              setRouting((prev) => ({
+                                ...prev,
+                                [ev.key]: { ...r, email: e.target.checked },
+                              }))
+                            }
+                            className="h-4 w-4 rounded border-gray-300 accent-green-600"
+                          />
+                          {!emailEnabled && <span className="text-xs text-gray-400">off</span>}
+                        </label>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <p className="text-xs text-gray-400 dark:text-gray-500">
+            Channels must be enabled (Telegram / SMTP) for routing to take effect. Unchecking suppresses the send even when the channel is on.
+          </p>
+
+          {/* Customer booking email */}
+          <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-gray-50/50 dark:bg-gray-800/30">
+            <div className="flex items-start gap-4">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Mail className="h-4 w-4 text-green-500 shrink-0" />
+                  <span className="text-sm font-medium text-gray-900 dark:text-white">Send booking confirmation to customer</span>
+                  <Badge variant="secondary" className="text-xs">Booking only</Badge>
+                </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5 ml-6">
+                  Sends a clean customer-facing email to <code className="text-xs bg-gray-100 dark:bg-gray-700 px-1 rounded">applicant_data.email</code> after a successful booking — no internal job IDs, just confirmation number, date and service.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={!emailEnabled}
+                onClick={() => emailEnabled && setBookingSendToCustomer((v) => !v)}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors mt-0.5 ${
+                  !emailEnabled ? "bg-gray-200 dark:bg-slate-600 cursor-not-allowed opacity-50" : bookingSendToCustomer ? "bg-green-500" : "bg-gray-300 dark:bg-slate-600"
+                }`}
+              >
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${bookingSendToCustomer && emailEnabled ? "translate-x-6" : "translate-x-1"}`} />
+              </button>
+            </div>
+            {!emailEnabled && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-2 ml-6">Enable Email (SMTP) above to use this feature.</p>
+            )}
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
