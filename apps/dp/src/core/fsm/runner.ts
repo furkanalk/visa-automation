@@ -21,6 +21,8 @@ export interface FSMContext {
   rateLimiter: RateLimiter;
   page: import('playwright').Page;
   logger: Logger;
+  /** Epoch ms when the job run started — used for min-run-duration enforcement before submit */
+  jobStartMs: number;
 }
 
 export type StateHandler = (ctx: FSMContext) => Promise<void>;
@@ -79,7 +81,9 @@ export async function runFSM(
   /** From profile: fingerprint.enabled → consistent locale/timezone/userAgent */
   fingerprint?: { enabled?: boolean },
   /** Human-readable agent name shown in job event timeline (e.g. "Agent Alpha"). Falls back to workerId. */
-  agentName?: string | null
+  agentName?: string | null,
+  /** Epoch ms when the job run started — forwarded to FSMContext for min-run-duration enforcement */
+  jobStartMs?: number
 ): Promise<FSMResult> {
   const jobRepo = new JobRepository(db.instance);
   const eventRepo = new JobEventRepository(db.instance);
@@ -273,6 +277,7 @@ export async function runFSM(
         rateLimiter,
         page: jc.page,
         logger,
+        jobStartMs: jobStartMs ?? 0,
       });
       // After each handler: check that the page is still on the expected origin.
       // If not, bot-detection likely fired (e.g. startSuspiciousCheck → google.com).

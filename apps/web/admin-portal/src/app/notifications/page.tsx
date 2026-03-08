@@ -28,13 +28,13 @@ const REDACTED = "********";
 
 type RoutingKey = keyof NotifyRouting;
 
-const ROUTING_EVENTS: { key: RoutingKey; label: string; description: string; defaultTelegram: boolean; defaultEmail: boolean }[] = [
-  { key: "slot_open",   label: "Slot Open",      description: "A new appointment slot was found",         defaultTelegram: true,  defaultEmail: false },
-  { key: "booking",     label: "Booking",         description: "Appointment successfully booked",          defaultTelegram: true,  defaultEmail: true  },
-  { key: "agent_start", label: "Agent Started",   description: "Agent began processing a job",             defaultTelegram: true,  defaultEmail: false },
-  { key: "agent_done",  label: "Agent Completed", description: "Agent finished a job (all outcomes)",      defaultTelegram: true,  defaultEmail: false },
-  { key: "agent_fail",  label: "Agent Failed",    description: "Agent encountered a terminal error",       defaultTelegram: true,  defaultEmail: false },
-  { key: "hitl",        label: "HITL Required",   description: "Human-in-the-loop input needed",           defaultTelegram: true,  defaultEmail: false },
+const ROUTING_EVENTS: { key: RoutingKey; label: string; description: string; defaultTelegram: boolean; defaultEmail: boolean; emailSupported: boolean }[] = [
+  { key: "slot_open",   label: "Slot Open",      description: "A new appointment slot was found",         defaultTelegram: true,  defaultEmail: false, emailSupported: false },
+  { key: "booking",     label: "Booking",         description: "Appointment successfully booked",          defaultTelegram: true,  defaultEmail: true,  emailSupported: true  },
+  { key: "agent_start", label: "Agent Started",   description: "Agent began processing a job",             defaultTelegram: true,  defaultEmail: false, emailSupported: false },
+  { key: "agent_done",  label: "Agent Completed", description: "Agent finished a job (all outcomes)",      defaultTelegram: true,  defaultEmail: false, emailSupported: false },
+  { key: "agent_fail",  label: "Agent Failed",    description: "Agent encountered a terminal error",       defaultTelegram: true,  defaultEmail: false, emailSupported: false },
+  { key: "hitl",        label: "HITL Required",   description: "Human-in-the-loop input needed",           defaultTelegram: true,  defaultEmail: false, emailSupported: true  },
 ];
 
 function buildDefaultRouting(): NotifyRouting {
@@ -67,6 +67,8 @@ export default function NotificationsPage() {
   const [smtpPass, setSmtpPass] = useState("");
   const [smtpFrom, setSmtpFrom] = useState("");
   const [smtpSecure, setSmtpSecure] = useState(false);
+  const [fallbackEmail, setFallbackEmail] = useState("");
+  const [emailOverride, setEmailOverride] = useState("");
   const [webhookEnabled, setWebhookEnabled] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState("");
   const [webhookSecret, setWebhookSecret] = useState("");
@@ -97,6 +99,8 @@ export default function NotificationsPage() {
       setSmtpPass(settings.smtp_pass === "***REDACTED***" ? "" : settings.smtp_pass || "");
       setSmtpFrom(settings.smtp_from || "");
       setSmtpSecure(settings.smtp_secure);
+      setFallbackEmail(settings.fallback_email || "");
+      setEmailOverride(settings.email_override || "");
       setWebhookEnabled(settings.webhook_enabled);
       setWebhookUrl(settings.webhook_url || "");
       setWebhookSecret(settings.webhook_secret === "***REDACTED***" ? "" : settings.webhook_secret || "");
@@ -191,6 +195,8 @@ export default function NotificationsPage() {
       smtp_user: emailEnabled ? (smtpUser || null) : null,
       smtp_from: emailEnabled ? (smtpFrom || null) : null,
       smtp_secure: smtpSecure,
+      fallback_email: fallbackEmail.trim() || null,
+      email_override: emailOverride.trim() || null,
       webhook_url: webhookEnabled ? (webhookUrl || null) : null,
       notify_routing: routing,
       booking_send_to_customer: bookingSendToCustomer,
@@ -423,15 +429,28 @@ export default function NotificationsPage() {
                 )}
               </div>
             </div>
-            <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300">From Address</label>
-              <Input
-                placeholder="notifications@example.com"
-                value={smtpFrom}
-                onChange={(e) => setSmtpFrom(e.target.value)}
-                className="mt-1"
-                disabled={!emailEnabled}
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">From Address</label>
+                <Input
+                  placeholder="notifications@example.com"
+                  value={smtpFrom}
+                  onChange={(e) => setSmtpFrom(e.target.value)}
+                  className="mt-1"
+                  disabled={!emailEnabled}
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">System Recipient</label>
+                <Input
+                  placeholder="visorhq.notify@outlook.com"
+                  value={fallbackEmail}
+                  onChange={(e) => setFallbackEmail(e.target.value)}
+                  className="mt-1"
+                  disabled={!emailEnabled}
+                />
+                <p className="text-xs text-gray-500 mt-1">Ops emails (bookings, failures) are sent here.</p>
+              </div>
             </div>
             <label className="flex items-center gap-2 cursor-pointer">
               <input
@@ -567,7 +586,7 @@ export default function NotificationsPage() {
                   >
                     <span className="font-medium text-gray-800 dark:text-gray-200">{ev.label}</span>
                     <span className={`h-2 w-2 rounded-full ${tg && telegramEnabled ? "bg-blue-500" : "bg-gray-300 dark:bg-gray-600"}`} title="Telegram" />
-                    <span className={`h-2 w-2 rounded-full ${em && emailEnabled ? "bg-green-500" : "bg-gray-300 dark:bg-gray-600"}`} title="Email" />
+                    <span className={`h-2 w-2 rounded-full ${ev.emailSupported && em && emailEnabled ? "bg-green-500" : "bg-gray-300 dark:bg-gray-600"}`} title={ev.emailSupported ? "Email" : "Email not supported"} />
                   </button>
                 );
               })}
@@ -662,6 +681,7 @@ export default function NotificationsPage() {
                         </label>
                       </td>
                       <td className="py-3 px-5 text-center">
+                        {ev.emailSupported ? (
                         <label className="inline-flex flex-col items-center gap-0.5 cursor-pointer">
                           <input
                             type="checkbox"
@@ -677,6 +697,9 @@ export default function NotificationsPage() {
                           />
                           {!emailEnabled && <span className="text-xs text-gray-400">off</span>}
                         </label>
+                        ) : (
+                          <span className="text-xs text-gray-400 dark:text-gray-600" title="Email not implemented for this event">—</span>
+                        )}
                       </td>
                     </tr>
                   );

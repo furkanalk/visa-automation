@@ -24,6 +24,7 @@ import { authRoutes } from './routes/auth.js';
 import { mockPortalRoutes } from './routes/mock-portal.js';
 import { bugReportRoutes } from './routes/bug-report.js';
 import { publicJobRoutes } from './routes/public-jobs.js';
+import { receiptRoutes } from './routes/receipt.js';
 import { tenantMiddleware } from './middleware/tenant.js';
 import { auditPreHandler, auditOnSend } from './middleware/audit.js';
 import type { FastifyError, FastifyRequest, FastifyReply } from 'fastify';
@@ -67,6 +68,9 @@ export async function createApp(): Promise<FastifyInstance> {
 
   // Public API routes (same contract as former apps/api; no tenant middleware)
   await app.register(publicJobRoutes, { prefix: '/api/jobs' });
+
+  // Receipt PDF endpoint — has its own token-based auth (also works with CP session cookie via tenantMiddleware)
+  await app.register(receiptRoutes, { prefix: '/cp/jobs' });
 
   // Control Plane routes (all require tenant context)
   await app.register(async (cpApp) => {

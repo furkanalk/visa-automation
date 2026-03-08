@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Modal, FormField } from "@/components/ui/modal";
-import { cpApi, Job, JobEvent, JobRun } from "@/lib/api";
+import { cpApi, Job, JobEvent, JobRun, fetchScreenshotBlob, fetchFileText } from "@/lib/api";
 import { SaveBanner } from "@/components/ui/save-banner";
 import {
   Briefcase,
@@ -885,30 +885,9 @@ function JobDetailModal({
                 <div className="text-center py-8 text-gray-500">No files recorded for this job</div>
               ) : (
                 <div className="space-y-2">
-                  {screenshots.items.map((file) => {
-                    const isHtml = file.content_type === "text/html";
-                    const isImage = file.content_type.startsWith("image/");
-                    const href = `/cp/screenshots/${file.job_id}/${file.filename}`;
-                    return (
-                      <div key={file.filename} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-900 rounded-md">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="text-lg">{isHtml ? "📄" : isImage ? "🖼️" : "📎"}</span>
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{file.filename}</p>
-                            <p className="text-xs text-gray-500 dark:text-gray-400">{file.content_type}</p>
-                          </div>
-                        </div>
-                        <a
-                          href={href}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="ml-3 shrink-0 text-xs text-primary hover:underline font-medium"
-                        >
-                          {isHtml ? "Open HTML" : "View"}
-                        </a>
-                      </div>
-                    );
-                  })}
+                  {screenshots.items.map((file) => (
+                    <FileItem key={file.filename} file={file} />
+                  ))}
                 </div>
               )}
             </div>
@@ -916,6 +895,94 @@ function JobDetailModal({
         </div>
       </div>
     </div>
+  );
+}
+
+function FileItem({ file }: { file: { job_id: string; filename: string; content_type: string } }) {
+  const [loading, setLoading] = useState(false);
+  const [htmlContent, setHtmlContent] = useState<string | null>(null);
+  const isHtml = file.content_type === "text/html";
+  const isImage = file.content_type.startsWith("image/");
+
+  const handleOpen = async () => {
+    setLoading(true);
+    try {
+      const path = `/cp/screenshots/${file.job_id}/${file.filename}`;
+      if (isHtml) {
+        // Show raw HTML source inline in a modal instead of opening a new tab
+        const text = await fetchFileText(path);
+        if (text === null) { alert("Failed to load file — check your session or file availability."); return; }
+        setHtmlContent(text);
+      } else {
+        const blobUrl = await fetchScreenshotBlob(path);
+        if (!blobUrl) { alert("Failed to load file — check your session or file availability."); return; }
+        const win = window.open(blobUrl, "_blank");
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+        if (!win) alert("Popup blocked — please allow popups for this site.");
+      }
+    } catch (e) {
+      alert(`Error opening file: ${String(e)}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-900 rounded-md">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-lg">{isHtml ? "📄" : isImage ? "🖼️" : "📎"}</span>
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{file.filename}</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">{file.content_type}</p>
+          </div>
+        </div>
+        <button
+          onClick={handleOpen}
+          disabled={loading}
+          className="ml-3 shrink-0 text-xs text-primary hover:underline font-medium disabled:opacity-50 disabled:cursor-wait"
+        >
+          {loading ? "Loading…" : isHtml ? "View Source" : "View"}
+        </button>
+      </div>
+
+      {/* HTML source modal */}
+      {htmlContent !== null && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
+          onClick={() => setHtmlContent(null)}
+        >
+          <div
+            className="relative bg-gray-950 rounded-lg shadow-2xl w-[92vw] max-w-5xl h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800 shrink-0">
+              <span className="text-sm font-mono text-gray-300">{file.filename}</span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500">{htmlContent.length.toLocaleString()} chars</span>
+                <button
+                  onClick={() => navigator.clipboard.writeText(htmlContent)}
+                  className="text-xs text-blue-400 hover:text-blue-300"
+                >
+                  Copy
+                </button>
+                <button
+                  onClick={() => setHtmlContent(null)}
+                  className="text-gray-400 hover:text-white text-lg leading-none"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            {/* Code block */}
+            <pre className="flex-1 overflow-auto p-4 text-xs text-green-300 font-mono leading-relaxed whitespace-pre-wrap break-all">
+              {htmlContent}
+            </pre>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

@@ -6,7 +6,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-MIGRATIONS_DIR="$PROJECT_ROOT/packages/db/migrations"
+# Allow MIGRATIONS_DIR to be overridden (e.g. inside the bootstrap Docker image)
+MIGRATIONS_DIR="${MIGRATIONS_DIR:-$PROJECT_ROOT/packages/db/migrations}"
 
 # Database connection settings
 DB_HOST="${DB_HOST:-localhost}"

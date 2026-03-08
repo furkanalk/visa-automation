@@ -3,4 +3,5 @@
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
-exec docker compose --env-file .env.prod -f compose.yml -f prod-override.yml down "$@"
+ENV_FILE="${HOME}/visa-automation-env/.env.prod"
+exec docker compose --env-file "${ENV_FILE}" -f compose.yml -f prod-override.yml down "$@"

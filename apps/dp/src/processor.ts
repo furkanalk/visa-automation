@@ -36,7 +36,7 @@ export class HitlWaitingError extends Error {
 async function fetchPortalConfigFromCP(
   portalId: string,
   tenantId: string
-): Promise<DeepPartial<PortalConfig> | null> {
+): Promise<(DeepPartial<PortalConfig> & { portalName?: string }) | null> {
   try {
     const url = `${CP_API_URL.replace(/\/$/, '')}/cp/portals/by-portal-id/${encodeURIComponent(portalId)}`;
     const res = await fetch(url, {
@@ -46,6 +46,7 @@ async function fetchPortalConfigFromCP(
     const json = (await res.json()) as {
       success?: boolean;
       data?: {
+        name?: string | null;
         base_url?: string | null;
         config?: Record<string, unknown>;
         selectors?: Record<string, unknown>;
@@ -53,7 +54,8 @@ async function fetchPortalConfigFromCP(
     };
     const data = json?.data;
     if (!data?.base_url) return null;
-    const primary: DeepPartial<PortalConfig> = { baseUrl: data.base_url };
+    const primary: DeepPartial<PortalConfig> & { portalName?: string } = { baseUrl: data.base_url };
+    if (data.name) primary.portalName = data.name;
     if (data.config && typeof data.config === 'object') {
       if (data.config.timeouts && typeof data.config.timeouts === 'object')
         primary.timeouts = data.config.timeouts as PortalConfig['timeouts'];
@@ -168,6 +170,7 @@ export async function processJob(
         `Portal ${portalId} not configured in CP for tenant ${tenant_id}. Add the portal in Admin → Portals with base_url and config.`
       );
     }
+    const portalLabel = primaryFromCP.portalName;
     const jobOverride = (payload.config as Record<string, unknown> | undefined)?.portal as DeepPartial<PortalConfig> | undefined;
     const configPriority = profileConfig?.config_priority ?? 'portal_over_profile';
     const portalConfig = resolvePortalConfig({
@@ -216,24 +219,12 @@ export async function processJob(
       portalConfig,
       handlers,
       (profileConfig?.fingerprint as { enabled?: boolean } | undefined),
-      agentName ?? null
+      agentName ?? null,
+      runStartMs
     );
 
-    // Optional: enforce minimum run duration (human-like timing)
-    // Scout/slot-check jobs are exempt — they run as fast as possible to notify quickly.
-    // Only applies when FSM completed successfully (not on HITL/error paths).
-    // During the wait the job stays at its last FSM state (e.g. SLOT_FOUND) so the UI shows a
-    // meaningful "in progress" state rather than flipping to COMPLETED prematurely.
-    const isScoutJob = (payload.config as Record<string, unknown> | undefined)?.slot_check_only === true;
-    const minRunMs = portalConfig.minRunDurationMs;
-    if (!isScoutJob && minRunMs != null && minRunMs > 0 && result.lastState !== JOB_STATES.WAITING_HITL) {
-      const elapsed = Date.now() - runStartMs;
-      if (elapsed < minRunMs) {
-        const waitMs = minRunMs - elapsed;
-        jobLogger.info({ waitMs, minRunDurationMs: minRunMs, holdState: result.lastState }, 'Min run duration not met — holding before COMPLETED');
-        await new Promise((r) => setTimeout(r, waitMs));
-      }
-    }
+    // Min-run-duration is now enforced inside the FSM handler (before submit),
+    // so no post-FSM sleep needed here.
 
     // Confirmation number override (if portal produced one)
     if (portalResult.confirmationNumber) {
@@ -615,9 +606,23 @@ export async function processJob(
       tenant_id,
       completedFromState,
       JOB_STATES.COMPLETED,
-      { confirmation_number: result.confirmationNumber },
+      {
+        confirmation_number: result.confirmationNumber,
+        ...((result as any).meta ? { booking_meta: (result as any).meta } : {}),
+      },
       jobRun.id
     );
+
+    // Persist confirmation_number into job_status_summary so the receipt PDF endpoint
+    // (and the admin portal) can read it immediately — the trigger only updates current_state.
+    if (result.confirmationNumber) {
+      await db.instance
+        .updateTable('job_status_summary')
+        .set({ confirmation_number: result.confirmationNumber })
+        .where('job_id', '=', job_id)
+        .execute()
+        .catch((e: unknown) => jobLogger.warn({ err: e }, 'Failed to persist confirmation_number to job_status_summary'));
+    }
 
     // Update job run
     await db.instance
@@ -632,19 +637,21 @@ export async function processJob(
 
     // notifyBookingConfirmed (below) sends the booking confirmation email with full details
     try {
-      if (result.confirmationNumber) {
-        await notifyBookingConfirmed({
-          jobId: job_id,
-          jobRunId: jobRun.id,
-          portalId: portalConfig.portalId,
-          tenantId: tenant_id,
-          baseUrl: portalConfig.baseUrl,
-          confirmationNumber: result.confirmationNumber,
-          details: (result as any).meta ?? undefined,
-          payload,
-          logger: jobLogger,
-        });
-      }
+      await notifyBookingConfirmed({
+        jobId: job_id,
+        jobRunId: jobRun.id,
+        portalId: portalConfig.portalId,
+        portalLabel,
+        tenantId: tenant_id,
+        baseUrl: portalConfig.baseUrl,
+        confirmationNumber: result.confirmationNumber ?? 'N/A',
+        details: (result as any).meta ?? undefined,
+        payload,
+        agentName: agentName ?? null,
+        jobStartMs: runStartMs,
+        jobEndMs: Date.now(),
+        logger: jobLogger,
+      });
     } catch (e) {
       jobLogger.error({ err: e }, 'Booking notification failed');
     }

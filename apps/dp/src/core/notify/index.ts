@@ -1,4 +1,5 @@
 import type { Logger } from 'pino';
+import { createHmac } from 'crypto';
 import { getDb, NotifyDedupeRepository } from '@visa-automation/db';
 import { getConfigService } from '../../config/config-service.js';
 import { getNotifySettings } from './notify-settings.js';
@@ -7,7 +8,7 @@ import { formatTimeTR, formatDateTimeTR, maskApplicant } from './format.js';
 import { telegramSendMessage } from './telegram.js';
 import { dedupeOnce } from './dedupe.js';
 import { setSlotStatus } from './status.js';
-import { sendEmail, resolveRecipient, smtpConfigFromNotifySettings } from './email.js';
+import { sendEmail, resolveRecipient, smtpConfigFromNotifySettings, fetchBannerAttachment } from './email.js';
 import { renderBookingConfirmedEmail, renderHitlRequiredEmail } from './templates/index.js';
 import { getEventRouting } from './notify-settings.js';
 
@@ -22,6 +23,42 @@ function getCpNotifyContext(tenantId: string) {
     throw new Error('CP_API_URL and CP_INTERNAL_SECRET are required for notify. Set them in environment.');
   }
   return { cpApiUrl, tenantId, internalSecret };
+}
+
+/**
+ * Build a signed HMAC token for the receipt PDF endpoint.
+ * Must match the verification logic in apps/cp/src/routes/receipt.ts.
+ */
+function buildReceiptToken(jobId: string, type: 'customer' | 'ops'): string {
+  const secret = process.env.RECEIPT_HMAC_SECRET ?? process.env.CP_JWT_SECRET ?? 'changeme';
+  const payload = `${jobId}:${type}`;
+  const sig = createHmac('sha256', secret).update(payload).digest('hex');
+  return `${Buffer.from(payload).toString('base64url')}.${sig}`;
+}
+
+/**
+ * Fetches the receipt PDF from the CP internal API and returns it as an email attachment buffer.
+ * Uses the internal CP_API_URL (Docker network) — not the public URL.
+ */
+async function fetchReceiptPdf(
+  cpApiUrl: string,
+  jobId: string,
+  type: 'customer' | 'ops',
+  logger?: Logger,
+): Promise<Buffer | undefined> {
+  try {
+    const token = buildReceiptToken(jobId, type);
+    const url = `${cpApiUrl.replace(/\/+$/, '')}/cp/jobs/${jobId}/receipt.pdf?type=${type}&token=${encodeURIComponent(token)}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) {
+      logger?.warn({ jobId, type, status: res.status, url }, 'Receipt PDF fetch returned non-OK, skipping attachment');
+      return undefined;
+    }
+    return Buffer.from(await res.arrayBuffer());
+  } catch (e) {
+    logger?.warn({ jobId, type, err: e }, 'Receipt PDF fetch failed, skipping attachment');
+    return undefined;
+  }
 }
 
 /** Split saved [Ops, Bookings, Watcher] chat IDs. Index 0 = Ops, 1 = Bookings, 2 = Watcher. */
@@ -79,7 +116,7 @@ export async function notifySlotFound(args: {
     );
   }
   if (!actionToken || actionToken === 'changeme') {
-    throw new Error('notify_action_token not set in CP system_settings (notify category)');
+    args.logger.warn({ jobId: args.jobId }, 'notify_action_token not set or is default — ACK/STOP buttons will be omitted from Slot Open notification');
   }
 
   const now = new Date();
@@ -197,6 +234,9 @@ export async function notifyBookingConfirmed(args: {
   portalLabel?: string;
   details?: Record<string, unknown>;
   payload?: import('@visa-automation/shared').JobQueuePayload;
+  agentName?: string | null;
+  jobStartMs?: number;
+  jobEndMs?: number;
   logger: Logger;
 }): Promise<void> {
   const { cpApiUrl, tenantId, internalSecret } = getCpNotifyContext(args.tenantId);
@@ -208,8 +248,8 @@ export async function notifyBookingConfirmed(args: {
   const notifyConfig = getConfigService().get('notify');
   const actionBase = (notifyConfig.notify_action_base_url ?? '').replace(/\/+$/, '');
   const actionToken = notifyConfig.notify_action_token ?? '';
-  // Banner URL: served from CP static endpoint
-  const bannerUrl = cpApiUrl ? `${cpApiUrl.replace(/\/+$/, '')}/cp/static/banner-email.png` : undefined;
+  // Banner URL: served from CP static endpoint (internal Docker URL — only for fetching, not for img src)
+  const bannerHttpUrl = cpApiUrl ? `${cpApiUrl.replace(/\/+$/, '')}/cp/static/banner-email.png` : undefined;
 
   try {
     const first = await notifyDedupe().tryRecordSend(args.jobId, 'booked', args.confirmationNumber);
@@ -247,7 +287,16 @@ export async function notifyBookingConfirmed(args: {
   const smtp = smtpConfigFromNotifySettings(settings);
   if (smtp && bookingRouting.email) {
     try {
-      const to = resolveRecipient(args.payload?.applicant_data?.email, settings.fallback_email, settings.email_override);
+      // Fetch banner once for both ops and customer emails
+      const bannerResult = await fetchBannerAttachment(bannerHttpUrl, args.logger);
+      const bannerCid = bannerResult ? `cid:${bannerResult.cid}` : undefined;
+
+      // Fetch receipt PDF from CP (internal Docker URL) and attach to the email
+      const opsPdfBuffer = await fetchReceiptPdf(cpApiUrl, args.jobId, 'ops', args.logger);
+
+      // Ops/audit email always goes to the configured ops address (fallback_email or email_override),
+      // never to the applicant. Customer gets a separate clean email below.
+      const to = resolveRecipient(undefined, settings.fallback_email, settings.email_override);
       const email = renderBookingConfirmedEmail({
         jobId: args.jobId,
         tenantId: args.tenantId,
@@ -257,10 +306,25 @@ export async function notifyBookingConfirmed(args: {
         confirmationNumber: args.confirmationNumber,
         bookedAt: bookedAt ? new Date(bookedAt) : new Date(),
         applicantMasked,
+        applicantData: args.payload?.applicant_data as Record<string, unknown> | undefined,
         details: args.details,
-        bannerUrl,
+        agentName: args.agentName,
+        jobStartMs: args.jobStartMs,
+        jobEndMs: args.jobEndMs,
+        bannerUrl: bannerCid,
       });
-      await sendEmail({ to, subject: email.subject, html: email.html, text: email.text, smtp });
+      const opsAttachments = [
+        ...(bannerResult ? [bannerResult.attachment] : []),
+        ...(opsPdfBuffer ? [{ filename: `receipt-${args.jobId.slice(0, 8)}.pdf`, content: opsPdfBuffer }] : []),
+      ];
+      await sendEmail({
+        to,
+        subject: email.subject,
+        html: email.html,
+        text: email.text,
+        smtp,
+        attachments: opsAttachments.length > 0 ? opsAttachments : undefined,
+      });
       args.logger.info({ jobId: args.jobId, to }, 'Booking ops email sent');
     } catch (e) {
       args.logger.warn({ jobId: args.jobId, err: e }, 'Booking confirmation email failed');
@@ -272,6 +336,9 @@ export async function notifyBookingConfirmed(args: {
     const applicantEmail = args.payload?.applicant_data?.email;
     if (typeof applicantEmail === 'string' && applicantEmail.includes('@')) {
       try {
+        const bannerResult = await fetchBannerAttachment(bannerHttpUrl, args.logger);
+        const bannerCid = bannerResult ? `cid:${bannerResult.cid}` : undefined;
+        const customerPdfBuffer = await fetchReceiptPdf(cpApiUrl, args.jobId, 'customer', args.logger);
         const customerEmail = renderBookingConfirmedEmail({
           jobId: args.jobId,
           tenantId: args.tenantId,
@@ -281,10 +348,23 @@ export async function notifyBookingConfirmed(args: {
           confirmationNumber: args.confirmationNumber,
           bookedAt: bookedAt ? new Date(bookedAt) : new Date(),
           applicantMasked,
+          applicantData: args.payload?.applicant_data as Record<string, unknown> | undefined,
+          details: args.details,
           isCustomerEmail: true,
-          bannerUrl,
+          bannerUrl: bannerCid,
         });
-        await sendEmail({ to: applicantEmail, subject: customerEmail.subject, html: customerEmail.html, text: customerEmail.text, smtp });
+        const customerAttachments = [
+          ...(bannerResult ? [bannerResult.attachment] : []),
+          ...(customerPdfBuffer ? [{ filename: `appointment-receipt.pdf`, content: customerPdfBuffer }] : []),
+        ];
+        await sendEmail({
+          to: applicantEmail,
+          subject: customerEmail.subject,
+          html: customerEmail.html,
+          text: customerEmail.text,
+          smtp,
+          attachments: customerAttachments.length > 0 ? customerAttachments : undefined,
+        });
         args.logger.info({ jobId: args.jobId, to: applicantEmail }, 'Booking customer email sent');
       } catch (e) {
         args.logger.warn({ jobId: args.jobId, err: e }, 'Booking customer email failed');
@@ -310,7 +390,8 @@ export async function notifyHitlRequired(args: {
   const actionBase = (notifyConfig.notify_action_base_url ?? '').replace(/\/+$/, '');
   const panelBase = process.env.HITL_PANEL_BASE_URL?.replace(/\/+$/, '') || actionBase;
   const panelUrl = `${panelBase}/hitl?job=${args.jobId}`;
-  const bannerUrl = cpApiUrl ? `${cpApiUrl.replace(/\/+$/, '')}/cp/static/banner-email.png` : undefined;
+  // Banner HTTP URL: internal Docker URL, fetched and embedded as CID attachment
+  const bannerHttpUrl = cpApiUrl ? `${cpApiUrl.replace(/\/+$/, '')}/cp/static/banner-email.png` : undefined;
 
   const token = settings.telegram_bot_token;
   const { ops: opsChatIds } = getOpsBookingsWatcherChatIds(settings.telegram_chat_ids ?? []);
@@ -339,14 +420,23 @@ export async function notifyHitlRequired(args: {
   if (smtp && hitlRouting.email) {
     try {
       const to = resolveRecipient(undefined, settings.fallback_email, settings.email_override);
+      const bannerResult = await fetchBannerAttachment(bannerHttpUrl, args.logger);
+      const bannerCid = bannerResult ? `cid:${bannerResult.cid}` : undefined;
       const email = renderHitlRequiredEmail({
         jobId: args.jobId,
         hitlType: args.hitlType,
         expiresSeconds: args.expiresSeconds,
         panelUrl,
-        bannerUrl,
+        bannerUrl: bannerCid,
       });
-      await sendEmail({ to, subject: email.subject, html: email.html, text: email.text, smtp });
+      await sendEmail({
+        to,
+        subject: email.subject,
+        html: email.html,
+        text: email.text,
+        smtp,
+        attachments: bannerResult ? [bannerResult.attachment] : undefined,
+      });
     } catch (e) {
       args.logger.warn({ jobId: args.jobId, err: e }, 'HITL required email failed');
     }

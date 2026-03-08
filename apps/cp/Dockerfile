@@ -41,6 +41,8 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY --from=builder --chown=nodeuser:nodejs /app/packages/shared/dist ./packages/shared/dist
 COPY --from=builder --chown=nodeuser:nodejs /app/packages/db/dist ./packages/db/dist
 COPY --from=builder --chown=nodeuser:nodejs /app/apps/cp/dist ./apps/cp/dist
+COPY --chown=nodeuser:nodejs apps/cp/fonts ./apps/cp/fonts
+COPY --chown=nodeuser:nodejs apps/cp/banner-email.png ./apps/cp/banner-email.png
 
 USER nodeuser
 ENV NODE_ENV=production

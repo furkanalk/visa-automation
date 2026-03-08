@@ -9,6 +9,12 @@
 #   PROD_SSH_USER      — SSH user (e.g. ubuntu or deploy)
 #   PROD_SSH_KEY       — private key (PEM)
 #   PROD_SSH_PORT      — SSH port (default 22), optional
+#
+# Server setup (one-time):
+#   mkdir -p ~/visa-automation-env
+#   cp .env.prod.example ~/visa-automation-env/.env.prod   # fill in secrets
+#   chmod 600 ~/visa-automation-env/.env.prod
+#   # No git clone needed — CI pushes infra files via scp on every deploy.
 name: Deploy
 
 on:
@@ -25,6 +31,8 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  # Infra files are placed here on the server by scp; .env.prod lives alongside.
+  DEPLOY_DIR: ~/visa-automation-infra
 
 jobs:
   deploy-prod:
@@ -43,6 +51,17 @@ jobs:
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "owner=${OWNER}" >> $GITHUB_OUTPUT
 
+      - name: Copy infra files to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.PROD_SSH_HOST }}
+          username: ${{ secrets.PROD_SSH_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          port: ${{ secrets.PROD_SSH_PORT || 22 }}
+          source: "infra/docker/prod/compose.yml,infra/docker/prod/prod-override.yml,infra/docker/services,infra/caddy"
+          target: "${{ env.DEPLOY_DIR }}"
+          strip_components: 0
+
       - name: Deploy to production server via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -52,15 +71,18 @@ jobs:
           port: ${{ secrets.PROD_SSH_PORT || 22 }}
           script: |
             set -e
-            cd ~/visa-automation/infra/docker/prod
 
-            # Pull latest repo changes
-            git -C ~/visa-automation pull --ff-only
+            DEPLOY_DIR="${{ env.DEPLOY_DIR }}"
+            ENV_FILE=~/visa-automation-env/.env.prod
+            COMPOSE_DIR="${DEPLOY_DIR}/infra/docker/prod"
 
-            # Log in to GHCR on the server
+            cd "${COMPOSE_DIR}"
+
+            # Log in to GHCR
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
             # Export image tags
+            export IMAGE_BOOTSTRAP=${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-bootstrap:${{ steps.meta.outputs.tag }}
             export IMAGE_CP=${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-cp:${{ steps.meta.outputs.tag }}
             export IMAGE_DP=${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-dp:${{ steps.meta.outputs.tag }}
             export IMAGE_ADMIN_PORTAL=${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-admin-portal:${{ steps.meta.outputs.tag }}
@@ -68,10 +90,10 @@ jobs:
             export IMAGE_MOCK_PORTAL=${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-mock-portal:${{ steps.meta.outputs.tag }}
 
             # Pull new images
-            docker compose --env-file .env.prod -f compose.yml -f prod-override.yml pull
+            docker compose --env-file "${ENV_FILE}" -f compose.yml -f prod-override.yml pull
 
             # Rolling restart
-            docker compose --env-file .env.prod -f compose.yml -f prod-override.yml up -d --no-build --remove-orphans
+            docker compose --env-file "${ENV_FILE}" -f compose.yml -f prod-override.yml up -d --no-build --remove-orphans
 
             # Cleanup old images
             docker image prune -f
@@ -83,7 +105,9 @@ jobs:
           echo "**Owner:** \`${{ steps.meta.outputs.owner }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Images deployed:" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-bootstrap:${{ steps.meta.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- \`${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-cp:${{ steps.meta.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- \`${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-dp:${{ steps.meta.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- \`${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-admin-portal:${{ steps.meta.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- \`${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-staff-portal:${{ steps.meta.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-mock-portal:${{ steps.meta.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY

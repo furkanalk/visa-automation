@@ -8,6 +8,9 @@ services:
     env_file: .env.test
   bootstrap:
     env_file: .env.test
+    build:
+      context: ../../..
+      dockerfile: infra/docker/bootstrap/Dockerfile
   cp:
     env_file: .env.test
     ports:

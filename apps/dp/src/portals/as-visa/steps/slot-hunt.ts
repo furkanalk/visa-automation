@@ -428,12 +428,29 @@ async function runStageB(page: Page, targetDayOfMonth: string, log?: LogAdapter)
  * Booking için tarih ve saat seçimi yapar.
  * verifyRealSlot gibi datepicker'dan ilk açık güne tıklar,
  * ardından #AppointmentTime select'te ilk enabled option'ı seçer.
- * Returns true if a time was successfully selected.
+ * Returns selected flag plus the chosen appointmentDate and appointmentTime strings.
  */
-export async function selectSlotForBooking(page: Page, log?: LogAdapter): Promise<boolean> {
+export async function selectSlotForBooking(
+  page: Page,
+  log?: LogAdapter,
+): Promise<{ selected: boolean; appointmentDate?: string; appointmentTime?: string }> {
   const l: LogAdapter = log ?? { info: () => {}, warn: () => {}, debug: () => {} };
   const isReadonly = (await page.getAttribute(S.inputs.appointmentDate, 'readonly')) != null;
   l.info({ isReadonly }, 'selectSlotForBooking: appointmentDate readonly check');
+
+  /** Read the current values of the appointmentDate input and appointmentTime select from the DOM. */
+  async function readSelectedSlotValues(): Promise<{ appointmentDate?: string; appointmentTime?: string }> {
+    return page.evaluate((sels: { date: string; time: string }) => {
+      const doc = globalThis.document;
+      if (!doc) return {};
+      const dateEl = doc.querySelector(sels.date) as HTMLInputElement | null;
+      const timeEl = doc.querySelector(sels.time) as HTMLSelectElement | null;
+      return {
+        appointmentDate: dateEl?.value?.trim() || undefined,
+        appointmentTime: timeEl?.value?.trim() && timeEl.value !== '0' ? timeEl.value.trim() : undefined,
+      };
+    }, { date: S.inputs.appointmentDate, time: S.selects.appointmentTime }).catch(() => ({}));
+  }
 
   // Stage A: direct fill (non-readonly input)
   if (!isReadonly) {
@@ -453,7 +470,11 @@ export async function selectSlotForBooking(page: Page, log?: LogAdapter): Promis
     if (timeVisible) {
       await waitForTimeOptionsSettled(page);
       const selected = await selectFirstEnabledTimeOption(page);
-      if (selected) { l.info({ dateStr }, 'selectSlotForBooking: stageA selected time'); return true; }
+      if (selected) {
+        const vals = await readSelectedSlotValues();
+        l.info({ dateStr, ...vals }, 'selectSlotForBooking: stageA selected time');
+        return { selected: true, appointmentDate: vals.appointmentDate ?? dateStr, appointmentTime: vals.appointmentTime };
+      }
     }
   }
 
@@ -475,7 +496,7 @@ export async function selectSlotForBooking(page: Page, log?: LogAdapter): Promis
     // Click datepicker input — if it fails (e.g. element not interactable) bail out early
     let clickOk = false;
     await page.click(S.inputs.appointmentDate, { timeout: 3_000 }).then(() => { clickOk = true; }).catch(() => null);
-    if (!clickOk) return false;
+    if (!clickOk) return { selected: false };
 
     const popupSel = await Promise.race([
       page.waitForSelector(S.datepicker.popup, { state: 'visible', timeout: 2_000 })
@@ -483,7 +504,7 @@ export async function selectSlotForBooking(page: Page, log?: LogAdapter): Promis
       page.waitForSelector(S.bootstrapDatepicker.popup, { state: 'visible', timeout: 2_000 })
         .then(() => S.bootstrapDatepicker.popup).catch(() => null),
     ]);
-    if (!popupSel) return false;
+    if (!popupSel) return { selected: false };
     const isBootstrap = await page.$(S.bootstrapDatepicker.popup).then(Boolean).catch(() => false);
     const currentMonthSel = isBootstrap ? S.bootstrapDatepicker.enabledDayCurrentMonth : S.datepicker.enabledDayCurrentMonth;
     const anyMonthSel = isBootstrap ? S.bootstrapDatepicker.enabledDay : S.datepicker.enabledDay;
@@ -502,13 +523,14 @@ export async function selectSlotForBooking(page: Page, log?: LogAdapter): Promis
       .waitForSelector(S.selects.appointmentTime, { state: 'visible', timeout: APPOINTMENT_TIME_VISIBLE_MS })
       .then(() => true)
       .catch(() => false);
-    if (!timeVisible) return false;
+    if (!timeVisible) return { selected: false };
     await waitForTimeOptionsSettled(page);
     const selected = await selectFirstEnabledTimeOption(page);
-    l.info({ selected }, 'selectSlotForBooking: stageB selected time');
-    return selected;
+    const vals = await readSelectedSlotValues();
+    l.info({ selected, ...vals }, 'selectSlotForBooking: stageB selected time');
+    return { selected, appointmentDate: vals.appointmentDate, appointmentTime: vals.appointmentTime };
   } catch {
-    return false;
+    return { selected: false };
   }
 }
 

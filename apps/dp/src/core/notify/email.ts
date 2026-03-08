@@ -1,10 +1,18 @@
 import type { Logger } from 'pino';
 import nodemailer from 'nodemailer';
+import { readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { getDb, NotifyDedupeRepository } from '@visa-automation/db';
 import { NOTIFY_EMOJI } from './severity.js';
 import { dedupeOnce } from './dedupe.js';
 import { getNotifySettings } from './notify-settings.js';
 import type { NotifySettingsFromCP } from './notify-settings.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+// Resolve banner relative to this file: apps/dp/dist/core/notify/ → apps/dp/
+const BANNER_PATH = join(__dirname, '..', '..', '..', 'banner-email.png');
 
 export interface SmtpConfig {
   host: string;
@@ -15,12 +23,20 @@ export interface SmtpConfig {
   secure: boolean;
 }
 
+export interface EmailAttachment {
+  filename: string;
+  content: Buffer;
+  /** CID for inline embedding (e.g. banner). Omit for regular file attachments. */
+  cid?: string;
+}
+
 export async function sendEmail(args: {
   to: string;
   subject: string;
   html?: string;
   text?: string;
   smtp: SmtpConfig;
+  attachments?: EmailAttachment[];
 }): Promise<void> {
   const { smtp } = args;
   const transporter = nodemailer.createTransport({
@@ -36,7 +52,58 @@ export async function sendEmail(args: {
     subject: args.subject,
     html: args.html,
     text: args.text,
+    ...(args.attachments && args.attachments.length > 0 ? { attachments: args.attachments } : {}),
   });
+}
+
+/**
+ * Load the banner image from the local filesystem and return it as a CID attachment.
+ * Returns undefined if the file is not found (email will still be sent without banner).
+ * Mirrors the same approach used in the invite email (apps/cp/src/routes/auth.ts).
+ */
+export function loadBannerAttachment(): { attachment: EmailAttachment; cid: string } | undefined {
+  try {
+    return {
+      cid: 'vizeself-banner',
+      attachment: {
+        filename: 'banner.png',
+        content: readFileSync(BANNER_PATH),
+        cid: 'vizeself-banner',
+      },
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * @deprecated Use loadBannerAttachment() instead.
+ * Kept for any callers that still use the HTTP fetch path.
+ */
+export async function fetchBannerAttachment(
+  bannerHttpUrl: string | undefined,
+  logger?: { warn: (o: object, s: string) => void }
+): Promise<{ attachment: EmailAttachment; cid: string } | undefined> {
+  return loadBannerAttachment() ?? fetchBannerAttachmentHttp(bannerHttpUrl, logger);
+}
+
+async function fetchBannerAttachmentHttp(
+  bannerHttpUrl: string | undefined,
+  logger?: { warn: (o: object, s: string) => void }
+): Promise<{ attachment: EmailAttachment; cid: string } | undefined> {
+  if (!bannerHttpUrl) return undefined;
+  try {
+    const res = await fetch(bannerHttpUrl, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) {
+      logger?.warn({ url: bannerHttpUrl, status: res.status }, 'Banner HTTP fetch returned non-OK, email will be sent without banner');
+      return undefined;
+    }
+    const content = Buffer.from(await res.arrayBuffer());
+    return { cid: 'vizeself-banner', attachment: { filename: 'banner.png', content, cid: 'vizeself-banner' } };
+  } catch (err) {
+    logger?.warn({ url: bannerHttpUrl, err }, 'Banner HTTP fetch failed, email will be sent without banner');
+    return undefined;
+  }
 }
 
 export function resolveRecipient(

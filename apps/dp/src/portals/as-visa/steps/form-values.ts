@@ -93,10 +93,25 @@ function pickAppointmentDate(
 /**
  * Resolve the effective travel date string from applicant data.
  * Priority: explicit travelDate > travelDateSingle > travelDateFrom.
+ *
+ * When travelDateMode is "auto" none of the above will be set.
+ * In that case we derive a travel date from the already-resolved appointmentDate:
+ * appointmentDate + 30 days puts us squarely inside the portal's acceptance window
+ * (travelDate-45 … travelDate-15), so both form validation and display are correct.
  */
-function resolveTravelDateStr(applicantData: Record<string, unknown>): string {
+function resolveTravelDateStr(applicantData: Record<string, unknown>, resolvedAppointmentDate?: string): string {
   const get = (k: string) => { const v = applicantData[k]; return v != null ? String(v).trim() : ''; };
-  return get('travelDate') || get('travelDateSingle') || get('travelDateFrom') || '';
+  const explicit = get('travelDate') || get('travelDateSingle') || get('travelDateFrom');
+  if (explicit) return explicit;
+
+  // Auto-mode fallback: derive from the appointment date agent selected
+  const apptStr = resolvedAppointmentDate || get('appointmentDate');
+  if (!apptStr) return '';
+  const apptDate = parseDateToUtc(apptStr);
+  if (!apptDate) return '';
+  const travelDate = new Date(apptDate);
+  travelDate.setUTCDate(travelDate.getUTCDate() + 30);
+  return formatDdMmYyyy(travelDate);
 }
 
 /**
@@ -113,8 +128,25 @@ function autoPickAppointmentDate(applicantData: Record<string, unknown>): string
   const openDates: string[] = Array.isArray(raw) ? raw.map(String) : [];
   if (openDates.length === 0) return '';
 
-  const travelDateStr = resolveTravelDateStr(applicantData);
-  if (!travelDateStr) return '';
+  // Try explicit travel date first; if auto-mode (none set), derive a synthetic travel date
+  // so that ALL open_dates fall inside the portal's acceptance window [travelDate-45, travelDate-15].
+  // Strategy: travelDate = latestOpenDate + 16 days
+  //   → windowEnd   = travelDate - 15 = latestOpenDate + 1  (latest date is just inside)
+  //   → windowStart = travelDate - 45 = latestOpenDate - 29 (covers ~30 days of history)
+  // This is algorithm-neutral: nearest picks the earliest, farthest picks the latest,
+  // middle picks the median, and 1month/2months use offsets relative to travelDate.
+  let travelDateStr = resolveTravelDateStr(applicantData);
+  if (!travelDateStr) {
+    const sorted = openDates
+      .map(parseDateToUtc)
+      .filter((d): d is Date => d !== null)
+      .sort((a, b) => a.getTime() - b.getTime());
+    if (sorted.length === 0) return '';
+    const latest = sorted[sorted.length - 1];
+    const synthetic = new Date(latest);
+    synthetic.setUTCDate(synthetic.getUTCDate() + 16);
+    travelDateStr = formatDdMmYyyy(synthetic);
+  }
 
   const travelDate = parseDateToUtc(travelDateStr);
   if (!travelDate) return '';
@@ -135,8 +167,11 @@ export function buildAsVisaFormValues(applicantData: Record<string, unknown>): R
   const birthDate = get('birthDate');
   const yearFromBirthDate = birthDate ? birthDate.slice(0, 4) : '';
 
-  // Resolve appointment date: explicit > auto-pick from open_dates
+  // Resolve appointment date first (needed for auto travel-date fallback below)
   const appointmentDate = get('appointmentDate') || autoPickAppointmentDate(applicantData);
+
+  // Resolve travel date: explicit value OR, in auto-mode, derived from the resolved appointment date
+  const travelDate = resolveTravelDateStr(applicantData, appointmentDate || undefined);
 
   return {
     // Visa Information (generic) → selector keys
@@ -154,7 +189,7 @@ export function buildAsVisaFormValues(applicantData: Record<string, unknown>): R
     nationality: get('nationality'),
     appointment: get('appointment'),
     travelSubject: get('travelSubject'),
-    travelDate: resolveTravelDateStr(applicantData),
+    travelDate,
     appointmentDate,
     appointmentTime: get('appointmentTime'),
   };

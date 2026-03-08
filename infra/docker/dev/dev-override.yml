@@ -8,6 +8,9 @@ services:
     env_file: .env.dev
   bootstrap:
     env_file: .env.dev
+    build:
+      context: ../../..
+      dockerfile: infra/docker/bootstrap/Dockerfile
   cp:
     ports:
       - "3001:3001"

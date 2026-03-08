@@ -14,6 +14,100 @@ import type { Page } from 'playwright';
 import { waitForHitlResolution, HitlExpiredError } from '../../../core/hitl/handler.js';
 
 /**
+ * Reads the confirmation number from the post-submit page.
+ * Tries `data-confirmation` attribute first (mock portal), then text content.
+ * Uses locator.waitFor so it reacts the moment the element appears — no busy-loop.
+ */
+async function readConfirmationNumber(page: Page, timeoutMs = 12_000): Promise<string | undefined> {
+  try {
+    // Wait for the page to settle after navigation first
+    await page.waitForLoadState('domcontentloaded', { timeout: timeoutMs }).catch(() => {});
+
+    // Try each selector individually — Playwright waitForSelector supports CSS comma selectors
+    // but some versions can be unreliable. Try sequentially with short timeouts.
+    const selectors = ['[data-confirmation]', '#confirmationNumber', '.confirmation-number'];
+    for (const sel of selectors) {
+      try {
+        const el = await page.waitForSelector(sel, { state: 'visible', timeout: 5_000 });
+        if (!el) continue;
+        const attr = await el.getAttribute('data-confirmation').catch(() => null);
+        if (attr && attr.trim()) return attr.trim();
+        const text = await el.textContent().catch(() => null);
+        if (text) return text.replace(/^Confirmation:\s*/i, '').trim() || undefined;
+      } catch {
+        // Not found with this selector, try next
+      }
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Builds the meta block for FSMHalt from preSubmitDiag (form page fields) with
+ * applicant_data as fallback when the evaluate didn't capture values.
+ */
+function buildBookingMeta(
+  diag: Record<string, unknown>,
+  applicantData: Record<string, unknown>,
+  dates?: unknown,
+  slotValues?: { appointmentDate?: string; appointmentTime?: string },
+): Record<string, unknown> {
+  const pick = (diagKey: string, ...adKeys: string[]): string => {
+    // Highest priority: values returned directly from selectSlotForBooking (freshly read from DOM)
+    if (slotValues) {
+      if (diagKey === 'appointmentDate' && slotValues.appointmentDate) return slotValues.appointmentDate;
+      if (diagKey === 'appointmentTime' && slotValues.appointmentTime) return slotValues.appointmentTime;
+    }
+    const d = diag[diagKey];
+    if (d && typeof d === 'string' && d !== '(missing)' && d.trim()) return d.trim();
+    for (const k of adKeys) {
+      const v = applicantData[k];
+      if (v != null && String(v).trim()) return String(v).trim();
+    }
+    return '';
+  };
+
+  // Resolve travel date: explicit from form/AD, or derive from resolved appointment date (+30 days).
+  // When travelDateMode is "auto" no travelDate/travelDateSingle/travelDateFrom is set in AD,
+  // so we fall back to appointmentDate + 30 days — this keeps the portal's acceptance window
+  // (travelDate-45 … travelDate-15) satisfied and gives a meaningful display value.
+  const resolveTravelDate = (): string => {
+    const explicit = pick('travelDate', 'travelDate', 'travelDateSingle', 'travelDateFrom');
+    if (explicit) return explicit;
+    // Derive from the confirmed appointment date
+    const apptStr = pick('appointmentDate', 'appointmentDate');
+    if (!apptStr) return '';
+    // Parse DD/MM/YYYY or YYYY-MM-DD
+    const parseDdMm = (s: string): Date | null => {
+      const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (dmy) { const d = new Date(Date.UTC(+dmy[3], +dmy[2] - 1, +dmy[1])); return isNaN(d.getTime()) ? null : d; }
+      const ymd = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+      if (ymd) { const d = new Date(Date.UTC(+ymd[1], +ymd[2] - 1, +ymd[3])); return isNaN(d.getTime()) ? null : d; }
+      return null;
+    };
+    const appt = parseDdMm(apptStr);
+    if (!appt) return '';
+    appt.setUTCDate(appt.getUTCDate() + 30);
+    const dd = String(appt.getUTCDate()).padStart(2, '0');
+    const mm = String(appt.getUTCMonth() + 1).padStart(2, '0');
+    return `${dd}/${mm}/${appt.getUTCFullYear()}`;
+  };
+
+  return {
+    bookedAt: new Date().toISOString(),
+    ...(dates !== undefined ? { dates } : {}),
+    appointmentDate: pick('appointmentDate', 'appointmentDate'),
+    appointmentTime: pick('appointmentTime', 'appointmentTime'),
+    travelDate: resolveTravelDate(),
+    travelSubject: pick('travelSubject', 'travelSubject'),
+    appointment: pick('appointment', 'appointment'),
+    nationality: pick('nationality', 'nationality'),
+  };
+}
+
+/**
  * Submit öncesi CAPTCHA / turnstile'ın çözülmesini bekler.
  * - Submit butonu disabled iken bekler (auto-solve: captchaAutoSolveDelayMs ms sonra enable olur).
  * - cfToken input'u varsa value set edilene kadar da bekler.
@@ -65,10 +159,12 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
       // Skip to booking: the form is already filled (FORM_FILLING ran before us).
       // But first select a date + time via datepicker (appointmentTime was not set during fillForm).
       let confirmationNumber: string | undefined;
+      let preSubmitDiag: Record<string, unknown> = {};
+      let slotSelectedResult: { selected: boolean; appointmentDate?: string; appointmentTime?: string } = { selected: false };
       try {
-        const slotSelected = await selectSlotForBooking(ctx.page, ctx.logger);
-        ctx.logger.info({ slotSelected }, 'SLOT_SEARCHING: selectSlotForBooking result (preloaded path)');
-        if (!slotSelected) {
+        slotSelectedResult = await selectSlotForBooking(ctx.page, ctx.logger);
+        ctx.logger.info({ slotSelected: slotSelectedResult }, 'SLOT_SEARCHING: selectSlotForBooking result (preloaded path)');
+        if (!slotSelectedResult.selected) {
           ctx.logger.warn({ jobId: ctx.jobId }, 'selectSlotForBooking failed (preloaded path), halting at SLOT_FOUND');
           throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND });
         }
@@ -122,10 +218,26 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
 
         await ctx.rateLimiter.take();
         await ctx.throttler.beforeAction();
+
+        // Min-run-duration: wait here (before submit) until the configured minimum
+        // session time has elapsed. This includes HITL wait time — the intent is that
+        // the whole session (automation + human interaction) meets the minimum duration.
+        // Scout jobs are exempt (they run as fast as possible).
+        const isScoutJob = (ctx.payload.config as Record<string, unknown> | undefined)?.slot_check_only === true;
+        const minRunMs = ctx.portalConfig.minRunDurationMs;
+        if (!isScoutJob && minRunMs && minRunMs > 0 && ctx.jobStartMs > 0) {
+          const elapsed = Date.now() - ctx.jobStartMs;
+          if (elapsed < minRunMs) {
+            const waitMs = minRunMs - elapsed;
+            ctx.logger.info({ jobId: ctx.jobId, waitMs, minRunDurationMs: minRunMs, elapsed }, 'Min run duration not met — holding before submit');
+            await new Promise((r) => setTimeout(r, waitMs));
+          }
+        }
+
         // CAPTCHA auto-solve bekleme: submit disabled iken bekle (turnstile enable olunca click)
         await waitForSubmitReady(ctx.page, 15_000);
         // Pre-submit diagnostic: log ALL required form field values to catch validation mismatches
-        const preSubmitDiag = await ctx.page.evaluate(() => {
+        preSubmitDiag = await ctx.page.evaluate(() => {
           const g = (sel: string) => (document.querySelector(sel) as HTMLInputElement | HTMLSelectElement | null)?.value ?? '(missing)';
           return {
             cfToken: g('[name="cfToken"]'),
@@ -133,7 +245,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
             appointment: g('#AppointmentTabID'),
             travelSubject: g('[name="TravelSubject"]'),
             travelDate: g('[name="TravelDate"]'),
-            appointmentDate: g('[name="AppointmentDate"]'),
+            appointmentDate: g('#datepicker'),
             appointmentTime: g('#AppointmentTime'),
             email: g('[name="Email"]'),
             reEmail: g('[name="reEmail"]'),
@@ -161,7 +273,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
             // Confirm Swal "UYARI!" — Evet'e tıkla ve navigation'ı bekle (Promise.all garantiler)
             ctx.logger.info({ jobId: ctx.jobId }, 'Swal Evet clicking — waiting for navigation (preloaded path)');
             await Promise.all([
-              ctx.page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 45_000 }),
+              ctx.page.waitForNavigation({ waitUntil: 'load', timeout: 45_000 }),
               swal.click(),
             ]);
             ctx.logger.info({ jobId: ctx.jobId, url: ctx.page.url() }, 'Navigation complete (preloaded path)');
@@ -176,12 +288,8 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
           ctx.logger.warn({ jobId: ctx.jobId }, 'Swal did not appear — form may have submitted directly or validation failed (preloaded path)');
         }
         // Randevu Al butonuna tıklandı ve navigation/Swal adımları tamamlandı.
-        // Confirmation number okumaya çalış ama başarısız olsa bile COMPLETED say —
-        // submit sonrası ne olduğu umrumuzda değil.
-        await ctx.page.locator(S.confirmation.number).first().waitFor({ state: 'visible', timeout: 15_000 }).catch(() => {});
-        const el = ctx.page.locator(S.confirmation.number).first();
-        const text = await el.getAttribute('data-confirmation').catch(() => null) ?? await el.textContent().catch(() => null);
-        if (text) confirmationNumber = text.replace(/^Confirmation:\s*/i, '').trim();
+        // Confirmation number okumaya çalış ama başarısız olsa bile COMPLETED say.
+        confirmationNumber = await readConfirmationNumber(ctx.page);
         ctx.logger.info({ jobId: ctx.jobId, confirmationNumber }, 'Confirmation number read (preloaded path)');
       } catch (err) {
         // FSMHalt thrown intentionally (e.g. HITL escalation) — must propagate, not be swallowed.
@@ -199,7 +307,12 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
       throw new FSMHalt({
         lastState: JOB_STATES.COMPLETED,
         confirmationNumber,
-        meta: { bookedAt: new Date().toISOString(), dates: preloadedDates },
+        meta: buildBookingMeta(
+          preSubmitDiag as Record<string, unknown>,
+          (ctx.payload.applicant_data ?? {}) as Record<string, unknown>,
+          preloadedDates,
+          slotSelectedResult,
+        ),
       });
     }
 
@@ -327,10 +440,22 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
         logger: ctx.logger,
       });
       let confirmationNumberPost: string | undefined;
+      let preSubmitDiagPost: Record<string, unknown> = {};
       try {
         await ctx.rateLimiter.take();
         await ctx.throttler.beforeAction();
         await waitForSubmitReady(ctx.page, 15_000);
+        preSubmitDiagPost = await ctx.page.evaluate(() => {
+          const g = (sel: string) => (document.querySelector(sel) as HTMLInputElement | HTMLSelectElement | null)?.value ?? '';
+          return {
+            nationality: g('#NationalityTabID'),
+            appointment: g('#AppointmentTabID'),
+            travelSubject: g('[name="TravelSubject"]'),
+            travelDate: g('[name="TravelDate"]'),
+            appointmentDate: g('#datepicker'),
+            appointmentTime: g('#AppointmentTime'),
+          };
+        }).catch(() => ({}));
         // HTML dump: capture full page HTML just before submit for post-mortem analysis
         try {
           const html = await ctx.page.content();
@@ -345,7 +470,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
           const hasCancelBtn2 = await ctx.page.locator('.swal2-cancel').isVisible().catch(() => false);
           if (hasCancelBtn2) {
             await Promise.all([
-              ctx.page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 45_000 }),
+              ctx.page.waitForNavigation({ waitUntil: 'load', timeout: 45_000 }),
               swal2.click(),
             ]);
           } else {
@@ -355,10 +480,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
             throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND });
           }
         }
-        await ctx.page.locator(S.confirmation.number).first().waitFor({ state: 'visible', timeout: 15_000 }).catch(() => {});
-        const el2 = ctx.page.locator(S.confirmation.number).first();
-        const txt2 = await el2.getAttribute('data-confirmation').catch(() => null) ?? await el2.textContent().catch(() => null);
-        if (txt2) confirmationNumberPost = txt2.replace(/^Confirmation:\s*/i, '').trim();
+        confirmationNumberPost = await readConfirmationNumber(ctx.page);
       } catch (err) {
         if (err instanceof FSMHalt) throw err;
         ctx.logger.warn({ err, jobId: ctx.jobId }, 'Book step failed (post-HITL normal path)');
@@ -368,7 +490,11 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
       throw new FSMHalt({
         lastState: JOB_STATES.COMPLETED,
         confirmationNumber: confirmationNumberPost,
-        meta: { bookedAt: new Date().toISOString(), dates: res2.dates },
+        meta: buildBookingMeta(
+          preSubmitDiagPost,
+          (ctx.payload.applicant_data ?? {}) as Record<string, unknown>,
+          res2.dates,
+        ),
       });
     }
 
@@ -410,13 +536,14 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
 
       // Book appointment: click "Randevu Al" (submit), handle confirm dialog if present, wait for confirmation page
       let confirmationNumber: string | undefined;
+      let preSubmitDiag: Record<string, unknown> = {};
       try {
         await ctx.rateLimiter.take();
         await ctx.throttler.beforeAction();
         // CAPTCHA auto-solve bekleme: submit disabled iken bekle (turnstile enable olunca click)
         await waitForSubmitReady(ctx.page, 15_000);
         // Pre-submit diagnostic: log ALL required form field values to catch validation mismatches
-        const preSubmitDiag = await ctx.page.evaluate(() => {
+        preSubmitDiag = await ctx.page.evaluate(() => {
           const g = (sel: string) => (document.querySelector(sel) as HTMLInputElement | HTMLSelectElement | null)?.value ?? '(missing)';
           return {
             cfToken: g('[name="cfToken"]'),
@@ -424,7 +551,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
             appointment: g('#AppointmentTabID'),
             travelSubject: g('[name="TravelSubject"]'),
             travelDate: g('[name="TravelDate"]'),
-            appointmentDate: g('[name="AppointmentDate"]'),
+            appointmentDate: g('#datepicker'),
             appointmentTime: g('#AppointmentTime'),
             email: g('[name="Email"]'),
             reEmail: g('[name="reEmail"]'),
@@ -452,7 +579,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
             // Confirm Swal "UYARI!" — Evet'e tıkla ve navigation'ı bekle (Promise.all garantiler)
             ctx.logger.info({ jobId: ctx.jobId }, 'Swal Evet clicking — waiting for navigation (normal path)');
             await Promise.all([
-              ctx.page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 45_000 }),
+              ctx.page.waitForNavigation({ waitUntil: 'load', timeout: 45_000 }),
               swal.click(),
             ]);
             ctx.logger.info({ jobId: ctx.jobId, url: ctx.page.url() }, 'Navigation complete (normal path)');
@@ -467,12 +594,8 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
           ctx.logger.warn({ jobId: ctx.jobId }, 'Swal did not appear — form may have submitted directly or validation failed (normal path)');
         }
         // Randevu Al butonuna tıklandı ve navigation/Swal adımları tamamlandı.
-        // Confirmation number okumaya çalış ama başarısız olsa bile COMPLETED say —
-        // submit sonrası ne olduğu umrumuzda değil.
-        await ctx.page.locator(S.confirmation.number).first().waitFor({ state: 'visible', timeout: 15_000 }).catch(() => {});
-        const el = ctx.page.locator(S.confirmation.number).first();
-        const text = await el.getAttribute('data-confirmation').catch(() => null) ?? await el.textContent().catch(() => null);
-        if (text) confirmationNumber = text.replace(/^Confirmation:\s*/i, '').trim();
+        // Confirmation number okumaya çalış ama başarısız olsa bile COMPLETED say.
+        confirmationNumber = await readConfirmationNumber(ctx.page);
         ctx.logger.info({ jobId: ctx.jobId, confirmationNumber }, 'Confirmation number read (normal path)');
       } catch (err) {
         // FSMHalt thrown intentionally (e.g. HITL escalation) — must propagate, not be swallowed.
@@ -486,7 +609,11 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
       throw new FSMHalt({
         lastState: JOB_STATES.COMPLETED,
         confirmationNumber,
-        meta: { bookedAt: new Date().toISOString(), dates: res.dates },
+        meta: buildBookingMeta(
+          preSubmitDiag as Record<string, unknown>,
+          (ctx.payload.applicant_data ?? {}) as Record<string, unknown>,
+          res.dates,
+        ),
       });
     }
 

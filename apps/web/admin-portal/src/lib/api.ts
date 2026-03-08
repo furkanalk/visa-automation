@@ -136,6 +136,23 @@ export async function fetchScreenshotBlob(screenshotPath: string): Promise<strin
   return URL.createObjectURL(blob);
 }
 
+/** Fetches a file from CP with auth headers and returns raw text content. */
+export async function fetchFileText(screenshotPath: string): Promise<string | null> {
+  const base = getCpApiUrl().replace(/\/+$/, "");
+  const path = screenshotPath.startsWith("/") ? screenshotPath : `/${screenshotPath}`;
+  const url = path.startsWith("/cp/") ? `${base}${path}` : `${base}/cp${path}`;
+  const headers: Record<string, string> = { "x-tenant-id": getTenantId() };
+  const role = getRoles();
+  if (role) headers["x-roles"] = role;
+  const actorId = getActorId();
+  if (actorId) headers["x-actor-id"] = actorId;
+  const actorName = getActorName();
+  if (actorName) headers["x-actor-name"] = actorName;
+  const res = await fetch(url, { headers });
+  if (!res.ok) return null;
+  return res.text();
+}
+
 // CP API endpoints
 export const cpApi = {
   // Agents
