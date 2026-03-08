@@ -10,6 +10,7 @@ interface UploadBody {
   job_id: string;
   filename: string;
   data: string; // base64
+  content_type?: string;
 }
 
 export const screenshotRoutes: FastifyPluginAsync = async (app) => {
@@ -30,7 +31,7 @@ export const screenshotRoutes: FastifyPluginAsync = async (app) => {
         error: { code: 'UNAUTHORIZED', message: 'Invalid or missing X-Internal-Secret' },
       });
     }
-    const { job_id, filename, data: base64 } = request.body ?? {};
+    const { job_id, filename, data: base64, content_type } = request.body ?? {};
     if (!job_id || !filename || !base64) {
       return reply.status(400).send({
         success: false,
@@ -56,10 +57,27 @@ export const screenshotRoutes: FastifyPluginAsync = async (app) => {
     await screenshotRepo.upsert({
       job_id,
       filename,
-      content_type: 'image/png',
+      content_type: content_type ?? 'image/png',
       data: buffer,
     });
     return { success: true, data: { job_id, filename } };
+  });
+
+  /**
+   * List screenshots metadata for a job (no binary data).
+   * GET /cp/screenshots/:jobId
+   */
+  app.get<{ Params: { jobId: string } }>('/:jobId', async (request, reply) => {
+    const { jobId } = request.params;
+    const job = await jobRepo.findByIdAndTenant(jobId, request.tenantId);
+    if (!job) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Job not found' },
+      });
+    }
+    const items = await screenshotRepo.listByJob(jobId);
+    return reply.send({ success: true, data: { items } });
   });
 
   /**

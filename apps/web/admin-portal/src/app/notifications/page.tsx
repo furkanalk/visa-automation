@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { cpApi, NotifySettings } from "@/lib/api";
+import { cpApi, NotifySettings, NotifyRouting } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
 import { SaveBanner } from "@/components/ui/save-banner";
 import {
@@ -19,9 +19,29 @@ import {
   RefreshCw,
   Eye,
   EyeOff,
+  SlidersHorizontal,
 } from "lucide-react";
 
 const REDACTED = "********";
+
+type RoutingKey = keyof NotifyRouting;
+
+const ROUTING_EVENTS: { key: RoutingKey; label: string; description: string; defaultTelegram: boolean; defaultEmail: boolean }[] = [
+  { key: "slot_open",   label: "Slot Open",      description: "A new appointment slot was found",         defaultTelegram: true,  defaultEmail: false },
+  { key: "booking",     label: "Booking",         description: "Appointment successfully booked",          defaultTelegram: true,  defaultEmail: true  },
+  { key: "agent_start", label: "Agent Started",   description: "Agent began processing a job",             defaultTelegram: true,  defaultEmail: false },
+  { key: "agent_done",  label: "Agent Completed", description: "Agent finished a job (all outcomes)",      defaultTelegram: true,  defaultEmail: false },
+  { key: "agent_fail",  label: "Agent Failed",    description: "Agent encountered a terminal error",       defaultTelegram: true,  defaultEmail: false },
+  { key: "hitl",        label: "HITL Required",   description: "Human-in-the-loop input needed",           defaultTelegram: true,  defaultEmail: false },
+];
+
+function buildDefaultRouting(): NotifyRouting {
+  const r: NotifyRouting = {};
+  for (const ev of ROUTING_EVENTS) {
+    r[ev.key] = { telegram: ev.defaultTelegram, email: ev.defaultEmail };
+  }
+  return r;
+}
 
 export default function NotificationsPage() {
   const queryClient = useQueryClient();
@@ -49,6 +69,8 @@ export default function NotificationsPage() {
   const [webhookUrl, setWebhookUrl] = useState("");
   const [webhookSecret, setWebhookSecret] = useState("");
   const [testEmailTo, setTestEmailTo] = useState("visorhq.notify@outlook.com");
+  const [routing, setRouting] = useState<NotifyRouting>(buildDefaultRouting());
+  const [bookingSendToCustomer, setBookingSendToCustomer] = useState(false);
 
   // Fetch current settings
   const { data: settings, isLoading, refetch } = useQuery({
@@ -75,6 +97,19 @@ export default function NotificationsPage() {
       setWebhookEnabled(settings.webhook_enabled);
       setWebhookUrl(settings.webhook_url || "");
       setWebhookSecret(settings.webhook_secret === "***REDACTED***" ? "" : settings.webhook_secret || "");
+      // Merge saved routing over defaults so new events default gracefully
+      const savedRouting = settings.notify_routing ?? {};
+      const merged = buildDefaultRouting();
+      for (const ev of ROUTING_EVENTS) {
+        if (savedRouting[ev.key] !== undefined) {
+          merged[ev.key] = {
+            telegram: savedRouting[ev.key]?.telegram ?? ev.defaultTelegram,
+            email:    savedRouting[ev.key]?.email    ?? ev.defaultEmail,
+          };
+        }
+      }
+      setRouting(merged);
+      setBookingSendToCustomer(settings.booking_send_to_customer ?? false);
     }
   }, [settings]);
 
@@ -154,6 +189,8 @@ export default function NotificationsPage() {
       smtp_from: emailEnabled ? (smtpFrom || null) : null,
       smtp_secure: smtpSecure,
       webhook_url: webhookEnabled ? (webhookUrl || null) : null,
+      notify_routing: routing,
+      booking_send_to_customer: bookingSendToCustomer,
     };
     if (isSuperAdmin) {
       if (telegramEnabled) updates.telegram_bot_token = telegramToken || null;
@@ -488,6 +525,127 @@ export default function NotificationsPage() {
                   <p className="text-xs text-gray-500 mt-1">Only super_admin can view or edit the secret.</p>
                 )}
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Routing */}
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-gray-900 dark:text-white">
+              <SlidersHorizontal className="h-5 w-5" />
+              Notification Routing
+            </CardTitle>
+            <CardDescription>
+              Choose which channels each event type should use. Telegram and Email can be toggled independently per event.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 dark:border-gray-700">
+                    <th className="text-left py-2 pr-4 font-medium text-gray-700 dark:text-gray-300 w-48">Event</th>
+                    <th className="text-left py-2 pr-4 font-medium text-gray-700 dark:text-gray-300 w-64">Description</th>
+                    <th className="py-2 px-6 font-medium text-center">
+                      <span className="flex items-center justify-center gap-1.5">
+                        <MessageCircle className="h-4 w-4 text-blue-500" />
+                        Telegram
+                      </span>
+                    </th>
+                    <th className="py-2 px-6 font-medium text-center">
+                      <span className="flex items-center justify-center gap-1.5">
+                        <Mail className="h-4 w-4 text-green-500" />
+                        Email
+                      </span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ROUTING_EVENTS.map((ev, i) => {
+                    const r = routing[ev.key] ?? { telegram: ev.defaultTelegram, email: ev.defaultEmail };
+                    return (
+                      <tr
+                        key={ev.key}
+                        className={`border-b border-gray-100 dark:border-gray-800 ${i % 2 === 0 ? "bg-gray-50/50 dark:bg-gray-800/20" : ""}`}
+                      >
+                        <td className="py-3 pr-4 font-medium text-gray-900 dark:text-white">{ev.label}</td>
+                        <td className="py-3 pr-4 text-gray-500 dark:text-gray-400">{ev.description}</td>
+                        <td className="py-3 px-6 text-center">
+                          <label className="inline-flex items-center cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={r.telegram ?? ev.defaultTelegram}
+                              disabled={!telegramEnabled}
+                              onChange={(e) =>
+                                setRouting((prev) => ({
+                                  ...prev,
+                                  [ev.key]: { ...r, telegram: e.target.checked },
+                                }))
+                              }
+                              className="h-4 w-4 rounded border-gray-300 accent-blue-600"
+                            />
+                          </label>
+                          {!telegramEnabled && (
+                            <span className="block text-xs text-gray-400 mt-0.5">disabled</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-6 text-center">
+                          <label className="inline-flex items-center cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={r.email ?? ev.defaultEmail}
+                              disabled={!emailEnabled}
+                              onChange={(e) =>
+                                setRouting((prev) => ({
+                                  ...prev,
+                                  [ev.key]: { ...r, email: e.target.checked },
+                                }))
+                              }
+                              className="h-4 w-4 rounded border-gray-300 accent-green-600"
+                            />
+                          </label>
+                          {!emailEnabled && (
+                            <span className="block text-xs text-gray-400 mt-0.5">disabled</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-3">
+              Channels must be enabled above (Telegram / Email) for routing to take effect. Unchecking here suppresses the send even when the channel is enabled.
+            </p>
+
+            {/* Customer email toggle */}
+            <div className="mt-5 border-t border-gray-200 dark:border-gray-700 pt-5">
+              <div className="flex items-start gap-4">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <Mail className="h-4 w-4 text-green-500 shrink-0" />
+                    <span className="text-sm font-medium text-gray-900 dark:text-white">Send booking confirmation to customer</span>
+                    <Badge variant="secondary" className="text-xs">Booking</Badge>
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-6">
+                    When enabled, a clean customer-friendly confirmation email is sent directly to the applicant's email address (from <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1 rounded">applicant_data.email</code>). The email shows confirmation number, appointment date, and service — without internal job IDs.
+                  </p>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer shrink-0 mt-1">
+                  <input
+                    type="checkbox"
+                    checked={bookingSendToCustomer}
+                    onChange={(e) => setBookingSendToCustomer(e.target.checked)}
+                    disabled={!emailEnabled}
+                    className="h-4 w-4 rounded border-gray-300 accent-green-600"
+                  />
+                  <span className="text-sm text-gray-500">{bookingSendToCustomer ? "On" : "Off"}</span>
+                </label>
+              </div>
+              {!emailEnabled && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-2 ml-6">Enable Email (SMTP) above to use this feature.</p>
+              )}
             </div>
           </CardContent>
         </Card>

@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { cpApi } from "@/lib/api";
+import { BugReportButton } from "@/components/layout/bug-report-button";
 import {
   LayoutDashboard,
   Bot,
@@ -166,6 +167,10 @@ export function Sidebar() {
             );
           })}
         </ul>
+        {/* Bug report — bottom of nav, above user section */}
+        <div className="pt-2 mt-2">
+          <BugReportButton />
+        </div>
       </nav>
       <div className="border-t border-gray-800 p-4">
         <div className="flex items-center justify-between">

@@ -5,7 +5,8 @@ export async function uploadScreenshotToCp(
   tenantId: string,
   jobId: string,
   filename: string,
-  buffer: Buffer
+  buffer: Buffer,
+  contentType = 'image/png'
 ): Promise<boolean> {
   const cpApiUrl = process.env.CP_API_URL;
   const internalSecret = process.env.CP_INTERNAL_SECRET;
@@ -21,8 +22,28 @@ export async function uploadScreenshotToCp(
     body: JSON.stringify({
       job_id: jobId,
       filename,
+      content_type: contentType,
       data: buffer.toString('base64'),
     }),
   });
   return res.ok;
+}
+
+/**
+ * Capture the current page HTML and upload it to CP as a debug artifact.
+ * Stored as text/html in job_screenshots; visible in job details → HTML Dumps tab.
+ */
+export async function uploadHtmlDumpToCp(
+  tenantId: string,
+  jobId: string,
+  filename: string,
+  html: string
+): Promise<boolean> {
+  return uploadScreenshotToCp(
+    tenantId,
+    jobId,
+    filename,
+    Buffer.from(html, 'utf8'),
+    'text/html'
+  );
 }

@@ -32,6 +32,21 @@ export class FSMHalt extends Error {
   }
 }
 
+/**
+ * Thrown when the portal redirects the agent to an unexpected domain —
+ * a sign that bot-detection fired (e.g. startSuspiciousCheck → google.com).
+ * Carries the offending URL so it surfaces clearly in job event details.
+ */
+export class SuspiciousRedirectError extends Error {
+  constructor(public readonly redirectedTo: string, expectedOrigin: string) {
+    super(
+      `[SUSPICIOUS_REDIRECT] Page navigated to unexpected origin: ${redirectedTo} (expected: ${expectedOrigin}). ` +
+        'Bot-detection may have fired (startSuspiciousCheck → redirect). Check mouseSimulation config.'
+    );
+    this.name = 'SuspiciousRedirectError';
+  }
+}
+
 import { uploadScreenshotToCp } from '../upload-screenshot.js';
 
 export interface FSMResult {
@@ -62,7 +77,9 @@ export async function runFSM(
   portalConfig: PortalConfig,
   handlers: Partial<Record<JobState, StateHandler>>,
   /** From profile: fingerprint.enabled → consistent locale/timezone/userAgent */
-  fingerprint?: { enabled?: boolean }
+  fingerprint?: { enabled?: boolean },
+  /** Human-readable agent name shown in job event timeline (e.g. "Agent Alpha"). Falls back to workerId. */
+  agentName?: string | null
 ): Promise<FSMResult> {
   const jobRepo = new JobRepository(db.instance);
   const eventRepo = new JobEventRepository(db.instance);
@@ -102,11 +119,13 @@ export async function runFSM(
     if (last) {
       let resumeState: string | null = null;
       if (last.to_state === JOB_STATES.QUEUED && last.from_state === JOB_STATES.WAITING_HITL) {
-        // Requeued after HITL resolve: last event is WAITING_HITL→QUEUED; resume from state we were in when we hit HITL
-        const hitlTransition = await eventRepo.findLatestTransitionToState(job_id, JOB_STATES.WAITING_HITL);
-        if (hitlTransition) resumeState = hitlTransition.from_state;
+        // Requeued after HITL resolve (old path or MANUAL_REVIEW HITL): restart from QUEUED so
+        // LOGIN + FORM_FILLING run again in a fresh browser context.
+        // NOTE: Inline HITL (waitForHitlResolution) never produces this event — the handler resumes
+        // directly in the same browser context without re-queuing.
+        resumeState = JOB_STATES.QUEUED;
       } else if (last.to_state === JOB_STATES.WAITING_HITL) {
-        resumeState = last.from_state;
+        resumeState = JOB_STATES.QUEUED;
       } else {
         resumeState = last.to_state;
       }
@@ -129,7 +148,7 @@ export async function runFSM(
   );
 
   let lastMouseMoveAt = 0;
-  const mouseMoveIntervalMs = portalConfig.mouseMoveIntervalMs ?? 15_000;
+  const mouseMoveIntervalMs = portalConfig.mouseMoveIntervalMs ?? 0;
 
   try {
     // Progress through states
@@ -139,7 +158,7 @@ export async function runFSM(
         const now = Date.now();
         if (now - lastMouseMoveAt >= mouseMoveIntervalMs) {
           lastMouseMoveAt = now;
-          logger.debug({ jobId: job_id }, 'mouse move');
+          logger.trace({ jobId: job_id }, 'mouse move');
           humanLikeMouseMove(jc.page, portalConfig).catch(() => {});
         }
       }
@@ -231,7 +250,10 @@ export async function runFSM(
       tenant_id,
       currentState,
       nextState,
-      { worker_id: workerId },
+      {
+        worker_id: workerId,
+        ...(agentName ? { agent_name: agentName } : {}),
+      },
       jobRunId
     );
     currentState = nextState;
@@ -252,8 +274,11 @@ export async function runFSM(
         page: jc.page,
         logger,
       });
+      // After each handler: check that the page is still on the expected origin.
+      // If not, bot-detection likely fired (e.g. startSuspiciousCheck → google.com).
+      assertExpectedOrigin(jc.page, portalConfig.baseUrl, nextState, logger);
     } else {
-      logger.debug({ jobId: job_id, to: nextState }, 'No handler for state (skipping)');
+      logger.trace({ jobId: job_id, to: nextState }, 'No handler for state (skipping)');
     }
 
     // Small delay to simulate processing (remove in production)
@@ -286,6 +311,44 @@ export async function runFSM(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Check that the Playwright page is still on the expected origin after a state handler runs.
+ * If the page has navigated to a completely different host (e.g. google.com after bot-detection),
+ * throw SuspiciousRedirectError — this surfaces as `error_kind: 'suspicious'` in job events.
+ *
+ * Only fires when the page is open and the portalConfig has a parseable baseUrl.
+ * Closed / blank / about:blank pages are ignored (handler may have closed the page intentionally).
+ */
+function assertExpectedOrigin(
+  page: import('playwright').Page,
+  baseUrl: string,
+  state: string,
+  logger: Logger
+): void {
+  if (page.isClosed()) return;
+  let expectedOrigin: string;
+  try {
+    expectedOrigin = new URL(baseUrl).origin;
+  } catch {
+    return; // baseUrl not parseable — skip check
+  }
+  const currentUrl = page.url();
+  if (!currentUrl || currentUrl === 'about:blank') return;
+  let currentOrigin: string;
+  try {
+    currentOrigin = new URL(currentUrl).origin;
+  } catch {
+    return;
+  }
+  if (currentOrigin !== expectedOrigin) {
+    logger.warn(
+      { state, currentUrl, expectedOrigin },
+      '[SUSPICIOUS_REDIRECT] Page left expected origin after state handler'
+    );
+    throw new SuspiciousRedirectError(currentUrl, expectedOrigin);
+  }
 }
 
 const MOUSE_MOVE_DEFAULTS = {

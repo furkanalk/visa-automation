@@ -49,6 +49,22 @@ export interface PortalConfig {
     rejectInvalidEmail: boolean;
     requireAllFields: boolean;
   };
+
+  /**
+   * Mouse movement simulation inside the mock page.
+   * Controls whether the page itself dispatches synthetic mousemove events —
+   * so startSuspiciousCheck()'s userHasMovedMouse flag gets set.
+   *
+   * mode:
+   *   'disabled'  — no simulation; startSuspiciousCheck runs as-is (bot → google.com redirect).
+   *   'interval'  — dispatches a synthetic mousemove every intervalMs ms.
+   *   'on-fill'   — dispatches a synthetic mousemove whenever any input/select value changes.
+   */
+  mouseSimulation: {
+    mode: 'disabled' | 'interval' | 'on-fill';
+    /** Used only when mode === 'interval'. Default: 3000 ms. */
+    intervalMs: number;
+  };
 }
 
 export interface MockSession {
@@ -80,10 +96,10 @@ const defaultAsVisaConfig: PortalConfig = {
     failRate: 0,
   },
   security: {
-    code: 'random', // Random 6-digit code each page load; set to fixed string (e.g. '123456') for testing
+    code: 'random', // Her sayfa yüklenişinde yeni rastgele kod — browser context canlı kaldığı için güvenli
   },
   slots: {
-    hasAvailability: false, // default: no open slots (realistic prod default)
+    hasAvailability: true, // default: open slots available for testing
     availableTimes: ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00'],
     randomizeAvailability: false,
     slotDisappearChance: 0,
@@ -92,6 +108,15 @@ const defaultAsVisaConfig: PortalConfig = {
     rejectInvalidPassport: false,
     rejectInvalidEmail: false,
     requireAllFields: true,
+  },
+  mouseSimulation: {
+    /**
+     * 'interval' → synthetic mousemove every intervalMs ms (default: keeps suspicious-check happy).
+     * 'on-fill'  → fires on every input/select change.
+     * 'disabled' → no simulation; agent must move mouse or suspicious-check will redirect to google.
+     */
+    mode: 'interval',
+    intervalMs: 3000,
   },
 };
 
@@ -119,6 +144,7 @@ class MockPortalState {
       security: { ...existing.security, ...config.security },
       slots: { ...existing.slots, ...config.slots },
       validation: { ...existing.validation, ...config.validation },
+      mouseSimulation: { ...existing.mouseSimulation, ...config.mouseSimulation },
     };
     this.configs.set(portalId, updated);
     return updated;

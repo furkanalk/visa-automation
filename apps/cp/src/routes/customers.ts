@@ -655,6 +655,134 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
   });
 
   /**
+   * Trigger full booking job for customer (manual run — slot_check_only: false)
+   * POST /cp/customers/:id/run-booking
+   */
+  app.post<{ Params: CustomerParams }>('/:id/run-booking', async (request, reply) => {
+    const customer = await customerRepo.findById(request.tenantId, request.params.id);
+    if (!customer) {
+      return reply.status(404).send({
+        success: false,
+        error: { code: 'CUSTOMER_NOT_FOUND', message: 'Customer not found' },
+      });
+    }
+
+    if (customer.status !== 'active') {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'CUSTOMER_NOT_ACTIVE', message: 'Customer is not active' },
+      });
+    }
+
+    // Find an idle SYNC agent
+    const agentRepo = new AgentRepository(getDb());
+    const allAgents = await agentRepo.findByTenantId(request.tenantId, { status: 'ONLINE', mode: 'SYNC' });
+
+    let idleAgent = allAgents.find((a) => !a.current_job_id);
+    if (!idleAgent) {
+      const db = getDb();
+      for (const agent of allAgents) {
+        if (!agent.current_job_id) continue;
+        const job = await db
+          .selectFrom('jobs')
+          .select('status')
+          .where('id', '=', agent.current_job_id)
+          .executeTakeFirst();
+        if (!job || job.status !== 'RUNNING') {
+          await agentRepo.update(request.tenantId, agent.id, { current_job_id: null });
+          agent.current_job_id = null;
+          idleAgent = agent;
+          request.log.warn(
+            { agentId: agent.id, staleJobId: agent.current_job_id, jobStatus: job?.status },
+            'Cleared stale current_job_id from SYNC agent (run-booking)',
+          );
+          break;
+        }
+      }
+    }
+
+    if (!idleAgent) {
+      return reply.status(503).send({
+        success: false,
+        error: { code: 'NO_SYNC_AGENT', message: 'No idle SYNC agent available. Try again in a moment.' },
+      });
+    }
+
+    const prefs = (customer.preferences ?? {}) as Record<string, unknown>;
+    const applicant: ApplicantData = {
+      ...prefs,
+      name: (typeof prefs.name === 'string' ? prefs.name : null) || customer.display_name,
+    };
+
+    let result: { job_id: string };
+    try {
+      const jobService = new JobService();
+      const jobConfig = { slot_check_only: false, triggered_by: 'manual' as const, ...(request.actorName ? { triggered_by_name: request.actorName } : {}) };
+      result = await jobService.createJob({
+        tenant_id: request.tenantId,
+        portal_id: customer.portal_id,
+        visa_type: 'SCHENGEN',
+        priority: customer.priority,
+        applicant,
+        config: jobConfig,
+      }, { skipQueue: true });
+    } catch (err) {
+      request.log.error({ err, customerId: customer.id }, 'Failed to create booking job for customer');
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'JOB_CREATE_FAILED',
+          message: err instanceof Error ? err.message : 'Failed to create job',
+        },
+      });
+    }
+
+    const jobConfig2 = { slot_check_only: false, triggered_by: 'manual' as const, ...(request.actorName ? { triggered_by_name: request.actorName } : {}) };
+    await enqueueSyncJob(idleAgent.id, {
+      job_id: result.job_id,
+      tenant_id: request.tenantId,
+      visa_type: 'SCHENGEN',
+      priority: customer.priority,
+      applicant_data: applicant,
+      config: jobConfig2,
+      portal_id: customer.portal_id,
+      attempt_number: 1,
+    });
+
+    await agentRepo.update(request.tenantId, idleAgent.id, {
+      current_job_id: result.job_id,
+    });
+
+    request.log.info(
+      { customerId: customer.id, jobId: result.job_id, agentId: idleAgent.id },
+      'run-booking: booking job created and assigned to SYNC agent',
+    );
+
+    await auditRepo.create({
+      tenant_id: request.tenantId,
+      actor_type: request.actorType ?? 'user',
+      actor_id: request.actorId,
+      actor_name: request.actorName,
+      action: 'trigger_booking',
+      resource_type: 'customer',
+      resource_id: request.params.id,
+      ip_address: request.ip,
+      metadata: { job_id: result.job_id, agent_id: idleAgent.id },
+    });
+
+    return {
+      success: true,
+      data: {
+        message: `Booking job started on sync agent "${idleAgent.name}". Check the Jobs page for progress.`,
+        customer_id: customer.id,
+        job_id: result.job_id,
+        agent_id: idleAgent.id,
+        agent_name: idleAgent.name,
+      },
+    };
+  });
+
+  /**
    * Bulk operations
    * POST /cp/customers/bulk
    */

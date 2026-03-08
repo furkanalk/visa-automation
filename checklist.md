@@ -1,16 +1,3 @@
-2) sadece super admin editleyebilmeyi admin hesaplarını, adminler de staff hesaplarını. Admin - Admin hesap bilgisi değiştirme yok.
-Şifre kısmı sadece super_admin tarafından editlenebilmeli ve görüntülenebilmeli, diğerleri redacted olarak görmeli. super adminde bu alanlar için göz işareti olsun tıkalyınca göreiblsin.
-
-3) Staff sekmesinde suspend gerçekten girişi engelliyor mu? giriş ypamaya çalışan kişi this account suspended almalı. Contact administrator to get help. falan yazsın.
-
-5) Portals sekmeisnde portallar listeleniyor, bu listelenme kısmında portallarda rate limit enabled disabled, OTP ve CAPTHA modları yazabilir. ayrıca rengini eski haline çevirelim. url gözüken kısım kalsın beğendim.
-
-2) Drainingi check et
-
-3) Mouse hareket etmeli birkaç kere CHECK mock server log
-
-4) min 40 saniye kuralı var, 40.1 CHECK
-
 6) snapshot history temizleyince archived da temizleniyor
 
 5) booking için redirection page url bak (headless olarak sayfa 2 test)

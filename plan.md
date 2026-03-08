@@ -352,11 +352,40 @@ or remove completely if same network access is enough.
 
 ---
 
-## Final Verdict
-Yes, the plan is realistic **if the focus stays on hardening and deployment**, not on opening new product scope.
+✅ Tamamlanan Adımlar
+Adım	Durum
+1. Stabilize repo / CI/CD	✅ stage.yml + deploy.yml düzeltildi, validate.yml devre dışı
+2. Harden Docker Compose	✅ postgres/redis port'ları kapatıldı, prod-override temizlendi
+3. Caddy + network isolation	✅ Caddyfile hazır, edge/backend network var, /cp/ proxy var
+7. Portal / Admin Critical Issues	✅ Badge'ler eklendi, suspend OK, password visibility OK
+8. Booking / Scout / Runtime	✅ FSM fix (shared dist build), scout akışı doğrulandı, 40s OK
 
-The product is already in the stage where:
-- core logic exists
-- MVP shape is visible
-- remaining work is mostly release-hardening and final correctness validation
+🔲 Kalan Adımlar
 
+Adım 4 — Sunucuya Deploy (ELLE YAPILACAK)
+```
+1. Sunucuda Docker + Docker Compose kurulu olmalı
+2. GitHub Secrets set edilmeli:
+   - PROD_SSH_HOST
+   - PROD_SSH_USER
+   - PROD_SSH_KEY
+   - PROD_SSH_PORT
+3. GHCR PAT: Settings → Developer Settings → PAT (read:packages)
+   → sunucuda: docker login ghcr.io
+4. DNS: A record → manager/portal/mock.vizeself.com → sunucu IP
+5. Sunucuda repo clone: git clone ... /opt/visa-automation
+6. .env.prod dosyasını sunucuya koy (git'te yok, elle kopyalanacak)
+7. İlk deploy: git push master → CI otomatik tetiklenir
+```
+
+Adım 5 — Public Routing Doğrula (DEPLOY SONRASI)
+```bash
+curl -I https://manager.vizeself.com
+curl -I https://portal.vizeself.com
+curl -I https://mock.vizeself.com
+```
+
+Adım 6 — WireGuard (Sunday meeting'i BLOKLAMIYOR, sonraya bırakılabilir)
+
+Adım 9 — Sunday Smoke Test
+- Deploy çalışıyorsa bu kendiliğinden gelir

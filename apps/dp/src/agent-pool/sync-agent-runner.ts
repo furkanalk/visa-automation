@@ -123,7 +123,6 @@ export class SyncAgentRunner {
 
     try {
       await this.agentPool.assignJob(agent.id, jobId);
-      this.logger.debug({ agentId: agent.id, jobId }, 'Starting sync job execution');
 
       if (abortController.signal.aborted) {
         this.logger.debug({ jobId }, 'Sync job aborted before start');
@@ -140,7 +139,6 @@ export class SyncAgentRunner {
       );
 
       await this.agentPool.completeJob(agent.id, jobId);
-      this.logger.debug({ agentId: agent.id, jobId }, 'Sync job completed');
     } catch (err) {
       await this.agentPool.failJob(agent.id, jobId, err as Error);
       this.logger.error({ agentId: agent.id, jobId, err }, 'Sync job failed');

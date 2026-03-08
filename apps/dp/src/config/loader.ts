@@ -100,6 +100,23 @@ function profileToPortalPartial(profile: AgentProfileConfig | null | undefined):
   }
   if (profile.minRunDurationMs !== undefined) out.minRunDurationMs = profile.minRunDurationMs;
   if (profile.mouseMoveIntervalMs !== undefined) out.mouseMoveIntervalMs = profile.mouseMoveIntervalMs;
+  // Mouse waypoint/jitter/speed params (same keys as PortalConfig)
+  if (profile.mouseMoveSegmentsMin !== undefined) out.mouseMoveSegmentsMin = profile.mouseMoveSegmentsMin;
+  if (profile.mouseMoveSegmentsMax !== undefined) out.mouseMoveSegmentsMax = profile.mouseMoveSegmentsMax;
+  if (profile.mouseMoveJitterPx !== undefined) out.mouseMoveJitterPx = profile.mouseMoveJitterPx;
+  if (profile.mouseMoveStepsMin !== undefined) out.mouseMoveStepsMin = profile.mouseMoveStepsMin;
+  if (profile.mouseMoveStepsMax !== undefined) out.mouseMoveStepsMax = profile.mouseMoveStepsMax;
+  if (profile.mouseMoveDelayMinMs !== undefined) out.mouseMoveDelayMinMs = profile.mouseMoveDelayMinMs;
+  if (profile.mouseMoveDelayMaxMs !== undefined) out.mouseMoveDelayMaxMs = profile.mouseMoveDelayMaxMs;
+  // slotHunt: map profile key names (sleepMinMs/Max) → portal key names (pollDelayMinMs/Max)
+  const sh = profile.slotHunt as { maxPolls?: number; sleepMinMs?: number; sleepMaxMs?: number } | undefined;
+  if (sh && (sh.maxPolls !== undefined || sh.sleepMinMs !== undefined || sh.sleepMaxMs !== undefined)) {
+    out.slotHunt = {
+      ...(sh.maxPolls !== undefined && { maxPolls: sh.maxPolls }),
+      ...(sh.sleepMinMs !== undefined && { pollDelayMinMs: sh.sleepMinMs }),
+      ...(sh.sleepMaxMs !== undefined && { pollDelayMaxMs: sh.sleepMaxMs }),
+    };
+  }
   return out;
 }
 

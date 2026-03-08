@@ -8,7 +8,8 @@ import { telegramSendMessage } from './telegram.js';
 import { dedupeOnce } from './dedupe.js';
 import { setSlotStatus } from './status.js';
 import { sendEmail, resolveRecipient, smtpConfigFromNotifySettings } from './email.js';
-import { renderSlotOpenEmail, renderBookingConfirmedEmail, renderHitlRequiredEmail } from './templates/index.js';
+import { renderBookingConfirmedEmail, renderHitlRequiredEmail } from './templates/index.js';
+import { getEventRouting } from './notify-settings.js';
 
 function notifyDedupe(): NotifyDedupeRepository {
   return new NotifyDedupeRepository(getDb());
@@ -123,6 +124,10 @@ export async function notifySlotFound(args: {
     `Next: ${next}`;
 
   if (token && slotNotifyChatIds.length > 0) {
+    const routing = getEventRouting(settings.notify_routing, 'slot_open');
+    if (!routing.telegram) {
+      args.logger.debug({ jobId: args.jobId }, 'SLOT FOUND: Telegram skipped by routing config');
+    } else {
     args.logger.info(
       { jobId: args.jobId, chatCount: slotNotifyChatIds.length, watcherOnly: watcherChatIds.length > 0 },
       'SLOT FOUND: Sending Telegram (Watcher or all configured chats)'
@@ -148,23 +153,15 @@ export async function notifySlotFound(args: {
       );
       throw err;
     }
+    }
   }
 
   const smtp = smtpConfigFromNotifySettings(settings);
   if (smtp) {
-    try {
-      const to = resolveRecipient(args.payload?.applicant_data?.email, settings.fallback_email, settings.email_override);
-      const email = renderSlotOpenEmail({
-        jobId: args.jobId,
-        tenantId: args.tenantId,
-        portalId: args.portalId,
-        baseUrl: args.baseUrl,
-        dates: args.dates,
-        payload: args.payload,
-      });
-      await sendEmail({ to, subject: email.subject, html: email.html, text: email.text, smtp });
-    } catch (e) {
-      args.logger.warn({ jobId: args.jobId, err: e }, 'Slot open email failed');
+    const routing = getEventRouting(settings.notify_routing, 'slot_open');
+    if (routing.email) {
+      // slot_open email is opt-in only (off by default via routing config)
+      args.logger.debug({ jobId: args.jobId }, 'SLOT FOUND: email routing enabled, but no template — skipped');
     }
   }
 }
@@ -206,7 +203,13 @@ export async function notifyBookingConfirmed(args: {
   const settings = await getNotifySettings(cpApiUrl, tenantId, internalSecret);
   const token = settings.telegram_bot_token;
   const { bookings: bookingsChatIds } = getOpsBookingsWatcherChatIds(settings.telegram_chat_ids ?? []);
-  if (!token || bookingsChatIds.length === 0) return;
+  const bookingRouting = getEventRouting(settings.notify_routing, 'booking');
+
+  const notifyConfig = getConfigService().get('notify');
+  const actionBase = (notifyConfig.notify_action_base_url ?? '').replace(/\/+$/, '');
+  const actionToken = notifyConfig.notify_action_token ?? '';
+  // Banner URL: served from CP static endpoint
+  const bannerUrl = cpApiUrl ? `${cpApiUrl.replace(/\/+$/, '')}/cp/static/banner-email.png` : undefined;
 
   try {
     const first = await notifyDedupe().tryRecordSend(args.jobId, 'booked', args.confirmationNumber);
@@ -225,31 +228,24 @@ export async function notifyBookingConfirmed(args: {
   const bookedAt = (args.details?.appointmentDateTime as string) ?? (args.details?.dateTime as string);
   const applicantMasked = maskApplicant(args.payload?.applicant_data as Record<string, unknown> | undefined);
 
-  const text =
-    `<b>BOOKED</b> ${TELEGRAM_EMOJI.BOOKED}\n` +
-    `Confirmation: <code>${args.confirmationNumber}</code>\n` +
-    `Date/Time: ${bookedAt ? formatDateTimeTR(new Date(bookedAt)) : formatDateTimeTR()}\n` +
-    `Applicant: ${applicantMasked}\n` +
-    `Job: <code>${args.jobId}</code>`;
+  // --- Telegram ---
+  if (token && bookingsChatIds.length > 0 && bookingRouting.telegram) {
+    const text =
+      `<b>BOOKED</b> ${TELEGRAM_EMOJI.BOOKED}\n` +
+      `Confirmation: <code>${args.confirmationNumber}</code>\n` +
+      `Date/Time: ${bookedAt ? formatDateTimeTR(new Date(bookedAt)) : formatDateTimeTR()}\n` +
+      `Applicant: ${applicantMasked}\n` +
+      `Job: <code>${args.jobId}</code>`;
+    const buttons =
+      canUseTelegramActionButtons(actionBase) && actionToken && actionToken !== 'changeme'
+        ? [{ text: '✅ ACK', url: `${actionBase}/api/jobs/${args.jobId}/ack?event=booked&token=${encodeURIComponent(actionToken)}` }]
+        : undefined;
+    await telegramSendMessage({ token, chatIds: bookingsChatIds, text, buttons, logger: args.logger });
+  }
 
-  const notifyConfig = getConfigService().get('notify');
-  const actionBase = (notifyConfig.notify_action_base_url ?? '').replace(/\/+$/, '');
-  const actionToken = notifyConfig.notify_action_token ?? '';
-  const buttons =
-    canUseTelegramActionButtons(actionBase) && actionToken && actionToken !== 'changeme'
-      ? [{ text: '✅ ACK', url: `${actionBase}/api/jobs/${args.jobId}/ack?event=booked&token=${encodeURIComponent(actionToken)}` }]
-      : undefined;
-
-  await telegramSendMessage({
-    token,
-    chatIds: bookingsChatIds,
-    text,
-    buttons,
-    logger: args.logger,
-  });
-
+  // --- Ops/audit email ---
   const smtp = smtpConfigFromNotifySettings(settings);
-  if (smtp) {
+  if (smtp && bookingRouting.email) {
     try {
       const to = resolveRecipient(args.payload?.applicant_data?.email, settings.fallback_email, settings.email_override);
       const email = renderBookingConfirmedEmail({
@@ -262,10 +258,39 @@ export async function notifyBookingConfirmed(args: {
         bookedAt: bookedAt ? new Date(bookedAt) : new Date(),
         applicantMasked,
         details: args.details,
+        bannerUrl,
       });
       await sendEmail({ to, subject: email.subject, html: email.html, text: email.text, smtp });
+      args.logger.info({ jobId: args.jobId, to }, 'Booking ops email sent');
     } catch (e) {
       args.logger.warn({ jobId: args.jobId, err: e }, 'Booking confirmation email failed');
+    }
+  }
+
+  // --- Customer email (separate, clean version) ---
+  if (smtp && settings.booking_send_to_customer) {
+    const applicantEmail = args.payload?.applicant_data?.email;
+    if (typeof applicantEmail === 'string' && applicantEmail.includes('@')) {
+      try {
+        const customerEmail = renderBookingConfirmedEmail({
+          jobId: args.jobId,
+          tenantId: args.tenantId,
+          portalId: args.portalId,
+          portalLabel: args.portalLabel,
+          baseUrl: args.baseUrl,
+          confirmationNumber: args.confirmationNumber,
+          bookedAt: bookedAt ? new Date(bookedAt) : new Date(),
+          applicantMasked,
+          isCustomerEmail: true,
+          bannerUrl,
+        });
+        await sendEmail({ to: applicantEmail, subject: customerEmail.subject, html: customerEmail.html, text: customerEmail.text, smtp });
+        args.logger.info({ jobId: args.jobId, to: applicantEmail }, 'Booking customer email sent');
+      } catch (e) {
+        args.logger.warn({ jobId: args.jobId, err: e }, 'Booking customer email failed');
+      }
+    } else {
+      args.logger.debug({ jobId: args.jobId }, 'booking_send_to_customer: no applicant email in payload, skipped');
     }
   }
 }
@@ -285,10 +310,12 @@ export async function notifyHitlRequired(args: {
   const actionBase = (notifyConfig.notify_action_base_url ?? '').replace(/\/+$/, '');
   const panelBase = process.env.HITL_PANEL_BASE_URL?.replace(/\/+$/, '') || actionBase;
   const panelUrl = `${panelBase}/hitl?job=${args.jobId}`;
+  const bannerUrl = cpApiUrl ? `${cpApiUrl.replace(/\/+$/, '')}/cp/static/banner-email.png` : undefined;
 
   const token = settings.telegram_bot_token;
   const { ops: opsChatIds } = getOpsBookingsWatcherChatIds(settings.telegram_chat_ids ?? []);
-  if (token && opsChatIds.length > 0) {
+  const hitlRouting = getEventRouting(settings.notify_routing, 'hitl');
+  if (token && opsChatIds.length > 0 && hitlRouting.telegram) {
     const text =
       `<b>HITL REQUIRED</b> ${TELEGRAM_EMOJI.HITL_REQUIRED}\n` +
       `Type: <code>${args.hitlType}</code>\n` +
@@ -309,7 +336,7 @@ export async function notifyHitlRequired(args: {
   }
 
   const smtp = smtpConfigFromNotifySettings(settings);
-  if (smtp) {
+  if (smtp && hitlRouting.email) {
     try {
       const to = resolveRecipient(undefined, settings.fallback_email, settings.email_override);
       const email = renderHitlRequiredEmail({
@@ -317,6 +344,7 @@ export async function notifyHitlRequired(args: {
         hitlType: args.hitlType,
         expiresSeconds: args.expiresSeconds,
         panelUrl,
+        bannerUrl,
       });
       await sendEmail({ to, subject: email.subject, html: email.html, text: email.text, smtp });
     } catch (e) {
@@ -345,6 +373,7 @@ export async function notifyAgentStarted(args: {
   const token = settings.telegram_bot_token;
   const { ops: opsChatIds } = getOpsBookingsWatcherChatIds(settings.telegram_chat_ids ?? []);
   if (!token || opsChatIds.length === 0) return;
+  if (!getEventRouting(settings.notify_routing, 'agent_start').telegram) return;
 
   const portalLine = args.portalLabel ? `${args.portalId} / ${args.portalLabel}` : args.portalId;
   const agentLine = args.agentName ?? args.agentId ?? '—';
@@ -394,6 +423,7 @@ export async function notifyAgentCompleted(args: {
   const token = settings.telegram_bot_token;
   const { ops: opsChatIds } = getOpsBookingsWatcherChatIds(settings.telegram_chat_ids ?? []);
   if (!token || opsChatIds.length === 0) return;
+  if (!getEventRouting(settings.notify_routing, 'agent_done').telegram) return;
 
   const portalLine = args.portalLabel ? `${args.portalId} / ${args.portalLabel}` : args.portalId;
   const agentLine = args.agentName ?? args.agentId ?? '—';
@@ -448,6 +478,7 @@ export async function notifyAgentFailed(args: {
   const token = settings.telegram_bot_token;
   const { ops: opsChatIds } = getOpsBookingsWatcherChatIds(settings.telegram_chat_ids ?? []);
   if (!token || opsChatIds.length === 0) return;
+  if (!getEventRouting(settings.notify_routing, 'agent_fail').telegram) return;
 
   const portalLine = args.portalLabel ? `${args.portalId} / ${args.portalLabel}` : args.portalId;
   const agentLine = args.agentName ?? args.agentId ?? '—';

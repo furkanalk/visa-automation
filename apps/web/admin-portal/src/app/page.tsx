@@ -335,10 +335,12 @@ export default function Dashboard() {
                   </div>
                   <Badge
                     variant={
-                      job.status === "COMPLETED"
+                      job.status === "COMPLETED" || job.status === "SLOT_FOUND"
                         ? "success"
-                        : job.status === "FAILED_TERMINAL"
+                        : job.status === "FAILED_TERMINAL" || job.status === "CANCELLED"
                         ? "destructive"
+                        : job.status === "FAILED_RETRYABLE"
+                        ? "warning"
                         : "secondary"
                     }
                   >

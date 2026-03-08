@@ -144,9 +144,11 @@ export function buildAsVisaFormValues(applicantData: Record<string, unknown>): R
     surname: get('surname'),
     passportNumber: get('passportNumber'),
     tcKimlikNo: get('idNo') || get('tcKimlikNo'),
+    reTckn: get('idNo') || get('tcKimlikNo'),   // must match tcKimlikNo
     dogumYili: yearFromBirthDate || get('dogumYili'),
     phone: get('phone'),
     email: get('email'),
+    reEmail: get('email'),                        // must match email
 
     // Portal-specific (schema keys align with selectors)
     nationality: get('nationality'),

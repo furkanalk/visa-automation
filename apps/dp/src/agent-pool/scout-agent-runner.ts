@@ -74,7 +74,7 @@ export class ScoutAgentRunner {
     );
 
     this.worker.on('completed', (job) => {
-      this.logger.debug({ jobId: job.data.job_id }, 'Scout job completed');
+      this.logger.info({ jobId: job.data.job_id }, 'Scout job completed');
     });
     this.worker.on('failed', (job, err) => {
       this.logger.error({ jobId: job?.data.job_id, err: err.message }, 'Scout job failed');
@@ -135,7 +135,7 @@ export class ScoutAgentRunner {
     const { job_id } = payload;
     try {
       await this.agentPool.assignJob(agent.id, job_id);
-      this.logger.debug({ agentId: agent.id, jobId: job_id }, 'Starting scout job');
+      this.logger.info({ agentId: agent.id, jobId: job_id }, 'Starting scout job');
       const shouldAbort = await this.agentPool.shouldAbortJob(job_id);
       if (shouldAbort) {
         this.logger.debug({ jobId: job_id }, 'Scout job aborted before start');

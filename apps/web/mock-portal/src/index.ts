@@ -168,16 +168,19 @@ app.get('/as-visa', async (req, res) => {
     : config.security.code;
 
   // Render page — pass openDates as blockedDates param (template uses this as dateDisabled JS var)
+  // showSecurityCode: her zaman true — mock'un amacı bu kodu her zaman göstermek.
   const html = renderPage1({
     blockedDates: openDates,
     availableTimes: times,
     showCaptcha: config.captcha.enabled,
     captchaAutoSolve: config.captcha.autoSolveDelayMs > 0,
     captchaAutoSolveDelayMs: config.captcha.autoSolveDelayMs,
-    showSecurityCode: false, // Scout only checks slots; no enteredCode input → no security_code abort
+    showSecurityCode: true, // Mock'ta her zaman göster (auto-solve da olsa HITL de olsa)
     securityCode,
     skipInfoPopup: true, // Skip for faster testing
     skipBotDetection: true, // Skip for automation
+    mouseSimulationMode: config.mouseSimulation.mode,
+    mouseSimulationIntervalMs: config.mouseSimulation.intervalMs,
   });
 
   res.type('html').send(html);

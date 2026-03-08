@@ -25,6 +25,8 @@ export const JOB_STATES = {
   FAILED_RETRYABLE: 'FAILED_RETRYABLE',
   FAILED_TERMINAL: 'FAILED_TERMINAL',
   CANCELLED: 'CANCELLED',
+  /** HITL task timed out — operator did not resolve before the deadline. */
+  HITL_EXPIRED: 'HITL_EXPIRED',
 } as const;
 
 export type JobState = typeof JOB_STATES[keyof typeof JOB_STATES];
@@ -36,6 +38,7 @@ export const TERMINAL_STATES: JobState[] = [
   'COMPLETED',
   'FAILED_TERMINAL',
   'CANCELLED',
+  'HITL_EXPIRED',
 ];
 
 export const PROCESSING_STATES: JobState[] = [

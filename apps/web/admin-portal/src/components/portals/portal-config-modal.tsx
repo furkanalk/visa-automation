@@ -9,14 +9,17 @@ import type { PortalConfig } from "@/lib/api";
 import { Loader2, AlertCircle, ChevronDown, ChevronRight, FileJson, RotateCcw, Code } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-/** Matches AS-VISA make-appointment selectors; all form fields. */
+/**
+ * Matches AS-VISA make-appointment selectors.
+ * NOTE: travelDate, appointmentDate, appointmentTime are intentionally omitted —
+ * travelDate comes from "Visa Information" (travelDateSingle/travelDateFrom),
+ * appointmentDate is auto-picked by the agent from open_dates + algorithm,
+ * appointmentTime is auto-selected by the agent from the portal's /SaatGetir response.
+ */
 const CUSTOMER_FORM_SCHEMA_EXAMPLE = `[
   { "key": "nationality", "label": "Nationality", "type": "select", "required": true, "options": [{"value": "TR", "label": "Turkey"}, {"value": "DE", "label": "Germany"}] },
   { "key": "appointment", "label": "Appointment type", "type": "select", "required": true },
   { "key": "travelSubject", "label": "Travel subject", "type": "select", "required": true },
-  { "key": "travelDate", "label": "Travel date", "type": "date", "required": true },
-  { "key": "appointmentDate", "label": "Appointment date", "type": "date" },
-  { "key": "appointmentTime", "label": "Appointment time", "type": "select" },
   { "key": "passportNumber", "label": "Passport number", "type": "text", "required": true },
   { "key": "name", "label": "Name", "type": "text", "required": true },
   { "key": "surname", "label": "Surname", "type": "text", "required": true },

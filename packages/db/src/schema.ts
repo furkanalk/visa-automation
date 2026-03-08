@@ -309,6 +309,8 @@ export interface NotifySettingsTable {
   webhook_enabled: ColumnType<boolean, boolean | undefined, boolean>;
   webhook_url: string | null;
   webhook_secret: string | null;
+  notify_routing: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown>>;
+  booking_send_to_customer: ColumnType<boolean, boolean | undefined, boolean>;
   created_at: ColumnType<Date, Date | undefined, never>;
   updated_at: ColumnType<Date, Date | undefined, Date>;
 }

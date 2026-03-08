@@ -3,6 +3,24 @@
  * Caches by tenant for 5 minutes. Used by DP to send Telegram/email without env.
  */
 
+export type NotifyEventKey = 'slot_open' | 'booking' | 'agent_start' | 'agent_done' | 'agent_fail' | 'hitl';
+
+export interface NotifyEventRouting {
+  telegram: boolean;
+  email: boolean;
+}
+
+export type NotifyRouting = Partial<Record<NotifyEventKey, NotifyEventRouting>>;
+
+/** Returns resolved routing for a given event (defaults both channels to true). */
+export function getEventRouting(routing: NotifyRouting, event: NotifyEventKey): NotifyEventRouting {
+  const r = routing[event];
+  return {
+    telegram: r?.telegram ?? true,
+    email: r?.email ?? true,
+  };
+}
+
 export interface NotifySettingsFromCP {
   telegram_enabled: boolean;
   telegram_bot_token: string | null;
@@ -16,6 +34,8 @@ export interface NotifySettingsFromCP {
   smtp_secure: boolean;
   fallback_email: string | null;
   email_override: string | null;
+  notify_routing: NotifyRouting;
+  booking_send_to_customer: boolean;
 }
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -50,6 +70,8 @@ function fromRow(row: Record<string, unknown>): NotifySettingsFromCP {
     smtp_secure: Boolean(row.smtp_secure),
     fallback_email: (row.fallback_email as string) ?? null,
     email_override: (row.email_override as string) ?? null,
+    notify_routing: (row.notify_routing as NotifyRouting) ?? {},
+    booking_send_to_customer: Boolean(row.booking_send_to_customer),
   };
 }
 

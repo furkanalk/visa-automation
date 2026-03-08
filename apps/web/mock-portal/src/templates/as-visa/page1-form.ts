@@ -25,6 +25,15 @@ export interface Page1Options {
   securityCode: string;
   skipInfoPopup: boolean;
   skipBotDetection: boolean;
+  /**
+   * Synthetic mousemove simulation inside the rendered page.
+   * Keeps startSuspiciousCheck()'s userHasMovedMouse flag true without a real human mouse.
+   * 'disabled' → no simulation (suspicious-check will fire if form filled without real mouse).
+   * 'interval' → synthetic mousemove dispatched every mouseSimulationIntervalMs ms.
+   * 'on-fill'  → synthetic mousemove dispatched on every input/select change event.
+   */
+  mouseSimulationMode: 'disabled' | 'interval' | 'on-fill';
+  mouseSimulationIntervalMs: number;
 }
 
 export function renderPage1(options: Partial<Page1Options> = {}): string {
@@ -39,6 +48,8 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
     securityCode = generateSecurityCode(),
     skipInfoPopup = true,
     skipBotDetection = true,
+    mouseSimulationMode = 'interval',
+    mouseSimulationIntervalMs = 3000,
   } = options;
 
   const dateDisabledJS = JSON.stringify(blockedDates);
@@ -487,6 +498,86 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
       }, 1000);
     }
 
+    // ===== SUSPICIOUS CHECK — birebir real as-visa.js =====
+    // Checks: if form is filled but mouse never moved → bot detected → redirect to google.
+    // In mock, skipBotDetection=true bypasses the bot-detection check in form submit,
+    // but this function still runs so the FSM sees the real site behaviour on any slip-up.
+    function startSuspiciousCheck() {
+      var userHasMovedMouse = false;
+      document.addEventListener('mousemove', function() {
+        userHasMovedMouse = true;
+      });
+
+      function isFormFilled() {
+        var inputs = document.querySelectorAll('#apForm input, #apForm select');
+        var filledCount = 0;
+        for (var i = 0; i < inputs.length; i++) {
+          if (inputs[i].type !== 'hidden' && inputs[i].value.trim().length > 0) {
+            filledCount++;
+          }
+        }
+        return filledCount >= 3;
+      }
+
+      setTimeout(function() {
+        var suspiciousInterval = setInterval(function() {
+          var formFilled = isFormFilled();
+          if (!userHasMovedMouse && formFilled) {
+            clearInterval(suspiciousInterval);
+            Swal.fire({
+              icon: 'warning',
+              title: 'Şüpheli İşlem Tespit Edildi',
+              html: 'Sistemimiz olağan dışı bir etkileşim algıladı. Güvenlik politikalarımız gereği işlem sonlandırılmıştır.',
+              confirmButtonText: 'Tamam',
+              background: '#1d2657',
+              color: '#f15a29',
+              allowOutsideClick: false,
+              allowEscapeKey: false,
+              allowEnterKey: false
+            }).then(function() {
+              window.location.href = 'https://www.google.com';
+            });
+          }
+        }, 2000);
+      }, 10000);
+    }
+
+    // ===== MOUSE SIMULATION — mock-only, keeps startSuspiciousCheck happy =====
+    // Dispatches synthetic mousemove so userHasMovedMouse=true without a real human.
+    // Controlled by server-side config: mode + intervalMs.
+    ${
+      mouseSimulationMode === 'interval'
+        ? `
+    (function() {
+      function _fakeMouseMove() {
+        var x = Math.floor(Math.random() * (window.innerWidth  || 800));
+        var y = Math.floor(Math.random() * (window.innerHeight || 600));
+        document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: x, clientY: y }));
+      }
+      setInterval(_fakeMouseMove, ${mouseSimulationIntervalMs});
+      console.log('[Mock] Mouse simulation: interval every ${mouseSimulationIntervalMs}ms');
+    })();
+    `
+        : mouseSimulationMode === 'on-fill'
+          ? `
+    (function() {
+      function _fakeMouseMove() {
+        var x = Math.floor(Math.random() * (window.innerWidth  || 800));
+        var y = Math.floor(Math.random() * (window.innerHeight || 600));
+        document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: x, clientY: y }));
+      }
+      document.querySelectorAll('#apForm input, #apForm select').forEach(function(el) {
+        el.addEventListener('change', _fakeMouseMove);
+        el.addEventListener('input',  _fakeMouseMove);
+      });
+      console.log('[Mock] Mouse simulation: on-fill');
+    })();
+    `
+          : `
+    console.log('[Mock] Mouse simulation: disabled — suspicious-check active');
+    `
+    }
+
     // ===== FETCH TIMES — birebir real as-visa.js (calls /AnBir/Macaristan/SaatGetir) =====
     function tarihGetir() {
       showAppTimeLoading();
@@ -546,6 +637,7 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
       });
 
       // ===== #datepicker — birebir real as-visa.js (no container option) =====
+      var _lastTarihGetirDate = '';
       $("#datepicker").datepicker({
         weekStart: 1,
         autoclose: true,
@@ -576,7 +668,11 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
           return { enabled: false, classes: 'disabled red-bg white-text' };
         }
       }).on('changeDate', function() {
-        tarihGetir();
+        var val = $("#datepicker").val();
+        if (val && val !== _lastTarihGetirDate) {
+          _lastTarihGetirDate = val;
+          tarihGetir();
+        }
       });
 
       // ===== #TravelDate — birebir real as-visa.js (no container option) =====
@@ -646,12 +742,36 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
         });
       });
 
-      // #datepicker change
+      // #datepicker change — birebir real as-visa.js (document.querySelector companion)
+      // Also calls tarihGetir() as fallback when changeDate event doesn't fire
+      // (e.g. automation locator click may not trigger Bootstrap datepicker's changeDate).
+      var _lastTarihGetirDate = '';
       $("#datepicker").on('change', function() {
-        if ($("#datepicker").val()) {
+        var val = $("#datepicker").val();
+        if (val != null && val !== '') {
           $("#AppTime").show();
+          document.querySelector("#AppTime").style.display = "block";
+          // Call tarihGetir if date changed and changeDate didn't already trigger it
+          if (val !== _lastTarihGetirDate) {
+            _lastTarihGetirDate = val;
+            tarihGetir();
+          }
         } else {
           $("#AppTime").hide();
+          document.querySelector("#AppTime").style.display = "none";
+        }
+      });
+
+      // ===== Second #AppointmentTabID on('change') — birebir real as-visa.js =====
+      // Real site has this TWICE: once for TarihGetir AJAX, once for datepicker visibility.
+      // The duplicate ensures datepicker display is set via both jQuery AND style.display.
+      $("#AppointmentTabID").on('change', function() {
+        if ($("#AppointmentTabID").val() != null) {
+          $("#datepicker").show();
+          document.querySelector("#datepicker").style.display = "block";
+        } else {
+          $("#datepicker").hide();
+          document.querySelector("#datepicker").style.display = "none";
         }
       });
 
@@ -750,6 +870,7 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
         document.getElementById('initialLoader').style.display = 'none';
         document.getElementById('formWrapper').style.display = 'block';
         startCountdown();
+        startSuspiciousCheck();
       }, 500);
       `
           : `
@@ -759,6 +880,7 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
         document.getElementById('initialLoader').style.display = 'none';
         document.getElementById('formWrapper').style.display = 'block';
         startCountdown();
+        startSuspiciousCheck();
       }, 3000);
       `
       }

@@ -94,6 +94,14 @@ export interface AgentProfileConfig {
   minRunDurationMs?: number;
   /** Optional mouse move interval (ms); same as portal. */
   mouseMoveIntervalMs?: number;
+  /** Mouse waypoints, jitter, steps, delays — same keys as portal. */
+  mouseMoveSegmentsMin?: number;
+  mouseMoveSegmentsMax?: number;
+  mouseMoveJitterPx?: number;
+  mouseMoveStepsMin?: number;
+  mouseMoveStepsMax?: number;
+  mouseMoveDelayMinMs?: number;
+  mouseMoveDelayMaxMs?: number;
   [key: string]: unknown;
 }
 

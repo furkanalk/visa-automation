@@ -32,7 +32,7 @@ export const VALID_TRANSITIONS: Record<JobState, JobState[]> = {
   // From WAITING_SLOT - can retry processing or cancel
   WAITING_SLOT: ['PROCESSING', 'CANCELLED'],
   
-  // From WAITING_HITL - can return to any processing state
+  // From WAITING_HITL - can return to any processing state or expire
   WAITING_HITL: [
     'LOGIN_PROCESS',
     'LOGGED_IN',
@@ -41,6 +41,7 @@ export const VALID_TRANSITIONS: Record<JobState, JobState[]> = {
     'SLOT_SEARCHING',
     'SLOT_FOUND',
     'PAYMENT',
+    'HITL_EXPIRED',
     'FAILED_RETRYABLE',
     'FAILED_TERMINAL',
     'CANCELLED',
@@ -56,6 +57,7 @@ export const VALID_TRANSITIONS: Record<JobState, JobState[]> = {
   COMPLETED: [],
   FAILED_TERMINAL: [],
   CANCELLED: [],
+  HITL_EXPIRED: [],
 };
 
 /**

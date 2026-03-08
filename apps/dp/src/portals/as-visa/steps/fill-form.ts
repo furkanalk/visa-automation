@@ -52,15 +52,17 @@ export async function fillForm(args: FillFormArgs): Promise<void> {
     }
   }
 
-  // Fill remaining inputs (passportNumber, name, surname, tcKimlikNo, dogumYili, phone, email)
+  // Fill remaining inputs (passportNumber, name, surname, tcKimlikNo, reTckn, dogumYili, phone, email, reEmail)
   const inputKeys = [
     'passportNumber',
     'name',
     'surname',
     'tcKimlikNo',
+    'reTckn',
     'dogumYili',
     'phone',
     'email',
+    'reEmail',
   ] as const;
   for (const key of inputKeys) {
     const value = formValues[key];

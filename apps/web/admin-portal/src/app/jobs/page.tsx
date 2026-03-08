@@ -582,7 +582,7 @@ function JobDetailModal({
   isRetryPending: boolean;
   isRequeuePending: boolean;
 }) {
-  const [activeTab, setActiveTab] = useState<"details" | "events" | "runs">("details");
+  const [activeTab, setActiveTab] = useState<"details" | "events" | "runs" | "files">("details");
 
   const { data: events, isLoading: eventsLoading } = useQuery({
     queryKey: ["job-events", job.id],
@@ -594,6 +594,12 @@ function JobDetailModal({
     queryKey: ["job-runs", job.id],
     queryFn: () => cpApi.getJobRuns(job.id),
     enabled: !!job.id,
+  });
+
+  const { data: screenshots, isLoading: screenshotsLoading } = useQuery({
+    queryKey: ["job-screenshots", job.id],
+    queryFn: () => cpApi.getJobScreenshots(job.id),
+    enabled: activeTab === "files",
   });
 
   const canStop = !TERMINAL_STATES.includes(job.status);
@@ -613,9 +619,9 @@ function JobDetailModal({
             </div>
           </div>
           <div className="flex items-center gap-3">
-            {(runs?.items?.[0]?.agent_name || job.locked_by) && (
+            {runs?.items?.[0]?.agent_name && (
               <span className="text-sm text-gray-500 dark:text-gray-400">
-                {runs?.items?.[0]?.agent_name ? `Agent: ${runs.items[0].agent_name}` : `Worker: ${job.locked_by}`}
+                Agent: {runs.items[0].agent_name}
               </span>
             )}
             <button
@@ -658,6 +664,16 @@ function JobDetailModal({
             }`}
           >
             Run History
+          </button>
+          <button
+            onClick={() => setActiveTab("files")}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === "files"
+                ? "border-primary text-primary"
+                : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+            }`}
+          >
+            Files
           </button>
         </div>
 
@@ -725,9 +741,6 @@ function JobDetailModal({
                   label="Updated"
                   value={`${new Date(job.updated_at).toLocaleString()}${job.status ? ` (${job.status})` : ""}`}
                 />
-                {job.locked_by && (
-                  <InfoCard label="Locked By" value={job.locked_by} />
-                )}
               </div>
 
               {/* Applicant Data */}
@@ -863,6 +876,43 @@ function JobDetailModal({
               )}
             </div>
           )}
+
+          {activeTab === "files" && (
+            <div className="space-y-3">
+              {screenshotsLoading ? (
+                <div className="text-center py-8 text-gray-500">Loading files...</div>
+              ) : !screenshots?.items?.length ? (
+                <div className="text-center py-8 text-gray-500">No files recorded for this job</div>
+              ) : (
+                <div className="space-y-2">
+                  {screenshots.items.map((file) => {
+                    const isHtml = file.content_type === "text/html";
+                    const isImage = file.content_type.startsWith("image/");
+                    const href = `/cp/screenshots/${file.job_id}/${file.filename}`;
+                    return (
+                      <div key={file.filename} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-900 rounded-md">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-lg">{isHtml ? "📄" : isImage ? "🖼️" : "📎"}</span>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{file.filename}</p>
+                            <p className="text-xs text-gray-500 dark:text-gray-400">{file.content_type}</p>
+                          </div>
+                        </div>
+                        <a
+                          href={href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="ml-3 shrink-0 text-xs text-primary hover:underline font-medium"
+                        >
+                          {isHtml ? "Open HTML" : "View"}
+                        </a>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -923,9 +973,12 @@ function StateTransitionSummary({ payload }: { payload: Record<string, unknown> 
   const toState = payload.to_state as string | undefined;
   const reason = payload.reason as string | undefined;
   const hitlType = payload.hitl_type as string | undefined;
+  const agentName = payload.agent_name as string | undefined;
   const workerId = payload.worker_id as string | undefined;
   const error = payload.error as string | undefined;
   const errorKind = payload.error_kind as string | undefined;
+  const suspicious = payload.suspicious as boolean | undefined;
+  const hint = payload.hint as string | undefined;
   const channel = payload.channel as string | undefined;
   const confirmationNumber = payload.confirmation_number as string | undefined;
   const nextRetryMs = payload.next_retry_ms as number | undefined;
@@ -934,11 +987,15 @@ function StateTransitionSummary({ payload }: { payload: Record<string, unknown> 
   if (fromState && toState) lines.push({ label: "Transition", value: `${fromState} → ${toState}` });
   if (reason) lines.push({ label: "Reason", value: reason });
   if (hitlType) lines.push({ label: "HITL type", value: hitlType });
-  if (workerId) lines.push({ label: "Worker", value: workerId });
+  // Show agent name if available; fall back to worker id with a clearer label
+  if (agentName) lines.push({ label: "Agent", value: agentName });
+  else if (workerId) lines.push({ label: "Agent ID", value: workerId });
   if (channel) lines.push({ label: "Channel", value: channel });
   if (confirmationNumber) lines.push({ label: "Confirmation", value: confirmationNumber });
   if (error) lines.push({ label: "Error", value: error });
   if (errorKind) lines.push({ label: "Error kind", value: errorKind });
+  if (suspicious) lines.push({ label: "⚠️ Suspicious", value: "Bot-detection redirect detected" });
+  if (hint) lines.push({ label: "Hint", value: hint });
   if (nextRetryMs !== undefined) lines.push({ label: "Next retry (ms)", value: String(nextRetryMs) });
 
   if (lines.length === 0) return null;

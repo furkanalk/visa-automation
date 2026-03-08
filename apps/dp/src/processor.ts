@@ -99,7 +99,6 @@ import {
   notifyBookingConfirmed,
   notifyHitlRequired,
 } from './core/notify/index.js';
-import { notifyJobCompletedEmail } from './core/notify/email.js';
 import { classifyError } from './core/errors/classify.js';
 import { metrics } from './core/observability/metrics.js';
 
@@ -216,18 +215,22 @@ export async function processJob(
       portal,
       portalConfig,
       handlers,
-      (profileConfig?.fingerprint as { enabled?: boolean } | undefined)
+      (profileConfig?.fingerprint as { enabled?: boolean } | undefined),
+      agentName ?? null
     );
 
     // Optional: enforce minimum run duration (human-like timing)
     // Scout/slot-check jobs are exempt — they run as fast as possible to notify quickly.
+    // Only applies when FSM completed successfully (not on HITL/error paths).
+    // During the wait the job stays at its last FSM state (e.g. SLOT_FOUND) so the UI shows a
+    // meaningful "in progress" state rather than flipping to COMPLETED prematurely.
     const isScoutJob = (payload.config as Record<string, unknown> | undefined)?.slot_check_only === true;
     const minRunMs = portalConfig.minRunDurationMs;
-    if (!isScoutJob && minRunMs != null && minRunMs > 0) {
+    if (!isScoutJob && minRunMs != null && minRunMs > 0 && result.lastState !== JOB_STATES.WAITING_HITL) {
       const elapsed = Date.now() - runStartMs;
       if (elapsed < minRunMs) {
         const waitMs = minRunMs - elapsed;
-        jobLogger.debug({ waitMs, minRunDurationMs: minRunMs }, 'Sleeping to meet min run duration');
+        jobLogger.info({ waitMs, minRunDurationMs: minRunMs, holdState: result.lastState }, 'Min run duration not met — holding before COMPLETED');
         await new Promise((r) => setTimeout(r, waitMs));
       }
     }
@@ -264,8 +267,62 @@ export async function processJob(
       return;
     }
 
-    // Slot found (we notified via Telegram) — stop here for MVP
+    // Slot found:
+    //   slot_check_only=true  → stop here (scout notified, customer booking jobs created by callSlotOpen)
+    //   slot_check_only=false → booking step already ran in the handler; if we land here the booking
+    //                           attempt failed (portal error, security challenge, etc.) → trigger HITL
+    //                           so an operator can intervene and retry
+    const slotCheckOnlyFlag = (payload.config as Record<string, unknown> | undefined)?.slot_check_only === true;
+    if (result.lastState === JOB_STATES.SLOT_FOUND && !slotCheckOnlyFlag) {
+      // Booking failed — escalate to HITL so operator can take over
+      const hitlType = 'MANUAL_REVIEW';
+      const hitlExpiresSeconds =
+        portalConfig.hitl.maxWaitSeconds > 0 ? portalConfig.hitl.maxWaitSeconds : undefined;
+      const taskId = await createHitlTask({
+        job_id,
+        job_run_id: jobRun.id,
+        tenant_id,
+        type: hitlType,
+        context: {
+          prompt: 'Booking step failed after slot was found. Please check the portal and confirm or retry manually.',
+          input_type: 'text',
+          screenshot_url: (result as unknown as Record<string, unknown>).screenshotUrl as string | undefined,
+        },
+        timeoutSeconds: hitlExpiresSeconds,
+      });
+      const notifyExpiresSeconds = hitlExpiresSeconds ?? 180;
+      await notifyHitlRequired({
+        jobId: job_id,
+        hitlType,
+        taskId,
+        expiresSeconds: notifyExpiresSeconds,
+        tenantId: tenant_id,
+        logger: jobLogger,
+      });
+      await jobRepo.updateStatus(job_id, JOB_STATES.WAITING_HITL);
+      await eventRepo.createStateTransition(
+        job_id,
+        tenant_id,
+        JOB_STATES.SLOT_FOUND,
+        JOB_STATES.WAITING_HITL,
+        { reason: 'Booking step failed after slot found; HITL required' },
+        jobRun.id
+      );
+      await db.instance
+        .updateTable('job_runs')
+        .set({
+          status: 'COMPLETED',
+          finished_at: new Date(),
+          checkpoint_data: { waiting_hitl: true, resume_state: JOB_STATES.SLOT_FOUND },
+        })
+        .where('id', '=', jobRun.id)
+        .execute();
+      jobLogger.info({ hitlType, taskId }, 'Booking failed after slot found; escalated to HITL');
+      throw new HitlWaitingError(job_id);
+    }
+
     if (result.lastState === JOB_STATES.SLOT_FOUND) {
+      // slot_check_only=true: scout job done, customer booking jobs already created
       await jobRepo.updateStatus(job_id, JOB_STATES.SLOT_FOUND);
 
       await eventRepo.createStateTransition(
@@ -515,7 +572,40 @@ export async function processJob(
       throw new HitlWaitingError(job_id);
     }
 
+    // HITL expired — job status + event already written by waitForHitlResolution/_markJobHitlExpired.
+    // Just close out the job_run and skip the error handler.
+    if (result.lastState === JOB_STATES.HITL_EXPIRED) {
+      await db.instance
+        .updateTable('job_runs')
+        .set({ status: 'FAILED', finished_at: new Date(), error_message: 'HITL task expired without operator resolution' })
+        .where('id', '=', jobRun.id)
+        .execute();
+      metrics.counter('dp_job_errors_total', { kind: 'hitl_expired' }).inc(1);
+      jobLogger.warn({}, 'HITL expired — job_run closed, job status is HITL_EXPIRED');
+      try {
+        await notifyAgentFailed({
+          jobId: job_id,
+          jobRunId: jobRun.id,
+          tenantId: tenant_id,
+          portalId: portalConfig.portalId,
+          agentId: agentId ?? null,
+          agentName: agentName ?? null,
+          finalStatus: JOB_STATES.HITL_EXPIRED,
+          reason: 'HITL task expired without operator resolution',
+          logger: jobLogger,
+        });
+      } catch (e) {
+        jobLogger.warn({ err: e }, 'Agent failed notify failed (HITL_EXPIRED)');
+      }
+      return;
+    }
+
     // Job completed successfully
+    // Read the live DB state BEFORE updating — handles the inline-HITL case where job is still at
+    // WAITING_HITL in DB after waitForHitlResolution resolves, so the event reads WAITING_HITL → COMPLETED.
+    const liveJobForTransition = await jobRepo.findById(job_id).catch(() => null);
+    const completedFromState = (liveJobForTransition?.status ?? result.lastState) as typeof result.lastState;
+
     await jobRepo.updateStatus(job_id, JOB_STATES.COMPLETED, {
       completed_at: new Date(),
     });
@@ -523,7 +613,7 @@ export async function processJob(
     await eventRepo.createStateTransition(
       job_id,
       tenant_id,
-      result.lastState,
+      completedFromState,
       JOB_STATES.COMPLETED,
       { confirmation_number: result.confirmationNumber },
       jobRun.id
@@ -540,20 +630,7 @@ export async function processJob(
     metrics.counter('dp_job_completions_total', { status: 'completed' }).inc(1);
     jobLogger.info({ confirmationNumber: result.confirmationNumber }, 'Job completed');
 
-    // Send completion email (skipped if SMTP not configured in CP notify settings)
-    try {
-      await notifyJobCompletedEmail({
-        jobId: job_id,
-        jobRunId: jobRun.id,
-        tenantId: tenant_id,
-        portalId: portalConfig.portalId,
-        confirmationNumber: result.confirmationNumber,
-        logger: jobLogger,
-      });
-    } catch (e) {
-      jobLogger.warn({ err: e }, 'Job completion email failed');
-    }
-
+    // notifyBookingConfirmed (below) sends the booking confirmation email with full details
     try {
       if (result.confirmationNumber) {
         await notifyBookingConfirmed({
@@ -589,14 +666,33 @@ export async function processJob(
     }
 
   } catch (err) {
+    // HitlWaitingError means the job was intentionally parked at WAITING_HITL.
+    // The status was already written — do NOT overwrite it with FAILED_RETRYABLE.
+    if (err instanceof HitlWaitingError) {
+      jobLogger.info({ jobId: job_id }, 'Job parked at WAITING_HITL — skipping error handler');
+      throw err;
+    }
+
     const kind = classifyError(err);
     if (runStartMs > 0) {
       metrics.gauge('dp_job_run_duration_ms').set(Date.now() - runStartMs);
     }
     metrics.counter('dp_job_errors_total', { kind }).inc(1);
     if (kind === 'soft') metrics.counter('dp_job_retries_total').inc(1);
-    jobLogger.error({ err }, 'Job processing error');
 
+    if (kind === 'suspicious') {
+      // Bot-detection redirect: log at ERROR level with a clear label so it stands out
+      jobLogger.error(
+        { err, kind: 'suspicious' },
+        '[SUSPICIOUS_REDIRECT] Portal redirected agent to unexpected origin — ' +
+          'bot-detection likely fired. Check mouseSimulation config on mock portal or ' +
+          'mouseMoveIntervalMs / mouseMoveSegments* on real portal config.'
+      );
+    } else {
+      jobLogger.error({ err }, 'Job processing error');
+    }
+
+    // suspicious → treat as retryable (it may be a config issue; don't permanently fail the job)
     const terminalState = kind === 'hard' ? JOB_STATES.FAILED_TERMINAL : JOB_STATES.FAILED_RETRYABLE;
     await jobRepo.updateStatus(job_id, terminalState, {
       retry_count: payload.attempt_number - 1,
@@ -607,7 +703,14 @@ export async function processJob(
       tenant_id,
       payload.resume_from_state ?? JOB_STATES.QUEUED,
       terminalState,
-      { error: (err as Error).message, error_kind: kind },
+      {
+        error: (err as Error).message,
+        error_kind: kind,
+        ...(kind === 'suspicious' && {
+          suspicious: true,
+          hint: 'Bot-detection redirect. Check mouseSimulation (mock) or mouseMoveIntervalMs (real portal).',
+        }),
+      },
       undefined
     );
 

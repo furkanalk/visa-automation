@@ -231,6 +231,8 @@ export const cpApi = {
   },
   getJobRuns: (id: string) =>
     fetchApi<{ items: JobRun[]; total: number; retry_count: number }>(`${getCpApiUrl()}/cp/jobs/${id}/runs`),
+  getJobScreenshots: (id: string) =>
+    fetchApi<{ items: { job_id: string; filename: string; content_type: string }[] }>(`${getCpApiUrl()}/cp/screenshots/${id}`),
 
   // HITL
   getHitlTasks: (params?: Record<string, string>) => {
@@ -285,6 +287,20 @@ export const cpApi = {
     fetchApi<{ channel: string; message: string; details: Record<string, unknown> }>(
       `${getCpApiUrl()}/cp/notify/test/email`,
       { method: "POST", body: JSON.stringify(params ?? {}) }
+    ),
+
+  sendBugReport: (params: {
+    title: string;
+    description: string;
+    timeWindowMinutes: number;
+    to?: string;
+    attachmentBase64?: string;
+    attachmentName?: string;
+    attachmentMime?: string;
+  }) =>
+    fetchApi<{ sent_to: string }>(
+      `${getCpApiUrl()}/cp/bug-report`,
+      { method: "POST", body: JSON.stringify(params) }
     ),
 
   // Watcher
@@ -618,6 +634,20 @@ export interface ScaleResponse {
   scaling_in_progress: boolean;
 }
 
+export interface NotifyEventRouting {
+  telegram?: boolean;
+  email?: boolean;
+}
+
+export interface NotifyRouting {
+  slot_open?: NotifyEventRouting;
+  booking?: NotifyEventRouting;
+  agent_start?: NotifyEventRouting;
+  agent_done?: NotifyEventRouting;
+  agent_fail?: NotifyEventRouting;
+  hitl?: NotifyEventRouting;
+}
+
 export interface NotifySettings {
   id: string;
   tenant_id: string;
@@ -636,6 +666,8 @@ export interface NotifySettings {
   webhook_enabled: boolean;
   webhook_url: string | null;
   webhook_secret: string | null;
+  notify_routing: NotifyRouting;
+  booking_send_to_customer: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -656,6 +688,8 @@ export interface UpdateNotifySettingsRequest {
   webhook_enabled?: boolean;
   webhook_url?: string | null;
   webhook_secret?: string | null;
+  notify_routing?: NotifyRouting;
+  booking_send_to_customer?: boolean;
 }
 
 // Watcher types
@@ -1069,10 +1103,17 @@ export const customerApi = {
   },
 
   async triggerSlotCheck(id: string): Promise<{ message: string; customer_id: string; job_id: string; agent_id?: string; agent_name?: string }> {
-    return fetchApi<{ data: { message: string; customer_id: string; job_id: string; agent_id?: string; agent_name?: string } }>(
+    return fetchApi<{ message: string; customer_id: string; job_id: string; agent_id?: string; agent_name?: string }>(
       `${getCpApiUrl()}/cp/customers/${id}/run-slot-check`,
       { method: 'POST', body: '{}' }
-    ).then(r => r.data);
+    );
+  },
+
+  async triggerBooking(id: string): Promise<{ message: string; customer_id: string; job_id: string; agent_id?: string; agent_name?: string }> {
+    return fetchApi<{ message: string; customer_id: string; job_id: string; agent_id?: string; agent_name?: string }>(
+      `${getCpApiUrl()}/cp/customers/${id}/run-booking`,
+      { method: 'POST', body: '{}' }
+    );
   },
 
   async bulkAction(action: 'pause' | 'resume' | 'assign_profile' | 'update_status', ids: string[], options?: { profile_id?: string; status?: CustomerStatus }): Promise<{ affected: number }> {

@@ -105,6 +105,18 @@ export async function slotHunt(args: {
     return { found: false, needsHitl: true, reason: 'blocked' };
   }
 
+  // Parse the open dates directly from the TarihGetir response body.
+  // This is more reliable than reading window.dateDisabled from the DOM (race with jQuery $.ajax callback).
+  let tarihGetirDates: string[] = [];
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    if (Array.isArray(parsed)) {
+      tarihGetirDates = parsed.map(String).filter((s) => TARIH_GETIR_DATE_LIKE.test(s.trim()));
+    }
+  } catch {
+    // leave empty; fall through to DOM polling
+  }
+
   // AJAX success callback'i window.dateDisabled'ı güncelleyene kadar kısa bekle (jQuery async)
   await sleep(300);
 
@@ -131,6 +143,8 @@ export async function slotHunt(args: {
   // ready=false için ayrı sayaç: sonsuz bekleme önlemi
   const maxReadyWaits = Math.max(1, sh.maxReadyWaits ?? 20);
   let readyWaits = 0;
+  // First poll uses tarihGetirDates as fallback in case window.dateDisabled isn't set yet by jQuery
+  let firstPoll = true;
 
   while (pollsDone < maxPolls) {
     if (args.shouldAbort && (await args.shouldAbort())) {
@@ -138,7 +152,8 @@ export async function slotHunt(args: {
     }
 
     const snapStart = Date.now();
-    const snap = await getAvailabilitySnapshot(page);
+    const snap = await getAvailabilitySnapshot(page, firstPoll ? tarihGetirDates : undefined);
+    firstPoll = false;
     const snapMs = Date.now() - snapStart;
 
     if (!snap.ready) {
@@ -189,21 +204,30 @@ export async function slotHunt(args: {
 }
 
 async function getAvailabilitySnapshot(
-  page: Page
+  page: Page,
+  fallbackDates?: string[]
 ): Promise<{ dates: string[]; hash: string; ready: boolean }> {
   const raw = await page.evaluate(() => {
-    const arr = (globalThis as unknown as { dateDisabled?: unknown[] }).dateDisabled;
-    return { dates: Array.isArray(arr) ? arr.map(String) : [], ready: true };
+    const g = globalThis as unknown as { dateDisabled?: unknown[]; _dateDisabledReady?: boolean };
+    const arr = g.dateDisabled;
+    // ready = true if window.dateDisabled has been set (either by page var or AJAX callback)
+    // We consider it ready if it's an array (including empty — that means no open slots)
+    const ready = Array.isArray(arr);
+    return { dates: Array.isArray(arr) ? arr.map(String) : [], ready };
   });
 
-  const normalized = raw.dates.slice().sort().join('|');
+  // If DOM hasn't set window.dateDisabled yet but we have dates from the response body, use those.
+  const dates = raw.ready ? raw.dates : (fallbackDates ?? []);
+  const ready = raw.ready || (fallbackDates !== undefined);
+
+  const normalized = dates.slice().sort().join('|');
   const hash = createHash('sha256').update(normalized).digest('hex');
 
-  return { dates: raw.dates, hash, ready: raw.ready };
+  return { dates, hash, ready };
 }
 
 const APPOINTMENT_TIME_VISIBLE_MS = 5_000;
-const APPOINTMENT_TIME_SETTLE_MS = 3_000;
+const APPOINTMENT_TIME_SETTLE_MS = 8_000;
 
 /**
  * #AppointmentTime select'te en az bir etkin (disabled değil, value dolu ve !== '0') option var mı.
@@ -224,7 +248,8 @@ async function hasEnabledTimeOption(page: Page): Promise<boolean> {
 
 /**
  * #AppointmentTime görünür olduktan sonra option'ların async dolmasını bekler.
- * Koşul: en az bir enabled option VAR veya option listesi doldu (no-slots settled).
+ * Koşul: en az bir enabled option (SaatGetir AJAX response geldi ve doldurdu).
+ * `opts.length > 0` early-return kaldırıldı — boş select de length>0 yapabilir (placeholder vb).
  */
 async function waitForTimeOptionsSettled(page: Page): Promise<void> {
   await page
@@ -234,10 +259,7 @@ async function waitForTimeOptionsSettled(page: Page): Promise<void> {
         const el = g.document?.querySelector(sel);
         if (!el || (el as unknown as { tagName: string }).tagName !== 'SELECT') return false;
         const opts = Array.from((el as unknown as { options: unknown[] }).options ?? []) as unknown as { disabled?: boolean; value?: string }[];
-        const hasEnabled = opts.some((o) => !o.disabled && (o.value?.trim() ?? '') !== '' && o.value !== '0');
-        if (hasEnabled) return true;
-        if (opts.length > 0) return true;
-        return false;
+        return opts.some((o) => !o.disabled && (o.value?.trim() ?? '') !== '' && o.value !== '0');
       },
       S.selects.appointmentTime,
       { timeout: APPOINTMENT_TIME_SETTLE_MS }
@@ -377,6 +399,13 @@ async function runStageB(page: Page, targetDayOfMonth: string, log?: LogAdapter)
     log?.info({ dayClicked, targetDayOfMonth, isBootstrap }, 'runStageB: dayClicked result');
     if (!dayClicked) return false;
 
+    // Wait for SaatGetir AJAX to fire after datepicker selection (changeDate → tarihGetir()).
+    // If it doesn't fire (no network request) within a short window, that's OK — fall back to
+    // waitForTimeOptionsSettled which polls the DOM.
+    await page
+      .waitForResponse((r) => r.url().includes('/SaatGetir') && r.status() === 200, { timeout: 3_000 })
+      .catch(() => null);
+
     const timeVisible = await page.waitForSelector(S.selects.appointmentTime, { state: 'visible', timeout: APPOINTMENT_TIME_VISIBLE_MS }).then(() => true).catch(() => false);
     log?.info({ timeVisible }, 'runStageB: AppointmentTime visible');
     if (!timeVisible) return false;
@@ -388,6 +417,110 @@ async function runStageB(page: Page, targetDayOfMonth: string, log?: LogAdapter)
   } catch {
     return false;
   }
+}
+
+/**
+ * Booking için tarih ve saat seçimi yapar.
+ * verifyRealSlot gibi datepicker'dan ilk açık güne tıklar,
+ * ardından #AppointmentTime select'te ilk enabled option'ı seçer.
+ * Returns true if a time was successfully selected.
+ */
+export async function selectSlotForBooking(page: Page, log?: LogAdapter): Promise<boolean> {
+  const l: LogAdapter = log ?? { info: () => {}, warn: () => {}, debug: () => {} };
+  const isReadonly = (await page.getAttribute(S.inputs.appointmentDate, 'readonly')) != null;
+  l.info({ isReadonly }, 'selectSlotForBooking: appointmentDate readonly check');
+
+  // Stage A: direct fill (non-readonly input)
+  if (!isReadonly) {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yyyy = String(d.getFullYear());
+    const dateStr = `${dd}/${mm}/${yyyy}`;
+    await page.fill(S.inputs.appointmentDate, dateStr).catch(() => null);
+    await page.locator(S.inputs.appointmentDate).dispatchEvent('change').catch(() => null);
+    const timeVisible = await page
+      .waitForSelector(S.selects.appointmentTime, { state: 'visible', timeout: APPOINTMENT_TIME_VISIBLE_MS })
+      .then(() => true)
+      .catch(() => false);
+    if (timeVisible) {
+      await waitForTimeOptionsSettled(page);
+      const selected = await selectFirstEnabledTimeOption(page);
+      if (selected) { l.info({ dateStr }, 'selectSlotForBooking: stageA selected time'); return true; }
+    }
+  }
+
+  // Stage B: datepicker widget click
+  // Ensure #apDate container is visible — same as runStageB.
+  // If #TravelDate was never filled, the portal hides #apDate and the datepicker click silently fails.
+  try {
+    await page.evaluate(() => {
+      const g = globalThis as unknown as { $?: (sel: string) => { is: (s: string) => boolean; show: () => void } };
+      if (g.$) {
+        if (g.$('#apDate').is(':hidden')) g.$('#apDate').show();
+      } else {
+        const el = document.querySelector('#apDate') as HTMLElement | null;
+        if (el) el.style.display = '';
+      }
+    }).catch(() => null);
+    await new Promise<void>((r) => setTimeout(r, 200));
+
+    // Click datepicker input — if it fails (e.g. element not interactable) bail out early
+    let clickOk = false;
+    await page.click(S.inputs.appointmentDate, { timeout: 3_000 }).then(() => { clickOk = true; }).catch(() => null);
+    if (!clickOk) return false;
+
+    const popupSel = await Promise.race([
+      page.waitForSelector(S.datepicker.popup, { state: 'visible', timeout: 2_000 })
+        .then(() => S.datepicker.popup).catch(() => null),
+      page.waitForSelector(S.bootstrapDatepicker.popup, { state: 'visible', timeout: 2_000 })
+        .then(() => S.bootstrapDatepicker.popup).catch(() => null),
+    ]);
+    if (!popupSel) return false;
+    const isBootstrap = await page.$(S.bootstrapDatepicker.popup).then(Boolean).catch(() => false);
+    const currentMonthSel = isBootstrap ? S.bootstrapDatepicker.enabledDayCurrentMonth : S.datepicker.enabledDayCurrentMonth;
+    const anyMonthSel = isBootstrap ? S.bootstrapDatepicker.enabledDay : S.datepicker.enabledDay;
+    for (const sel of [currentMonthSel, anyMonthSel]) {
+      const locators = page.locator(sel);
+      const count = await locators.count().catch(() => 0);
+      if (count === 0) continue;
+      await locators.first().click({ timeout: 3_000 }).catch(() => null);
+      break;
+    }
+    // SaatGetir response beklenir; mock'ta hızlı gelir, gerçekte birkaç saniye — timeout düşük tutulabilir çünkü .catch ile yutulur
+    await page
+      .waitForResponse((r) => r.url().includes('/SaatGetir') && r.status() === 200, { timeout: 5_000 })
+      .catch(() => null);
+    const timeVisible = await page
+      .waitForSelector(S.selects.appointmentTime, { state: 'visible', timeout: APPOINTMENT_TIME_VISIBLE_MS })
+      .then(() => true)
+      .catch(() => false);
+    if (!timeVisible) return false;
+    await waitForTimeOptionsSettled(page);
+    const selected = await selectFirstEnabledTimeOption(page);
+    l.info({ selected }, 'selectSlotForBooking: stageB selected time');
+    return selected;
+  } catch {
+    return false;
+  }
+}
+
+/** #AppointmentTime select'te ilk enabled, non-zero option'ı seçer. */
+async function selectFirstEnabledTimeOption(page: Page): Promise<boolean> {
+  return page.evaluate((sel: string) => {
+    const doc = (globalThis as unknown as { document?: { querySelector: (s: string) => unknown } }).document;
+    const el = doc?.querySelector(sel);
+    if (!el || (el as unknown as { tagName: string }).tagName !== 'SELECT') return false;
+    const opts = Array.from((el as unknown as { options: unknown[] }).options ?? []) as unknown as { disabled?: boolean; value?: string }[];
+    const first = opts.find((o) => !o.disabled && (o.value?.trim() ?? '') !== '' && o.value !== '0');
+    if (!first) return false;
+    (el as unknown as { value: string }).value = first.value ?? '';
+    const evt = new (globalThis as unknown as { Event: new (t: string, o?: object) => unknown }).Event('change', { bubbles: true });
+    (el as unknown as { dispatchEvent: (e: unknown) => void }).dispatchEvent(evt);
+    return true;
+  }, S.selects.appointmentTime).catch(() => false);
 }
 
 /** AS-VISA: dateDisabled array elemanları genelde yyyy-mm-dd veya benzeri tarih string. */

@@ -94,6 +94,10 @@ export const notifyRoutes: FastifyPluginAsync = async (app) => {
     if (body.webhook_url !== undefined) updates.webhook_url = body.webhook_url;
     if (body.webhook_secret !== undefined) updates.webhook_secret = body.webhook_secret;
 
+    // Routing
+    if (body.notify_routing !== undefined) updates.notify_routing = body.notify_routing as Record<string, unknown>;
+    if (body.booking_send_to_customer !== undefined) updates.booking_send_to_customer = body.booking_send_to_customer;
+
     const settings = await notifyRepo.upsert(request.tenantId, updates);
 
     const isSuperAdmin = (request as { roles?: string[] }).roles?.includes('super_admin');

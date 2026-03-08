@@ -174,9 +174,9 @@ export class ConfigService {
    * Initialize the config service - fetch initial config
    */
   async initialize(): Promise<void> {
-    this.logger.debug('Initializing ConfigService');
+    this.logger.info('Initializing ConfigService');
     await this.refresh();
-    this.logger.debug({ lastFetchedAt: this.lastFetchedAt }, 'ConfigService initialized');
+    this.logger.info({ lastFetchedAt: this.lastFetchedAt }, 'ConfigService initialized');
   }
 
   /**
@@ -232,7 +232,7 @@ export class ConfigService {
       const response = await fetch(`${this.cpApiUrl}/cp/settings`, { headers });
 
       if (response.status === 304) {
-        this.logger.debug('Config unchanged (304), skip merge');
+        this.logger.trace('Config unchanged (304), skip merge');
         return;
       }
 

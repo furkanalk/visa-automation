@@ -35,4 +35,13 @@ export class JobScreenshotRepository {
       .where('filename', '=', filename)
       .executeTakeFirst();
   }
+
+  async listByJob(jobId: string): Promise<Pick<JobScreenshotRow, 'job_id' | 'filename' | 'content_type'>[]> {
+    return this.db
+      .selectFrom('job_screenshots')
+      .select(['job_id', 'filename', 'content_type'])
+      .where('job_id', '=', jobId)
+      .orderBy('filename', 'asc')
+      .execute();
+  }
 }

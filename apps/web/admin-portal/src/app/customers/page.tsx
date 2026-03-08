@@ -21,6 +21,7 @@ import {
   Edit,
   Eye,
   Rocket,
+  CalendarCheck,
   Users,
   CheckCircle,
   XCircle,
@@ -35,6 +36,15 @@ type ViewMode = "list" | "detail" | "create" | "edit";
 
 /** Keys that are always in "visa" section; don't show again in portal-specific. */
 const GENERAL_PREFERENCE_KEYS = ["idNo", "passportNumber", "name", "surname", "middleName", "birthDate", "email", "phone"] as const;
+
+/**
+ * Portal-specific keys that are managed automatically by the agent and should never appear
+ * in the customer form regardless of what the portal's customerFormSchema says.
+ * - travelDate     → comes from "Visa Information" (travelDateSingle / travelDateFrom)
+ * - appointmentDate → auto-picked from open_dates + travel date + algorithm
+ * - appointmentTime → auto-selected from the portal's /SaatGetir response
+ */
+const AGENT_MANAGED_KEYS = ["travelDate", "appointmentDate", "appointmentTime"] as const;
 
 type TravelDateMode = "auto" | "single" | "range";
 type TravelDateAlgorithm = "nearest" | "farthest" | "middle" | "1month" | "2months";
@@ -168,7 +178,9 @@ export default function CustomersPage() {
     : null;
   const rawCustomerFormSchema = (selectedPortal?.config?.customerFormSchema as CustomerFormFieldSchema[] | undefined) ?? [];
   const customerFormSchema = rawCustomerFormSchema.filter(
-    (f) => !(GENERAL_PREFERENCE_KEYS as readonly string[]).includes(f.key)
+    (f) =>
+      !(GENERAL_PREFERENCE_KEYS as readonly string[]).includes(f.key) &&
+      !(AGENT_MANAGED_KEYS as readonly string[]).includes(f.key)
   );
 
   const buildPreferences = (data: CustomerFormData) => {
@@ -306,14 +318,33 @@ export default function CustomersPage() {
   });
 
   // Trigger slot check (currently only logs the action; job creation not yet implemented)
-  const [slotCheckMessage, setSlotCheckMessage] = useState<string | null>(null);
+  const [slotCheckMessage, setSlotCheckMessage] = useState<{ text: string; type: 'info' | 'error' } | null>(null);
   const triggerSlotCheckMutation = useMutation({
     mutationFn: (id: string) => customerApi.triggerSlotCheck(id),
     onSuccess: (data) => {
       const msg = data.agent_name
         ? `Job assigned to sync agent "${data.agent_name}". Job ID: ${data.job_id}`
         : data.job_id ? `Job started. Job ID: ${data.job_id}` : data.message;
-      setSlotCheckMessage(msg);
+      setSlotCheckMessage({ text: msg, type: 'info' });
+      setTimeout(() => setSlotCheckMessage(null), 6000);
+    },
+    onError: (err) => {
+      setSlotCheckMessage({ text: err instanceof Error ? err.message : 'Failed to start slot check.', type: 'error' });
+      setTimeout(() => setSlotCheckMessage(null), 6000);
+    },
+  });
+
+  const triggerBookingMutation = useMutation({
+    mutationFn: (id: string) => customerApi.triggerBooking(id),
+    onSuccess: (data) => {
+      const msg = data.agent_name
+        ? `Booking job assigned to sync agent "${data.agent_name}". Job ID: ${data.job_id}`
+        : data.job_id ? `Booking job started. Job ID: ${data.job_id}` : data.message;
+      setSlotCheckMessage({ text: msg, type: 'info' });
+      setTimeout(() => setSlotCheckMessage(null), 6000);
+    },
+    onError: (err) => {
+      setSlotCheckMessage({ text: err instanceof Error ? err.message : 'Failed to start booking job.', type: 'error' });
       setTimeout(() => setSlotCheckMessage(null), 6000);
     },
   });
@@ -414,8 +445,12 @@ export default function CustomersPage() {
         </div>
 
         {slotCheckMessage && (
-          <div className="rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20 px-4 py-2 text-sm text-blue-800 dark:text-blue-200">
-            {slotCheckMessage}
+          <div className={`rounded-lg border px-4 py-2 text-sm ${
+            slotCheckMessage.type === 'error'
+              ? 'border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20 text-red-800 dark:text-red-200'
+              : 'border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200'
+          }`}>
+            {slotCheckMessage.text}
           </div>
         )}
 
@@ -570,11 +605,22 @@ export default function CustomersPage() {
                             <Button
                               variant="outline"
                               size="sm"
-                              title="Start slot check. Assigns the job to an idle SYNC agent immediately."
+                              title="Check Slot — scout only (slot_check_only: true)"
                               onClick={() => triggerSlotCheckMutation.mutate(customer.id)}
-                              disabled={triggerSlotCheckMutation.isPending}
+                              disabled={triggerSlotCheckMutation.isPending || triggerBookingMutation.isPending}
                             >
                               <Rocket className="h-4 w-4" />
+                            </Button>
+                          )}
+                          {customer.status === "active" && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              title="Book Now — full booking job (slot_check_only: false, triggers HITL if needed)"
+                              onClick={() => triggerBookingMutation.mutate(customer.id)}
+                              disabled={triggerSlotCheckMutation.isPending || triggerBookingMutation.isPending}
+                            >
+                              <CalendarCheck className="h-4 w-4" />
                             </Button>
                           )}
                           {customer.status === "active" && (
@@ -1070,7 +1116,7 @@ export default function CustomersPage() {
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">Portal-specific information</CardTitle>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {selectedPortal?.name || formData.portal_id}. If appointment date/time is left empty, the agent picks automatically or by algorithm; if set, that value is used.
+                  {selectedPortal?.name || formData.portal_id}. Travel date is set in &quot;Visa Information&quot; above. Appointment date and time are picked automatically by the agent.
                 </p>
               </CardHeader>
               <CardContent>

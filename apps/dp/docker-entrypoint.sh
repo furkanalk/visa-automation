@@ -8,7 +8,11 @@ cd /app && npx playwright install chromium
 # and must be rebuilt whenever its source changes (e.g. transitions.ts).
 echo "Building @visa-automation/shared..."
 cd /app && npx tsc -p packages/shared/tsconfig.json
-cp -r /app/packages/shared/dist/. /app/node_modules/@visa-automation/shared/dist/
+SRC=$(realpath /app/packages/shared/dist 2>/dev/null || echo "/app/packages/shared/dist")
+DST=$(realpath /app/node_modules/@visa-automation/shared/dist 2>/dev/null || echo "/app/node_modules/@visa-automation/shared/dist")
+if [ "$SRC" != "$DST" ]; then
+  cp -r "$SRC/." "$DST/"
+fi
 echo "Shared package rebuilt."
 
 exec "$@"

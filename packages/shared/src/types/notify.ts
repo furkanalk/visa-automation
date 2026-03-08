@@ -1,6 +1,24 @@
 /**
  * Notification Settings - per-tenant notification channel configuration
  */
+
+/**
+ * Per-event channel routing. Both fields default to true when not set.
+ */
+export interface NotifyEventRouting {
+  telegram?: boolean;
+  email?: boolean;
+}
+
+export interface NotifyRouting {
+  slot_open?: NotifyEventRouting;
+  booking?: NotifyEventRouting;
+  agent_start?: NotifyEventRouting;
+  agent_done?: NotifyEventRouting;
+  agent_fail?: NotifyEventRouting;
+  hitl?: NotifyEventRouting;
+}
+
 export interface NotifySettings {
   id: string;
   tenant_id: string;
@@ -19,6 +37,8 @@ export interface NotifySettings {
   webhook_enabled: boolean;
   webhook_url?: string;
   webhook_secret?: string;
+  notify_routing: NotifyRouting;
+  booking_send_to_customer: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -42,6 +62,8 @@ export interface UpdateNotifySettingsRequest {
   webhook_enabled?: boolean;
   webhook_url?: string;
   webhook_secret?: string;
+  notify_routing?: NotifyRouting;
+  booking_send_to_customer?: boolean;
 }
 
 export interface TestTelegramRequest {

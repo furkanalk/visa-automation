@@ -160,7 +160,7 @@ export class AsyncAgentRunner {
     try {
       await this.agentPool.assignJob(agent.id, job_id);
 
-      this.logger.debug(
+      this.logger.info(
         { agentId: agent.id, jobId: job_id },
         'Starting job execution with agent'
       );

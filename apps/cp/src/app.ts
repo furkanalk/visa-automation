@@ -1,6 +1,9 @@
 import Fastify, { FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
+import { readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { healthRoutes } from './routes/health.js';
 import { metricsRoutes } from './routes/metrics.js';
 import { systemRoutes } from './routes/system.js';
@@ -19,6 +22,7 @@ import { customerRoutes } from './routes/customers.js';
 import { staffRoutes } from './routes/staff.js';
 import { authRoutes } from './routes/auth.js';
 import { mockPortalRoutes } from './routes/mock-portal.js';
+import { bugReportRoutes } from './routes/bug-report.js';
 import { publicJobRoutes } from './routes/public-jobs.js';
 import { tenantMiddleware } from './middleware/tenant.js';
 import { auditPreHandler, auditOnSend } from './middleware/audit.js';
@@ -45,6 +49,21 @@ export async function createApp(): Promise<FastifyInstance> {
   await app.register(metricsRoutes, { prefix: '/cp/metrics' });
   await app.register(systemRoutes, { prefix: '/cp/system' });
   await app.register(dashboardRoutes, { prefix: '/cp/dashboard' });
+
+  // Public static assets (no auth)
+  app.get('/cp/static/banner-email.png', async (_request, reply) => {
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = dirname(__filename);
+    const bannerPath = join(__dirname, '..', '..', 'banner-email.png');
+    try {
+      const file = readFileSync(bannerPath);
+      reply.header('Content-Type', 'image/png');
+      reply.header('Cache-Control', 'public, max-age=86400');
+      return reply.send(file);
+    } catch {
+      return reply.status(404).send({ success: false, error: { code: 'NOT_FOUND', message: 'Banner not found' } });
+    }
+  });
 
   // Public API routes (same contract as former apps/api; no tenant middleware)
   await app.register(publicJobRoutes, { prefix: '/api/jobs' });
@@ -79,6 +98,7 @@ export async function createApp(): Promise<FastifyInstance> {
     await cpApp.register(staffRoutes); // /cp/staff
     await cpApp.register(authRoutes, { prefix: '/auth' }); // /cp/auth (tenant optional for invite)
     await cpApp.register(mockPortalRoutes, { prefix: '/mock-portal' }); // /cp/mock-portal/:portalId/config
+    await cpApp.register(bugReportRoutes, { prefix: '/bug-report' }); // /cp/bug-report
   }, { prefix: '/cp' });
 
   // Global error handler
