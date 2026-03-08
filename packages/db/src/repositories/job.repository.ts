@@ -237,6 +237,9 @@ export class JobRepository {
   /**
    * Reset jobs that have an expired lock (locked_by set, locked_until &lt; now or null).
    * Only non-terminal jobs are reset; they become reclaimable (status QUEUED, lock cleared).
+   * WAITING_HITL jobs are intentionally excluded: DP holds an inline browser session open while
+   * polling for resolution, so a WAITING_HITL job with an expired lock should not be force-reset
+   * to QUEUED here — it will either resolve naturally or expire via the HITL task timeout.
    * Returns the number of jobs reset.
    */
   async resetStuckRunningJobs(): Promise<number> {
@@ -251,7 +254,7 @@ export class JobRepository {
       })
       .where('locked_by', 'is not', null)
       .where((eb) => eb('locked_until', 'is', null).or('locked_until', '<', now))
-      .where('status', 'not in', JobRepository.TERMINAL_STATUSES)
+      .where('status', 'not in', [...JobRepository.TERMINAL_STATUSES, 'WAITING_HITL'] as const)
       .executeTakeFirst();
     return Number(result.numUpdatedRows ?? 0n);
   }

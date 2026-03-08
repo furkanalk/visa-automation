@@ -13,8 +13,8 @@
     }
   },
   "scripts": {
-    "build": "tsc -b",
-    "dev": "tsc -b --watch",
+    "build": "tsc",
+    "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
     "migrate": "node dist/migrate.js",
     "migrate:up": "node dist/migrate.js up",

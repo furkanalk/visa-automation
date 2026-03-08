@@ -175,11 +175,15 @@ export const hitlRoutes: FastifyPluginAsync = async (app) => {
     }
 
     // Auto-requeue: move job from WAITING_HITL to QUEUED and enqueue so DP continues.
-    // SKIP if job is currently locked — DP is inline-waiting for the HITL resolution and will
-    // pick up the resolved value itself (no requeue needed; requeue would create a duplicate run).
-    const jobIsLocked = !!(job as unknown as Record<string, unknown>).locked_by;
+    // SKIP if job is currently locked (locked_by set AND locked_until in the future) — DP is
+    // inline-waiting for the HITL resolution and will pick up the resolved value itself
+    // (no requeue needed; requeue would create a duplicate run).
+    const now = new Date();
+    const lockedBy = (job as unknown as Record<string, unknown>).locked_by as string | null;
+    const lockedUntil = (job as unknown as Record<string, unknown>).locked_until as Date | string | null;
+    const jobIsActiveLocked = !!(lockedBy && lockedUntil && new Date(lockedUntil) > now);
     let jobRequeued = false;
-    if (job.status === JOB_STATES.WAITING_HITL && !jobIsLocked) {
+    if (job.status === JOB_STATES.WAITING_HITL && !jobIsActiveLocked) {
       const previousStatus = job.status;
       const updatedJob = await jobRepo.updateStatusIf(job.id, job.status, JOB_STATES.QUEUED);
       if (updatedJob) {

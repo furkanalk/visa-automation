@@ -154,8 +154,17 @@ export async function waitForHitlResolution(params: WaitForHitlParams): Promise<
 
   // 4. Poll until resolved or expired — renew job lock every 60s so worker keeps ownership
   const deadline = Date.now() + seconds * 1_000 + 5_000; // +5s grace
-  const LOCK_RENEW_INTERVAL_MS = 60_000;
+  const LOCK_RENEW_INTERVAL_MS = 45_000; // renew every 45s (lock duration is 5min, gives 2 renewals before expiry)
   let lastLockRenewAt = Date.now();
+
+  // Renew immediately on entry so that even if acquireLock was called just before status changed
+  // to WAITING_HITL, the lock timestamp is fresh and CP's /resolve sees it as active-locked.
+  if (workerId) {
+    await jobRepo.renewLock(job_id, workerId, 5 * 60 * 1_000).catch((err) => {
+      logger.warn({ err, jobId: job_id }, 'Initial lock renewal at HITL wait start failed (non-fatal)');
+    });
+    lastLockRenewAt = Date.now();
+  }
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, pollIntervalMs));
 
