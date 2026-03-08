@@ -90,10 +90,10 @@ jobs:
             export IMAGE_MOCK_PORTAL=${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/visa-mock-portal:${{ steps.meta.outputs.tag }}
 
             # Pull new images
-            docker-compose --env-file "${ENV_FILE}" -f compose.yml -f prod-override.yml pull
+            docker compose --env-file "${ENV_FILE}" -f compose.yml -f prod-override.yml pull
 
             # Rolling restart
-            docker-compose --env-file "${ENV_FILE}" -f compose.yml -f prod-override.yml up -d --no-build --remove-orphans
+            docker compose --env-file "${ENV_FILE}" -f compose.yml -f prod-override.yml up -d --no-build --remove-orphans
 
             # Cleanup old images
             docker image prune -f
