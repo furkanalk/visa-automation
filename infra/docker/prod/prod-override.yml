@@ -2,7 +2,8 @@
 # env_file: ${ENV_FILE} (bu klasördeki ${ENV_FILE})
 services:
   postgres:
-    env_file: ${ENV_FILE}
+    env_file: 
+      - ${ENV_FILE}
     # ports: intentionally omitted — postgres must NOT be publicly exposed in prod.
     # Base postgres.yml binds ${DB_PORT}:5432; prod-override replaces it with expose-only.
     ports: []
@@ -15,7 +16,8 @@ services:
       - /tmp
 
   redis:
-    env_file: ${ENV_FILE}
+    env_file: 
+      - ${ENV_FILE}
     # ports: intentionally omitted — redis must NOT be publicly exposed in prod.
     ports: []
     expose:
@@ -28,7 +30,8 @@ services:
     env_file: ${ENV_FILE}
 
   cp:
-    env_file: ${ENV_FILE}
+    env_file: 
+      - ${ENV_FILE}
     depends_on:
       postgres:
         condition: service_healthy
@@ -47,7 +50,8 @@ services:
       - /tmp
 
   dp:
-    env_file: ${ENV_FILE}
+    env_file: 
+      - ${ENV_FILE}
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -60,7 +64,8 @@ services:
       - /home/pwuser/.cache
 
   admin-portal:
-    env_file: ${ENV_FILE}
+    env_file: 
+      - ${ENV_FILE}
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -72,7 +77,8 @@ services:
       - /tmp
 
   staff-portal:
-    env_file: ${ENV_FILE}
+    env_file: 
+      - ${ENV_FILE}
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -84,7 +90,8 @@ services:
       - /tmp
 
   caddy:
-    env_file: ${ENV_FILE}
+    env_file: 
+      - ${ENV_FILE}
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -93,7 +100,8 @@ services:
       - NET_BIND_SERVICE
 
   mock-portal:
-    env_file: ${ENV_FILE}
+    env_file: 
+      - ${ENV_FILE}
     read_only: true
     security_opt:
       - no-new-privileges:true
