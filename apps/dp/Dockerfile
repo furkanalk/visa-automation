@@ -28,7 +28,7 @@ RUN find . -name "tsconfig.tsbuildinfo" -delete && \
     npm run build --workspace=apps/dp
 
 # Stage 2: Production with Playwright
-FROM mcr.microsoft.com/playwright:v1.58.0-focal AS production
+FROM mcr.microsoft.com/playwright:v1.58.2-jammy AS production
 
 # Install Node.js 20
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
