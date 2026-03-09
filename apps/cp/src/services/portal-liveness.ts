@@ -40,8 +40,12 @@ export async function checkUrl(url: string): Promise<'up' | 'down'> {
     } catch {
       res = await fetch(url, { method: 'GET', signal: controller.signal, redirect: 'follow' });
     }
-    return res.ok ? 'up' : 'down';
+    // Consider the portal "up" if the server responded at all — even 4xx (e.g. 403 Forbidden,
+    // 401 Unauthorized, 302 redirect-to-login). These all mean the server is reachable.
+    // Only treat as "down" on 5xx (server error) or network failure (caught below).
+    return res.status < 500 ? 'up' : 'down';
   } catch {
+    // Network failure, DNS error, timeout, or connection refused → genuinely down
     return 'down';
   } finally {
     clearTimeout(timeout);
