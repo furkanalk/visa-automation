@@ -389,3 +389,10 @@ Adım 6 — WireGuard (Sunday meeting'i BLOKLAMIYOR, sonraya bırakılabilir)
 
 Adım 9 — Sunday Smoke Test
 - Deploy çalışıyorsa bu kendiliğinden gelir
+
+iDObsmhK4O4xfVkR8VTRl4JYpYYTZQXywDi/zMEUsHo=
+4UYNKh8XtPIy+B9FiL/PLy4+pQu5yuUFYy66qVLL8T8=
+
+client1.key = Windows client private key
+
+client1.pub = server config’e girecek public key
