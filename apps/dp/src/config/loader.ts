@@ -1,9 +1,10 @@
 import type { PortalConfig, PortalId, DeepPartial } from './types.js';
 import type { AgentProfileConfig } from '@visa-automation/shared';
 import { deepMerge } from './merge.js';
+import { getConfigService } from './config-service.js';
 
 /**
- * Mock: when USE_MOCK_PORTAL=true, base URL is overridden.
+ * Mock: when USE_MOCK_PORTAL=true (env) OR mock.enabled=true (DB via CP), base URL is overridden.
  *
  * MOCK_PORTAL_BASE_URL (env) — base host only, no path, no trailing slash.
  *   e.g. http://mock-portal:3004
@@ -16,18 +17,29 @@ import { deepMerge } from './merge.js';
 const MOCK_PORTAL_BASE_URL_FALLBACK = 'http://localhost:3004';
 
 function shouldUseMockPortal(): boolean {
-  return process.env.USE_MOCK_PORTAL === 'true' || process.env.USE_MOCK_PORTAL === '1';
+  // Env var hard-override (always wins)
+  if (process.env.USE_MOCK_PORTAL === 'true' || process.env.USE_MOCK_PORTAL === '1') return true;
+  // DB setting via ConfigService (dynamic, refreshed periodically from CP)
+  try {
+    const cfg = getConfigService();
+    return cfg.get('mock').enabled === true;
+  } catch {
+    // ConfigService not yet initialized — fall back to false
+    return false;
+  }
 }
 
-function getPortalBaseUrl(portalId: PortalId, configBaseUrl: string): string {
-  if (shouldUseMockPortal()) {
-    // Legacy: full URL override for all portals (backwards compat)
-    if (process.env.MOCK_PORTAL_URL) return process.env.MOCK_PORTAL_URL;
-    // Preferred: base host, each portal appends its own id
-    const base = (process.env.MOCK_PORTAL_BASE_URL || MOCK_PORTAL_BASE_URL_FALLBACK).replace(/\/$/, '');
-    return `${base}/${portalId}`;
-  }
-  return configBaseUrl;
+function getMockBaseUrl(portalId: PortalId): string {
+  // Env explicit override
+  if (process.env.MOCK_PORTAL_URL) return process.env.MOCK_PORTAL_URL;
+  // Try DB value first, then env, then fallback
+  let base: string | undefined;
+  try {
+    const dbUrl = getConfigService().get('mock').default_base_url;
+    if (dbUrl) base = dbUrl;
+  } catch { /* not initialized yet */ }
+  base = base || process.env.MOCK_PORTAL_BASE_URL || MOCK_PORTAL_BASE_URL_FALLBACK;
+  return `${base.replace(/\/$/, '')}/${portalId}`;
 }
 
 /**
@@ -169,7 +181,7 @@ export function resolvePortalConfig(args: {
   return {
     portalId: args.portalId,
     ...merged,
-    baseUrl: getPortalBaseUrl(args.portalId, merged.baseUrl as string),
+    baseUrl: shouldUseMockPortal() ? getMockBaseUrl(args.portalId) : (merged.baseUrl as string),
     slotHunt,
   } as PortalConfig;
 }

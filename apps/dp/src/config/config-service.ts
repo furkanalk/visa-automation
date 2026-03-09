@@ -79,6 +79,11 @@ export interface SystemConfig {
   fsm: {
     state_transition_delay_ms: number;
   };
+  // Mock portal settings
+  mock: {
+    enabled: boolean;
+    default_base_url: string;
+  };
 }
 
 /** Required categories and their keys; CP must return all of these (no runtime defaults). */
@@ -93,6 +98,7 @@ const REQUIRED_CATEGORIES: Record<keyof SystemConfig, string[]> = {
   browser: ['viewport_width', 'viewport_height'],
   features: ['watcher_enabled', 'hitl_enabled', 'notifications_enabled'],
   fsm: ['state_transition_delay_ms'],
+  mock: ['enabled', 'default_base_url'],
 };
 
 function parseNumber(v: unknown): number {
@@ -118,9 +124,20 @@ function parseString(v: unknown): string {
  */
 function buildConfigFromCP(data: Record<string, Record<string, unknown>>): SystemConfig {
   const config: Record<string, Record<string, unknown>> = {};
+
+  // Optional categories with defaults (not required to be in DB)
+  const OPTIONAL_CATEGORY_DEFAULTS: Partial<Record<keyof SystemConfig, Record<string, unknown>>> = {
+    mock: { enabled: false, default_base_url: '' },
+  };
+
   for (const [cat, keys] of Object.entries(REQUIRED_CATEGORIES)) {
     const raw = data[cat];
     if (!raw || typeof raw !== 'object') {
+      // If category is optional, use defaults
+      if (cat in OPTIONAL_CATEGORY_DEFAULTS) {
+        config[cat] = { ...OPTIONAL_CATEGORY_DEFAULTS[cat as keyof SystemConfig] };
+        continue;
+      }
       throw new Error(`CP config missing required category: ${cat}. Run migration 010_system_settings.`);
     }
     const out: Record<string, unknown> = {};
@@ -132,11 +149,20 @@ function buildConfigFromCP(data: Record<string, Record<string, unknown>>): Syste
           out[key] = key === 'default_scout_agent_count' ? 0 : undefined;
           continue;
         }
+        // For optional categories, fall back to default for missing keys
+        if (cat in OPTIONAL_CATEGORY_DEFAULTS) {
+          out[key] = OPTIONAL_CATEGORY_DEFAULTS[cat as keyof SystemConfig]?.[key];
+          continue;
+        }
         throw new Error(`CP config missing ${cat}.${key}. Ensure system_settings has this key.`);
       }
       if (cat === 'features' && (key === 'watcher_enabled' || key === 'hitl_enabled' || key === 'notifications_enabled')) {
         out[key] = parseBoolean(v);
       } else if (cat === 'notify' && (key === 'notify_action_token' || key === 'notify_action_base_url')) {
+        out[key] = parseString(v);
+      } else if (cat === 'mock' && key === 'enabled') {
+        out[key] = parseBoolean(v);
+      } else if (cat === 'mock' && key === 'default_base_url') {
         out[key] = parseString(v);
       } else {
         out[key] = parseNumber(v);
