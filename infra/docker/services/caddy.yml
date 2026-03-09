@@ -6,9 +6,6 @@ services:
     image: caddy:2-alpine
     container_name: visa-caddy
     restart: unless-stopped
-    ports:
-      - "10.8.0.1:80:80"
-      - "10.8.0.1:443:443"
     volumes:
       - ../../caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
