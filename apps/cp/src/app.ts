@@ -37,10 +37,15 @@ export async function createApp(): Promise<FastifyInstance> {
         ? { target: 'pino-pretty' } 
         : undefined,
     },
+    pluginTimeout: 60000, // 60s — helmet/cors async init can be slow on first cold start
   });
 
   // Security plugins
-  await app.register(helmet);
+  await app.register(helmet, {
+    // Disable CSP — CP is an internal API, not a browser app serving HTML.
+    // CSP async init in @fastify/helmet v11 can cause pluginTimeout on cold start.
+    contentSecurityPolicy: false,
+  });
   await app.register(cors, {
     origin: process.env.CORS_ORIGIN ?? true,
   });
