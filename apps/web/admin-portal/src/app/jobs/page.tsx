@@ -824,6 +824,19 @@ function JobDetailModal({
                         </span>
                       </div>
                     )}
+                    {(job.config as Record<string, unknown>)?.portal_base_url != null && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-400 dark:text-gray-500 w-20 shrink-0">Portal URL</span>
+                        <span className={`inline-flex items-center gap-1 font-mono text-xs break-all ${
+                          String((job.config as Record<string, unknown>).portal_base_url).includes('mock')
+                            ? 'text-amber-600 dark:text-amber-400'
+                            : 'text-green-700 dark:text-green-400'
+                        }`}>
+                          {String((job.config as Record<string, unknown>).portal_base_url).includes('mock') ? '🔶' : '🌐'}
+                          {String((job.config as Record<string, unknown>).portal_base_url)}
+                        </span>
+                      </div>
+                    )}
                   </div>
                   <pre className="text-xs bg-gray-50 dark:bg-slate-900 p-3 rounded overflow-x-auto">
                     {JSON.stringify(

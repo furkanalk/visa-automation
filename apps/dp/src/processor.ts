@@ -1,6 +1,7 @@
 import type { Logger } from 'pino';
 import type { JobQueuePayload } from '@visa-automation/shared';
 import { db, JobRepository, JobEventRepository } from '@visa-automation/db';
+import { sql } from 'kysely';
 import { runFSM } from './core/fsm/runner.js';
 import { createHitlTask } from './core/hitl/handler.js';
 import { JOB_STATES } from '@visa-automation/shared';
@@ -181,6 +182,17 @@ export async function processJob(
       jobOverride,
     });
     const portal = getPortal(portalConfig.portalId);
+
+    // Persist the resolved portal URL into job config so UI (Job Details) shows
+    // exactly which URL was used — mock or real.
+    await db.instance
+      .updateTable('jobs')
+      .set({
+        config: sql<Record<string, unknown>>`COALESCE(config, '{}'::jsonb) || jsonb_build_object('portal_base_url', ${portalConfig.baseUrl})::jsonb`,
+      })
+      .where('id', '=', job_id)
+      .execute()
+      .catch((e: unknown) => jobLogger.warn({ err: e }, 'Failed to persist portal_base_url to job config'));
 
     try {
       await notifyAgentStarted({
