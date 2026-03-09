@@ -23,7 +23,6 @@ const applyTheme = (resolvedTheme: "light" | "dark") => {
     document.documentElement.classList.add(resolvedTheme);
     // Also set a data attribute for debugging
     document.documentElement.setAttribute("data-theme", resolvedTheme);
-    console.log("[Theme] Applied:", resolvedTheme, "Classes:", document.documentElement.className);
   }
 };
 
@@ -35,7 +34,6 @@ export const useThemeStore = create<ThemeState>()(
 
       setTheme: (theme: Theme) => {
         const resolvedTheme = theme === "system" ? getSystemTheme() : theme;
-        console.log("[Theme] setTheme called:", { theme, resolvedTheme });
         applyTheme(resolvedTheme);
         set({ theme, resolvedTheme });
       },
@@ -43,7 +41,6 @@ export const useThemeStore = create<ThemeState>()(
       toggleTheme: () => {
         const currentResolved = get().resolvedTheme;
         const newResolved = currentResolved === "light" ? "dark" : "light";
-        console.log("[Theme] toggleTheme:", currentResolved, "->", newResolved);
         applyTheme(newResolved);
         set({ theme: newResolved, resolvedTheme: newResolved });
       },
@@ -54,7 +51,6 @@ export const useThemeStore = create<ThemeState>()(
         // Apply theme after rehydration
         if (state) {
           const resolved = state.theme === "system" ? getSystemTheme() : state.theme;
-          console.log("[Theme] Rehydrated:", { theme: state.theme, resolved });
           applyTheme(resolved);
         }
       },
