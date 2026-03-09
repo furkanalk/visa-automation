@@ -79,16 +79,17 @@ export const mockPortalRoutes: FastifyPluginAsync = async (app) => {
       const res = await fetch(`${origin}/api/config/${encodeURIComponent(portalId)}`, {
         signal: controller.signal,
       });
+      clearTimeout(timeout);
       const body = await res.json() as unknown;
       return reply.status(res.status).send(body);
     } catch (err) {
+      clearTimeout(timeout);
+      if (reply.sent) return;
       const msg = err instanceof Error ? err.message : String(err);
       return reply.status(502).send({
         success: false,
         error: { code: 'MOCK_PORTAL_UNREACHABLE', message: `Could not reach mock portal: ${msg}` },
       });
-    } finally {
-      clearTimeout(timeout);
     }
   });
 
@@ -113,16 +114,17 @@ export const mockPortalRoutes: FastifyPluginAsync = async (app) => {
         body: JSON.stringify(request.body),
         signal: controller.signal,
       });
+      clearTimeout(timeout);
       const body = await res.json() as unknown;
       return reply.status(res.status).send(body);
     } catch (err) {
+      clearTimeout(timeout);
+      if (reply.sent) return;
       const msg = err instanceof Error ? err.message : String(err);
       return reply.status(502).send({
         success: false,
         error: { code: 'MOCK_PORTAL_UNREACHABLE', message: `Could not reach mock portal: ${msg}` },
       });
-    } finally {
-      clearTimeout(timeout);
     }
   });
 };
