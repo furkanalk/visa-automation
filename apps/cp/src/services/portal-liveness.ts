@@ -37,6 +37,10 @@ export async function checkUrl(url: string): Promise<'up' | 'down'> {
     let res: Response;
     try {
       res = await fetch(url, { method: 'HEAD', signal: controller.signal, redirect: 'follow' });
+      // 405 Method Not Allowed = HEAD not supported; retry with GET
+      if (res.status === 405) {
+        res = await fetch(url, { method: 'GET', signal: controller.signal, redirect: 'follow' });
+      }
     } catch {
       res = await fetch(url, { method: 'GET', signal: controller.signal, redirect: 'follow' });
     }
