@@ -21,7 +21,8 @@ async function resolveMockOrigin(tenantId: string, portalId: string): Promise<st
 
   const mockEnabled =
     (await settingsRepo.getBoolean(tenantId, 'mock', 'enabled', false)) ||
-    (await settingsRepo.getBoolean(null, 'mock', 'enabled', false));
+    (await settingsRepo.getBoolean(null, 'mock', 'enabled', false)) ||
+    !!process.env.MOCK_PORTAL_BASE_URL;
 
   if (!mockEnabled) return null;
 
@@ -36,10 +37,11 @@ async function resolveMockOrigin(tenantId: string, portalId: string): Promise<st
     try { return new URL(perPortal).origin; } catch { /* ignore */ }
   }
 
-  // Default base URL
+  // Default base URL — DB first, then fall back to MOCK_PORTAL_BASE_URL env var
   const defaultBase = normalizeString(
     (await settingsRepo.getString(tenantId, 'mock', 'default_base_url', '')) ||
     (await settingsRepo.getString(null, 'mock', 'default_base_url', '')) ||
+    process.env.MOCK_PORTAL_BASE_URL ||
     ''
   );
   if (defaultBase) {

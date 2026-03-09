@@ -83,7 +83,8 @@ async function fetchWithTimeout(
 
 async function fetchApi<T>(
   url: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  timeoutMs: number = 5000
 ): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -101,7 +102,7 @@ async function fetchApi<T>(
     const response = await fetchWithTimeout(url, {
       ...options,
       headers,
-    }, 5000); // 5 second timeout
+    }, timeoutMs);
 
     const data = (await response.json()) as ApiResponse<T>;
 
@@ -411,12 +412,15 @@ export const cpApi = {
   mockPortal: {
     getConfig: (portalId: string) =>
       fetchApi<{ portalId: string; slots: { hasAvailability: boolean; availableTimes: string[]; randomizeAvailability: boolean; slotDisappearChance: number } }>(
-        `${getCpApiUrl()}/cp/mock-portal/${encodeURIComponent(portalId)}/config`
+        `${getCpApiUrl()}/cp/mock-portal/${encodeURIComponent(portalId)}/config`,
+        {},
+        15000
       ),
     setConfig: (portalId: string, body: unknown) =>
       fetchApi<{ portalId: string; slots: { hasAvailability: boolean } }>(
         `${getCpApiUrl()}/cp/mock-portal/${encodeURIComponent(portalId)}/config`,
-        { method: "POST", body: JSON.stringify(body) }
+        { method: "POST", body: JSON.stringify(body) },
+        15000
       ),
   },
 };

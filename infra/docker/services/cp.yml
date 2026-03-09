@@ -24,6 +24,7 @@ services:
       REDIS_PORT: ${REDIS_PORT}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       CORS_ORIGIN: ${CORS_ORIGIN}
+      MOCK_PORTAL_BASE_URL: ${MOCK_PORTAL_BASE_URL:-}
     expose:
       - "3001"
     depends_on:
