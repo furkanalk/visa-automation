@@ -4,7 +4,7 @@ import { deepMerge } from './merge.js';
 import { getConfigService } from './config-service.js';
 
 /**
- * Mock: when USE_MOCK_PORTAL=true (env) OR mock.enabled=true (DB via CP), base URL is overridden.
+ * Mock: base URL is overridden only when mock.enabled=true (DB via CP).
  *
  * MOCK_PORTAL_BASE_URL (env) — base host only, no path, no trailing slash.
  *   e.g. http://mock-portal:3004
@@ -16,16 +16,25 @@ import { getConfigService } from './config-service.js';
  */
 const MOCK_PORTAL_BASE_URL_FALLBACK = 'http://localhost:3004';
 
+// function shouldUseMockPortal(): boolean {
+//   // Env var hard-override (always wins)
+//   if (process.env.USE_MOCK_PORTAL === 'true' || process.env.USE_MOCK_PORTAL === '1') return true;
+//   // DB setting via ConfigService (dynamic, refreshed periodically from CP)
+//   try {
+//     const cfg = getConfigService();
+//     return cfg.get('mock').enabled === true;
+//   } catch {
+//     // ConfigService not yet initialized — fall back to false
+//     return false;
+//   }
+// }
 function shouldUseMockPortal(): boolean {
-  // Env var hard-override (always wins)
-  if (process.env.USE_MOCK_PORTAL === 'true' || process.env.USE_MOCK_PORTAL === '1') return true;
-  // DB setting via ConfigService (dynamic, refreshed periodically from CP)
   try {
-    const cfg = getConfigService();
-    return cfg.get('mock').enabled === true;
-  } catch {
-    // ConfigService not yet initialized — fall back to false
-    return false;
+      const cfg = getConfigService();
+      return cfg.get('mock').enabled === true;
+    } 
+   catch {
+     return false;
   }
 }
 
