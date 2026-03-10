@@ -188,7 +188,7 @@ export async function processJob(
     await db.instance
       .updateTable('jobs')
       .set({
-        config: sql<Record<string, unknown>>`COALESCE(config, '{}'::jsonb) || jsonb_build_object('portal_base_url', ${portalConfig.baseUrl})::jsonb`,
+        config: sql<Record<string, unknown>>`COALESCE(config, '{}'::jsonb) || jsonb_build_object('portal_base_url', ${portalConfig.baseUrl}::text)::jsonb`,
       })
       .where('id', '=', job_id)
       .execute()
