@@ -591,7 +591,7 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
           console.log(data);
           $('#AppointmentTime').empty();
           for (var i = 0; i < data.length; i++) {
-            $('#AppointmentTime').append("<option value='" + data[i].value + "'>" + data[i].text + "</option>");
+            $('#AppointmentTime').append("<option value'" + data[i].value + "'>" + data[i].text + "</option>");
           }
           $('#AppTime').show();
           $('#AppTimeSelectForm').show();

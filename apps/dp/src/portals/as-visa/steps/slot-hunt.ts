@@ -235,6 +235,47 @@ const APPOINTMENT_TIME_VISIBLE_MS = 5_000;
 const APPOINTMENT_TIME_SETTLE_MS = 8_000;
 
 /**
+ * Adjusts #datepicker Bootstrap startDate/endDate constraints to cover window.dateDisabled (open dates).
+ *
+ * The real AS-VISA portal JS sets these constraints via the #TravelDate changeDate handler:
+ *   startDate = travelDate - 45 days
+ *   endDate   = travelDate - 15 days
+ *
+ * Bootstrap datepicker 1.3.0 adds its own .disabled class to day cells outside startDate/endDate
+ * REGARDLESS of what beforeShowDay returns. So even if a date is in dateDisabled (= open), if it
+ * falls outside the constraint window it won't be clickable, causing runStageB to find 0 enabled
+ * day cells and return false — a false negative (slot exists but agent can't book it).
+ *
+ * Fix: read window.dateDisabled (already populated by /TarihGetir AJAX callback) and expand the
+ * datepicker's startDate/endDate to tightly cover the returned open dates ±1 day.
+ */
+async function adjustDatepickerConstraints(page: Page): Promise<void> {
+  await page
+    .evaluate(() => {
+      const g = globalThis as unknown as {
+        $?: (s: string) => { datepicker: (...a: unknown[]) => unknown };
+        dateDisabled?: unknown[];
+      };
+      if (!g.$ || !Array.isArray(g.dateDisabled) || g.dateDisabled.length === 0) return;
+      const dates = (g.dateDisabled as string[])
+        .map((s) => {
+          const parts = String(s).split('-').map(Number);
+          return parts.length === 3 ? new Date(parts[0], parts[1] - 1, parts[2]) : null;
+        })
+        .filter((d): d is Date => d !== null && !isNaN(d.getTime()))
+        .sort((a, b) => a.getTime() - b.getTime());
+      if (!dates.length) return;
+      const earliest = new Date(dates[0].getTime());
+      earliest.setDate(earliest.getDate() - 1);
+      const latest = new Date(dates[dates.length - 1].getTime());
+      latest.setDate(latest.getDate() + 1);
+      g.$('#datepicker').datepicker('setStartDate', earliest);
+      g.$('#datepicker').datepicker('setEndDate', latest);
+    })
+    .catch(() => undefined);
+}
+
+/**
  * #AppointmentTime select'te en az bir etkin (disabled değil, value dolu ve !== '0') option var mı.
  */
 async function hasEnabledTimeOption(page: Page): Promise<boolean> {
@@ -317,6 +358,11 @@ async function runStageA(page: Page, ddMmYyyy: string, log?: LogAdapter): Promis
  * Supports both jQuery UI (.ui-datepicker) and Bootstrap datepicker (.datepicker-dropdown). */
 async function runStageB(page: Page, targetDayOfMonth: string, log?: LogAdapter): Promise<boolean> {
   try {
+    // Adjust #datepicker Bootstrap startDate/endDate constraints to cover window.dateDisabled.
+    // Must run before opening the datepicker popup so the correct day cells are rendered as enabled.
+    await adjustDatepickerConstraints(page);
+    log?.debug({}, 'runStageB: datepicker constraints adjusted');
+
     // Ensure #apDate section is visible — it's hidden until TravelDate is set via 'changeDate' event.
     const apDateVisible = await page.evaluate(() => {
       const g = globalThis as unknown as { $?: (sel: string) => { is: (s: string) => boolean; show: () => void } };
