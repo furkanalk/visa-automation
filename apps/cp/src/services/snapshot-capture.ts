@@ -7,6 +7,8 @@ import type { PortalSelectors } from '@visa-automation/shared';
 import { sendTelegramToWatcher } from './telegram.js';
 
 const FETCH_TIMEOUT_MS = 15000;
+const JS_FETCH_TIMEOUT_MS = 8000;
+const JS_MAX_SIZE_BYTES = 200_000; // 200 KB per script — skip larger files
 
 /** Collect all CSS selector strings from portal selectors (recursive). */
 function collectSelectorStrings(selectors: PortalSelectors | null | undefined): string[] {
@@ -68,6 +70,65 @@ function hashHtml(html: string): string {
 }
 
 /**
+ * Extract same-origin <script src="..."> URLs from HTML and fetch their contents.
+ * Only same-origin scripts are fetched to avoid pulling large CDN libraries.
+ * Each script is capped at JS_MAX_SIZE_BYTES; failures are silently skipped.
+ */
+async function fetchSameOriginScripts(
+  html: string,
+  baseUrl: string,
+  logger: FastifyBaseLogger,
+): Promise<Array<{ url: string; content: string }>> {
+  let origin: string;
+  try {
+    origin = new URL(baseUrl).origin;
+  } catch {
+    return [];
+  }
+
+  const $ = cheerio.load(html);
+  const srcs: string[] = [];
+  $('script[src]').each((_, el) => {
+    const src = $(el).attr('src');
+    if (!src) return;
+    try {
+      const abs = new URL(src, baseUrl).href;
+      if (abs.startsWith(origin)) srcs.push(abs);
+    } catch { /* invalid URL — skip */ }
+  });
+
+  if (srcs.length === 0) return [];
+
+  const results = await Promise.allSettled(
+    srcs.map(async (url) => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), JS_FETCH_TIMEOUT_MS);
+      try {
+        const res = await fetch(url, {
+          signal: controller.signal,
+          headers: { 'User-Agent': 'VisaAutomation-Watcher/1.0' },
+        });
+        clearTimeout(timeout);
+        if (!res.ok) return null;
+        const buf = await res.arrayBuffer();
+        if (buf.byteLength > JS_MAX_SIZE_BYTES) {
+          logger.debug({ url, size: buf.byteLength }, 'Watcher: JS file too large, skipping');
+          return null;
+        }
+        return { url, content: Buffer.from(buf).toString('utf8') };
+      } catch {
+        clearTimeout(timeout);
+        return null;
+      }
+    }),
+  );
+
+  return results
+    .map((r) => (r.status === 'fulfilled' ? r.value : null))
+    .filter((r): r is { url: string; content: string } => r !== null);
+}
+
+/**
  * Capture HTML from portal URL and create a snapshot. Skips if no URL or fetch fails.
  * Returns created snapshot id or null.
  * @param options.notifyTarget - Unused; HTML drift is always sent to Watcher chat when notify_on_change is true.
@@ -90,6 +151,10 @@ export async function capturePortalSnapshot(
   }
 
   const html_hash = hashHtml(html);
+
+  // Fetch same-origin JS files alongside the HTML snapshot
+  const js_scripts = await fetchSameOriginScripts(html, baseUrl, logger);
+  logger.debug({ portalId, scriptCount: js_scripts.length }, 'Watcher: JS scripts captured');
   const previous = await watcherRepo.findLatestSnapshot(tenantId, portalId);
   const config = await watcherRepo.findConfigByTenantId(tenantId);
   const diff_mode = config?.diff_mode ?? 'hash';
@@ -137,7 +202,7 @@ export async function capturePortalSnapshot(
     diff_summary,
     diff_severity,
     previous_snapshot_id,
-    metadata: {},
+    metadata: { ...(js_scripts.length > 0 ? { js_scripts } : {}) },
     archived: false,
   });
 

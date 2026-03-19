@@ -35,7 +35,7 @@ export default function WatcherPage() {
   const [configModalOpen, setConfigModalOpen] = useState(false);
   const [snapshotModalOpen, setSnapshotModalOpen] = useState(false);
   const [selectedSnapshot, setSelectedSnapshot] = useState<WatcherSnapshotFull | null>(null);
-  const [diffView, setDiffView] = useState(false);
+  const [snapshotView, setSnapshotView] = useState<'html' | 'diff' | 'js'>('html');
   const [archiveModalSnapshot, setArchiveModalSnapshot] = useState<{ id: string } | null>(null);
   const [archiveSummary, setArchiveSummary] = useState("");
   const [archivedSectionOpen, setArchivedSectionOpen] = useState(false);
@@ -241,7 +241,7 @@ export default function WatcherPage() {
     const full = await cpApi.getSnapshot(snapshot.id);
     setSelectedSnapshot(full);
     setSnapshotModalOpen(true);
-    setDiffView(false);
+    setSnapshotView('html');
   };
 
   // Fetch latest archived snapshot for this portal (diff base; exclude current so we get a different snapshot to compare)
@@ -249,7 +249,7 @@ export default function WatcherPage() {
     queryKey: ["watcher-snapshot", "latest-archived", selectedSnapshot?.portal_id, selectedSnapshot?.id],
     queryFn: () =>
       cpApi.getLatestArchivedSnapshot(selectedSnapshot!.portal_id!, selectedSnapshot!.id),
-    enabled: !!selectedSnapshot?.portal_id && diffView && snapshotModalOpen,
+    enabled: !!selectedSnapshot?.portal_id && snapshotView === 'diff' && snapshotModalOpen,
     retry: false,
   });
 
@@ -1288,21 +1288,33 @@ export default function WatcherPage() {
             {/* Toggle */}
             <div className="flex flex-wrap gap-2 items-center">
               <Button
-                variant={diffView ? "outline" : "default"}
+                variant={snapshotView === 'html' ? "default" : "outline"}
                 size="sm"
-                onClick={() => setDiffView(false)}
+                onClick={() => setSnapshotView('html')}
+                type="button"
               >
                 HTML Source
               </Button>
               <Button
-                variant={diffView ? "default" : "outline"}
+                variant={snapshotView === 'diff' ? "default" : "outline"}
                 size="sm"
-                onClick={() => setDiffView(true)}
+                onClick={() => setSnapshotView('diff')}
                 type="button"
               >
                 Diff View
               </Button>
-              {!diffView && (
+              {(selectedSnapshot.metadata as Record<string, unknown>)?.js_scripts &&
+                ((selectedSnapshot.metadata as Record<string, unknown>).js_scripts as unknown[]).length > 0 && (
+                <Button
+                  variant={snapshotView === 'js' ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setSnapshotView('js')}
+                  type="button"
+                >
+                  JS Scripts ({((selectedSnapshot.metadata as Record<string, unknown>).js_scripts as unknown[]).length})
+                </Button>
+              )}
+              {snapshotView === 'html' && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -1316,7 +1328,7 @@ export default function WatcherPage() {
 
             {/* Content */}
             <div className="border border-gray-200 dark:border-slate-700 rounded-lg overflow-hidden">
-              {diffView ? (
+              {snapshotView === 'diff' ? (
                 (() => {
                   if (latestArchivedLoading) {
                     return (
@@ -1354,6 +1366,32 @@ export default function WatcherPage() {
                         return <div key={i}>{line}</div>;
                       })}
                     </pre>
+                  );
+                })()
+              ) : snapshotView === 'js' ? (
+                (() => {
+                  const scripts = ((selectedSnapshot.metadata as Record<string, unknown>)?.js_scripts ?? []) as Array<{ url: string; content: string }>;
+                  if (scripts.length === 0) {
+                    return (
+                      <pre className="p-4 text-xs overflow-auto max-h-96 bg-gray-50 dark:bg-slate-900 text-gray-500 dark:text-gray-400">
+                        No same-origin JS scripts captured.
+                      </pre>
+                    );
+                  }
+                  return (
+                    <div className="divide-y divide-gray-200 dark:divide-slate-700">
+                      {scripts.map((script, idx) => (
+                        <div key={idx}>
+                          <div className="px-4 py-2 bg-gray-100 dark:bg-slate-800 flex items-center justify-between">
+                            <span className="text-xs font-mono text-blue-600 dark:text-blue-400 truncate">{script.url}</span>
+                            <span className="text-xs text-gray-400 ml-2 shrink-0">{(script.content.length / 1024).toFixed(1)} KB</span>
+                          </div>
+                          <pre className="p-4 text-xs overflow-auto max-h-64 bg-gray-50 dark:bg-slate-900 text-gray-700 dark:text-gray-300">
+                            {script.content}
+                          </pre>
+                        </div>
+                      ))}
+                    </div>
                   );
                 })()
               ) : (

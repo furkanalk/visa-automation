@@ -112,6 +112,8 @@ export interface SnapshotMetadata {
   status_code?: number;
   response_time_ms?: number;
   user_agent?: string;
+  /** Same-origin JS files fetched alongside the HTML snapshot. */
+  js_scripts?: Array<{ url: string; content: string }>;
   [key: string]: unknown;
 }
 
