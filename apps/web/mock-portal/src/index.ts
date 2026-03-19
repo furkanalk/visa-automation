@@ -186,65 +186,204 @@ app.get('/as-visa', async (req, res) => {
   res.type('html').send(html);
 });
 
-// Form submission
-app.post('/as-visa/submit', async (req, res) => {
+// ============================================
+// Shared helpers
+// ============================================
+
+function renderConfirmationPage(opts: {
+  confirmationNumber: string;
+  sessionId: string;
+  nationality?: string;
+  appointment?: string;
+  appointmentDate?: string;
+  appointmentTime?: string;
+}): string {
+  return `<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Randevu Onayı – Mock Portal</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1d2657 0%, #3a4a8a 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0;
+      padding-top: 50px;
+      box-sizing: border-box;
+    }
+    .mock-banner {
+      background: #ff5722;
+      color: white;
+      padding: 10px;
+      text-align: center;
+      font-weight: 600;
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 9999;
+      font-family: Arial, sans-serif;
+    }
+    .card {
+      background: white;
+      padding: 40px;
+      border-radius: 12px;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+      max-width: 520px;
+      width: 100%;
+      margin: 20px;
+    }
+    .icon { font-size: 64px; margin-bottom: 16px; }
+    h1 { color: #1d2657; margin: 0 0 8px; font-size: 26px; }
+    .subtitle { color: #666; margin-bottom: 24px; font-size: 15px; }
+    .confirmation-box {
+      background: #e8f5e9;
+      border: 2px solid #4caf50;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .confirmation-label { font-size: 13px; color: #555; margin-bottom: 4px; }
+    #confirmationNumber {
+      font-family: monospace;
+      font-size: 20px;
+      font-weight: 700;
+      color: #1d2657;
+      letter-spacing: 1px;
+    }
+    .meta-box {
+      background: #f9f9f9;
+      border-radius: 8px;
+      padding: 16px;
+      text-align: left;
+      font-size: 14px;
+      margin-bottom: 20px;
+    }
+    .meta-box dt { font-weight: 600; color: #333; margin-top: 8px; }
+    .meta-box dd { color: #555; margin: 2px 0 0 0; }
+    .session-box {
+      background: #f0f0f0;
+      border-radius: 6px;
+      padding: 10px;
+      font-family: monospace;
+      font-size: 11px;
+      word-break: break-all;
+      color: #888;
+      margin-bottom: 20px;
+    }
+    .btn-back {
+      display: inline-block;
+      padding: 12px 28px;
+      background: #1d2657;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 15px;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    .btn-back:hover { background: #2a3680; }
+    /* Script tag for automation to detect page loaded */
+  </style>
+</head>
+<body>
+  <div class="mock-banner">⚠️ MOCK PORTAL – Test environment</div>
+  <div class="card">
+    <div class="icon">✅</div>
+    <h1>Randevu Onaylandı</h1>
+    <p class="subtitle">Başvurunuz başarıyla alındı. Onay numaranızı saklayınız.</p>
+
+    <div class="confirmation-box">
+      <div class="confirmation-label">Onay Numarası / Confirmation Number</div>
+      <div id="confirmationNumber" data-confirmation="${opts.confirmationNumber}">${opts.confirmationNumber}</div>
+    </div>
+
+    <div class="meta-box">
+      <dl>
+        <dt>Uyruk / Nationality</dt>
+        <dd>${opts.nationality || '-'}</dd>
+        <dt>Randevu Tipi / Appointment Type</dt>
+        <dd>${opts.appointment || '-'}</dd>
+        <dt>Randevu Tarihi / Appointment Date</dt>
+        <dd>${opts.appointmentDate || '-'} @ ${opts.appointmentTime || '-'}</dd>
+      </dl>
+    </div>
+
+    <div class="session-box">Session: ${opts.sessionId}</div>
+
+    <a href="/as-visa" class="btn-back">← Yeni Başvuru / New Form</a>
+  </div>
+
+  <script>
+    console.log('[Mock] Confirmation page loaded. Confirmation:', '${opts.confirmationNumber}');
+  </script>
+</body>
+</html>`;
+}
+
+// ============================================
+// Form submission — real-site-like flow
+// ============================================
+
+/**
+ * Validates form body, creates session, returns { session, confirmationNumber } or sends error.
+ * Used by both /tr/ankara-bireysel-basvuru (AJAX) and /as-visa/submit (legacy).
+ */
+async function processSubmit(
+  req: express.Request,
+  res: express.Response,
+  responseMode: 'json' | 'html',
+): Promise<void> {
   const config = mockState.getConfig('as-visa');
-  
+
   if (!config || !config.enabled) {
-    return res.status(503).json({ error: 'Portal disabled' });
+    if (responseMode === 'json') {
+      res.status(503).json({ error: 'Portal disabled' });
+    } else {
+      res.status(503).send('<html><body><h1>Portal disabled</h1></body></html>');
+    }
+    return;
   }
 
-  // Apply submission delay
   await mockState.applyDelay('as-visa', 'formSubmit');
 
-  // Validate CAPTCHA token if required
   if (config.captcha.enabled) {
-    const cfToken = req.body.cfToken;
+    const cfToken = req.body.cfToken as string | undefined;
     if (!cfToken || !cfToken.startsWith('mock-cf-token-')) {
-      return res.status(400).send(`
-        <html>
-          <body style="font-family: sans-serif; padding: 50px; text-align: center;">
-            <h1>❌ CAPTCHA verification failed</h1>
-            <p>Please verify you are not a robot.</p>
-            <a href="/as-visa">← Back to form</a>
-          </body>
-        </html>
-      `);
+      if (responseMode === 'json') {
+        res.status(400).json({ error: 'CAPTCHA verification failed' });
+      } else {
+        res.status(400).send('<html><body><h1>CAPTCHA verification failed</h1><a href="/as-visa">← Back</a></body></html>');
+      }
+      return;
     }
-
-    // Random captcha failure
     if (Math.random() < config.captcha.failRate) {
-      return res.status(400).send(`
-        <html>
-          <body style="font-family: sans-serif; padding: 50px; text-align: center;">
-            <h1>❌ CAPTCHA expired</h1>
-            <p>CAPTCHA timed out. Please try again.</p>
-            <a href="/as-visa">← Back to form</a>
-          </body>
-        </html>
-      `);
+      if (responseMode === 'json') {
+        res.status(400).json({ error: 'CAPTCHA expired' });
+      } else {
+        res.status(400).send('<html><body><h1>CAPTCHA expired</h1><a href="/as-visa">← Back</a></body></html>');
+      }
+      return;
     }
   }
 
-  // Validate required fields (names match as-visa.html form field names)
   if (config.validation.requireAllFields) {
     const required = ['Nationality', 'Appointment', 'TravelSubject', 'TravelDate', 'AppointmentDate', 'AppointmentTime'];
     const missing = required.filter((f) => !req.body[f]);
-    
     if (missing.length > 0) {
-      return res.status(400).send(`
-        <html>
-          <body style="font-family: sans-serif; padding: 50px; text-align: center;">
-            <h1>❌ Missing required fields</h1>
-            <p>Please fill in all required fields: ${missing.join(', ')}</p>
-            <a href="/as-visa">← Back to form</a>
-          </body>
-        </html>
-      `);
+      if (responseMode === 'json') {
+        res.status(400).json({ error: `Missing required fields: ${missing.join(', ')}` });
+      } else {
+        res.status(400).send(`<html><body><h1>Missing: ${missing.join(', ')}</h1><a href="/as-visa">← Back</a></body></html>`);
+      }
+      return;
     }
   }
 
-  // Create session and store form data
   const session = mockState.createSession('as-visa');
   const confirmationNumber = `MOCK-${new Date().getFullYear()}-${session.id.slice(0, 8).toUpperCase()}`;
   mockState.updateSession(session.id, {
@@ -253,103 +392,46 @@ app.post('/as-visa/submit', async (req, res) => {
     confirmationNumber,
   });
 
-  // Success page with confirmation number (for agent to scrape)
-  res.send(`
-    <html>
-      <head>
-        <style>
-          body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-          }
-          .success-card {
-            background: white;
-            padding: 40px;
-            border-radius: 12px;
-            text-align: center;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            max-width: 500px;
-          }
-          .success-icon {
-            font-size: 64px;
-            margin-bottom: 20px;
-          }
-          h1 { color: #333; margin-bottom: 10px; }
-          p { color: #666; margin-bottom: 20px; }
-          .session-id {
-            background: #f5f5f5;
-            padding: 10px;
-            border-radius: 6px;
-            font-family: monospace;
-            font-size: 12px;
-            word-break: break-all;
-          }
-          .data-preview {
-            text-align: left;
-            background: #f9f9f9;
-            padding: 15px;
-            border-radius: 6px;
-            margin-top: 20px;
-            font-size: 14px;
-          }
-          .data-preview dt { font-weight: 600; color: #333; }
-          .data-preview dd { margin-bottom: 10px; color: #666; }
-          .mock-banner {
-            background: #ff5722;
-            color: white;
-            padding: 10px;
-            text-align: center;
-            font-weight: 600;
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-          }
-          .next-step {
-            margin-top: 20px;
-            padding: 12px 24px;
-            background: #667eea;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-size: 16px;
-            cursor: pointer;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="mock-banner">⚠️ MOCK PORTAL – Test environment</div>
-        <div class="success-card">
-          <div class="success-icon">✅</div>
-          <h1>Appointment booked</h1>
-          <p>Form submitted successfully. Confirmation number below.</p>
-          <div id="confirmationNumber" data-confirmation="${confirmationNumber}" class="session-id">
-            Confirmation: ${confirmationNumber}
-          </div>
-          <div class="session-id">
-            Session: ${session.id}
-          </div>
-          
-          <div class="data-preview">
-            <dl>
-              <dt>Nationality:</dt>
-              <dd>${req.body.Nationality || '-'}</dd>
-              <dt>Appointment type:</dt>
-              <dd>${req.body.Appointment || '-'}</dd>
-              <dt>Appointment date:</dt>
-              <dd>${req.body.AppointmentDate || '-'} @ ${req.body.AppointmentTime || '-'}</dd>
-            </dl>
-          </div>
-          
-          <a href="/as-visa"><button class="next-step">← New form</button></a>
-        </div>
-      </body>
-    </html>
-  `);
+  const confirmationUrl = `/tr/ankara-basvuru-onay?sid=${session.id}`;
+
+  if (responseMode === 'json') {
+    // Mimic real site: return { url: "..." } for JS to do window.location.href
+    res.json({ url: confirmationUrl, confirmationNumber });
+  } else {
+    // Legacy direct HTML response (backward compat for old tests)
+    res.redirect(302, confirmationUrl);
+  }
+}
+
+// Main booking endpoint — mirrors real site: POST /tr/ankara-bireysel-basvuru → JSON { url }
+app.post('/tr/ankara-bireysel-basvuru', async (req, res) => {
+  await processSubmit(req, res, 'json');
+});
+
+// Confirmation page — mirrors real site's dynamic redirect target
+app.get('/tr/ankara-basvuru-onay', (req, res) => {
+  const sid = req.query.sid as string | undefined;
+  if (!sid) {
+    return res.status(400).send('<html><body><h1>Missing session id</h1></body></html>');
+  }
+
+  const session = mockState.getSession(sid);
+  const confirmationNumber = session?.confirmationNumber ?? `MOCK-UNKNOWN-${sid.slice(0, 8).toUpperCase()}`;
+  const formData = (session?.formData ?? {}) as Record<string, string>;
+
+  res.type('html').send(renderConfirmationPage({
+    confirmationNumber,
+    sessionId: sid,
+    nationality: formData['Nationality'],
+    appointment: formData['Appointment'],
+    appointmentDate: formData['AppointmentDate'],
+    appointmentTime: formData['AppointmentTime'],
+  }));
+});
+
+// Legacy endpoint — kept for backward compatibility; now redirects to the confirmation page
+app.post('/as-visa/submit', async (req, res) => {
+  await processSubmit(req, res, 'html');
 });
 
 // ============================================

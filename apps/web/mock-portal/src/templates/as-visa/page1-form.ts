@@ -851,7 +851,39 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
           cancelButtonText: 'Hayır'
         }).then(function(result) {
           if (result.isConfirmed) {
-            document.getElementById('apForm').submit();
+            // Mimic real AS-Visa: AJAX POST → server returns { url } → JS redirect
+            $.ajax({
+              url: '/tr/ankara-bireysel-basvuru',
+              type: 'POST',
+              data: $('#apForm').serialize(),
+              success: function(response) {
+                hideSpinner();
+                Swal.fire({
+                  title: 'Başarılı!',
+                  text: 'Randevu işleminizde son adım kalmıştır...',
+                  icon: 'success',
+                  background: '#1d2657',
+                  color: '#f15a29',
+                  timer: 1500,
+                  showConfirmButton: false
+                }).then(function() {
+                  window.location.href = response.url;
+                });
+              },
+              error: function(xhr) {
+                hideSpinner();
+                $btn.prop('disabled', false);
+                var errMsg = '';
+                try { errMsg = JSON.parse(xhr.responseText).error || ''; } catch(e) {}
+                Swal.fire({
+                  title: 'Hata!',
+                  text: errMsg || 'Başvuru gönderilemedi. Lütfen tekrar deneyin.',
+                  icon: 'error',
+                  background: '#1d2657',
+                  color: '#f15a29'
+                });
+              }
+            });
           } else {
             hideSpinner();
             $btn.prop('disabled', false);

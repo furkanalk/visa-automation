@@ -11,7 +11,63 @@ import { uploadScreenshotToCp, uploadHtmlDumpToCp } from '../../../core/upload-s
 import { callSlotOpen } from '../../../core/call-slot-open.js';
 import { db, JobRepository } from '@visa-automation/db';
 import type { Page } from 'playwright';
+import type { Logger } from 'pino';
 import { waitForHitlResolution, HitlExpiredError } from '../../../core/hitl/handler.js';
+
+/**
+ * Dumps the post-booking confirmation page artifacts to CP for inspection.
+ * Saves: final URL (txt), full HTML, same-origin JS files (bundled).
+ * All operations are best-effort — failures are logged but never throw.
+ */
+async function dumpPostBookingArtifacts(
+  page: Page,
+  tenantId: string,
+  jobId: string,
+  logger: Logger,
+): Promise<void> {
+  try {
+    const finalUrl = page.url();
+
+    await uploadScreenshotToCp(
+      tenantId, jobId, 'post-booking-url.txt',
+      Buffer.from(finalUrl, 'utf8'), 'text/plain',
+    ).catch(() => {});
+
+    const html = await page.content().catch(() => null);
+    if (html) {
+      await uploadHtmlDumpToCp(tenantId, jobId, 'post-booking-page.html', html).catch(() => {});
+    }
+
+    // Fetch same-origin external scripts; inline scripts are already in the HTML dump.
+    const scriptBundles = await page.evaluate(async () => {
+      const origin = window.location.origin;
+      const els = Array.from(document.querySelectorAll('script[src]')) as HTMLScriptElement[];
+      const settled = await Promise.allSettled(
+        els.map(async (el) => {
+          const src = el.src;
+          if (!src.startsWith(origin)) return `/* EXTERNAL — skipped: ${src} */`;
+          try {
+            const r = await fetch(src);
+            const text = r.ok ? await r.text() : `/* HTTP ${r.status} */`;
+            return `/* === ${src} === */\n${text}`;
+          } catch {
+            return `/* fetch error: ${src} */`;
+          }
+        }),
+      );
+      return settled.map((r) => (r.status === 'fulfilled' ? r.value : '/* fetch failed */'));
+    }).catch(() => [] as string[]);
+
+    if (scriptBundles.length > 0) {
+      await uploadScreenshotToCp(
+        tenantId, jobId, 'post-booking-scripts.js',
+        Buffer.from(scriptBundles.join('\n\n'), 'utf8'), 'text/javascript',
+      ).catch(() => {});
+    }
+  } catch (e) {
+    logger.warn({ err: e }, 'dumpPostBookingArtifacts failed');
+  }
+}
 
 /**
  * Reads the confirmation number from the post-submit page.
@@ -277,6 +333,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
               swal.click(),
             ]);
             ctx.logger.info({ jobId: ctx.jobId, url: ctx.page.url() }, 'Navigation complete (preloaded path)');
+            await dumpPostBookingArtifacts(ctx.page, ctx.tenantId, ctx.jobId, ctx.logger);
           } else {
             // Error Swal — form validation failed; close it and throw fast
             const swalText = await ctx.page.locator('.swal2-html-container, .swal2-content').textContent().catch(() => '');
@@ -286,6 +343,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
           }
         } else {
           ctx.logger.warn({ jobId: ctx.jobId }, 'Swal did not appear — form may have submitted directly or validation failed (preloaded path)');
+          await dumpPostBookingArtifacts(ctx.page, ctx.tenantId, ctx.jobId, ctx.logger);
         }
         // Randevu Al butonuna tıklandı ve navigation/Swal adımları tamamlandı.
         // Confirmation number okumaya çalış ama başarısız olsa bile COMPLETED say.
@@ -473,12 +531,15 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
               ctx.page.waitForNavigation({ waitUntil: 'load', timeout: 45_000 }),
               swal2.click(),
             ]);
+            await dumpPostBookingArtifacts(ctx.page, ctx.tenantId, ctx.jobId, ctx.logger);
           } else {
             const swalText2 = await ctx.page.locator('.swal2-html-container, .swal2-content').textContent().catch(() => '');
             await swal2.click().catch(() => {});
             ctx.logger.warn({ jobId: ctx.jobId, swalText: swalText2 }, 'Form validation error Swal (post-HITL normal path)');
             throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND });
           }
+        } else {
+          await dumpPostBookingArtifacts(ctx.page, ctx.tenantId, ctx.jobId, ctx.logger);
         }
         confirmationNumberPost = await readConfirmationNumber(ctx.page);
       } catch (err) {
@@ -583,6 +644,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
               swal.click(),
             ]);
             ctx.logger.info({ jobId: ctx.jobId, url: ctx.page.url() }, 'Navigation complete (normal path)');
+            await dumpPostBookingArtifacts(ctx.page, ctx.tenantId, ctx.jobId, ctx.logger);
           } else {
             // Error Swal — form validation failed; close it and throw fast
             const swalText = await ctx.page.locator('.swal2-html-container, .swal2-content').textContent().catch(() => '');
@@ -592,6 +654,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
           }
         } else {
           ctx.logger.warn({ jobId: ctx.jobId }, 'Swal did not appear — form may have submitted directly or validation failed (normal path)');
+          await dumpPostBookingArtifacts(ctx.page, ctx.tenantId, ctx.jobId, ctx.logger);
         }
         // Randevu Al butonuna tıklandı ve navigation/Swal adımları tamamlandı.
         // Confirmation number okumaya çalış ama başarısız olsa bile COMPLETED say.

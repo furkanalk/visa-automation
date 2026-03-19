@@ -225,14 +225,28 @@ export function PortalConfigModal({
     }
     if (timingEnabled && timing.minRunDurationMs !== "") out.minRunDurationMs = num(timing.minRunDurationMs);
     if (mouseEnabled) {
-      if (timing.mouseMoveIntervalMs !== "") out.mouseMoveIntervalMs = num(timing.mouseMoveIntervalMs);
-      if (timing.mouseMoveSegmentsMin !== "") out.mouseMoveSegmentsMin = num(timing.mouseMoveSegmentsMin);
-      if (timing.mouseMoveSegmentsMax !== "") out.mouseMoveSegmentsMax = num(timing.mouseMoveSegmentsMax);
-      if (timing.mouseMoveJitterPx !== "") out.mouseMoveJitterPx = num(timing.mouseMoveJitterPx);
-      if (timing.mouseMoveStepsMin !== "") out.mouseMoveStepsMin = num(timing.mouseMoveStepsMin);
-      if (timing.mouseMoveStepsMax !== "") out.mouseMoveStepsMax = num(timing.mouseMoveStepsMax);
-      if (timing.mouseMoveDelayMinMs !== "") out.mouseMoveDelayMinMs = num(timing.mouseMoveDelayMinMs);
-      if (timing.mouseMoveDelayMaxMs !== "") out.mouseMoveDelayMaxMs = num(timing.mouseMoveDelayMaxMs);
+      // Always persist every mouse field with a concrete value so that settings round-trip correctly.
+      // Blank fields fall back to the placeholder defaults shown in the UI.
+      const mv = (field: string, defaultVal: number) =>
+        field !== "" ? (num(field) ?? defaultVal) : defaultVal;
+      out.mouseMoveIntervalMs    = mv(timing.mouseMoveIntervalMs,    10000);
+      out.mouseMoveSegmentsMin   = mv(timing.mouseMoveSegmentsMin,   10);
+      out.mouseMoveSegmentsMax   = mv(timing.mouseMoveSegmentsMax,   16);
+      out.mouseMoveJitterPx      = mv(timing.mouseMoveJitterPx,      3);
+      out.mouseMoveStepsMin      = mv(timing.mouseMoveStepsMin,      6);
+      out.mouseMoveStepsMax      = mv(timing.mouseMoveStepsMax,      20);
+      out.mouseMoveDelayMinMs    = mv(timing.mouseMoveDelayMinMs,    15);
+      out.mouseMoveDelayMaxMs    = mv(timing.mouseMoveDelayMaxMs,    42);
+    } else {
+      // Explicitly zero out so that the reload condition (mouseMoveIntervalMs > 0) correctly shows disabled.
+      out.mouseMoveIntervalMs = 0;
+      delete out.mouseMoveSegmentsMin;
+      delete out.mouseMoveSegmentsMax;
+      delete out.mouseMoveJitterPx;
+      delete out.mouseMoveStepsMin;
+      delete out.mouseMoveStepsMax;
+      delete out.mouseMoveDelayMinMs;
+      delete out.mouseMoveDelayMaxMs;
     }
     try {
       const schema = JSON.parse(customerFormSchemaJson);

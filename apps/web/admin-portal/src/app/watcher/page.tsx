@@ -905,35 +905,58 @@ export default function WatcherPage() {
             </span>
           </div>
           {configForm.time_window_enabled && (
-            <div className="grid grid-cols-2 gap-4">
-              <FormField label="Window Start Hour (0-23)">
-                <Input
-                  type="number"
-                  min={0}
-                  max={23}
-                  value={configForm.window_start_hour}
-                  onChange={(e) =>
-                    setConfigForm((f) => ({
-                      ...f,
-                      window_start_hour: parseInt(e.target.value) || 0,
-                    }))
-                  }
-                />
-              </FormField>
-              <FormField label="Window End Hour (0-23)">
-                <Input
-                  type="number"
-                  min={0}
-                  max={23}
-                  value={configForm.window_end_hour}
-                  onChange={(e) =>
-                    setConfigForm((f) => ({
-                      ...f,
-                      window_end_hour: parseInt(e.target.value) || 23,
-                    }))
-                  }
-                />
-              </FormField>
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-4">
+                <FormField label="Start Time">
+                  <select
+                    value={configForm.window_start_hour}
+                    onChange={(e) =>
+                      setConfigForm((f) => ({
+                        ...f,
+                        window_start_hour: parseInt(e.target.value),
+                      }))
+                    }
+                    className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {Array.from({ length: 24 }, (_, h) => (
+                      <option key={h} value={h}>
+                        {String(h).padStart(2, "0")}:00
+                      </option>
+                    ))}
+                  </select>
+                </FormField>
+                <FormField label="End Time">
+                  <select
+                    value={configForm.window_end_hour}
+                    onChange={(e) =>
+                      setConfigForm((f) => ({
+                        ...f,
+                        window_end_hour: parseInt(e.target.value),
+                      }))
+                    }
+                    className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {Array.from({ length: 24 }, (_, h) => (
+                      <option key={h} value={h}>
+                        {String(h).padStart(2, "0")}:00
+                      </option>
+                    ))}
+                  </select>
+                </FormField>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Watcher will only run between{" "}
+                <span className="font-medium">
+                  {String(configForm.window_start_hour).padStart(2, "0")}:00
+                </span>{" "}
+                and{" "}
+                <span className="font-medium">
+                  {String(configForm.window_end_hour).padStart(2, "0")}:00
+                </span>
+                {configForm.window_start_hour > configForm.window_end_hour && (
+                  <span className="ml-1 text-amber-500">(spans midnight)</span>
+                )}
+              </p>
             </div>
           )}
 
