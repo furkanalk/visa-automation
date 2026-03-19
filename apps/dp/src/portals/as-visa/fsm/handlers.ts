@@ -711,6 +711,75 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
       let confirmationNumber: string | undefined;
       let preSubmitDiag: Record<string, unknown> = {};
       try {
+        // Security code auto-fill: if the field exists and is empty, try to fill before submit.
+        // slotHunt leaves it empty when applicantData.enteredCode is unknown.
+        // hitlMode 'auto' (default): read window.expectedSecurityCode from page; fallback to HITL if not found.
+        // hitlMode 'human': always escalate immediately.
+        {
+          const hitlModeNormal = ctx.portalConfig.hitl.hitlMode ?? 'auto';
+          const codeInputN = ctx.page.locator(S.inputs.enteredCode);
+          const codeInputExists = await codeInputN.count().then((n) => n > 0).catch(() => false);
+          if (codeInputExists) {
+            const currentVal = await codeInputN.inputValue().catch(() => '');
+            if (!currentVal.trim()) {
+              // Field is empty — need to fill it
+              let codeToUse: string | null = null;
+              if (hitlModeNormal === 'auto') {
+                codeToUse = await ctx.page.evaluate(() => {
+                  const g = globalThis as unknown as { expectedSecurityCode?: string };
+                  return typeof g.expectedSecurityCode === 'string' && g.expectedSecurityCode.length > 0
+                    ? g.expectedSecurityCode
+                    : null;
+                }).catch(() => null);
+              }
+              if (codeToUse) {
+                await ctx.rateLimiter.take();
+                await ctx.throttler.beforeAction();
+                await codeInputN.fill(codeToUse);
+                ctx.logger.info({ jobId: ctx.jobId, hitlMode: hitlModeNormal }, 'Security code auto-filled before submit (normal booking path)');
+              } else {
+                // Fallback to HITL
+                const screenshotFilename = 'SLOT_FOUND_security_code.png';
+                const screenshotUrl = `/cp/screenshots/${ctx.jobId}/${screenshotFilename}`;
+                try {
+                  await codeInputN.scrollIntoViewIfNeeded().catch(() => {});
+                  await ctx.page.waitForTimeout(300);
+                  const buf = await ctx.page.screenshot({ type: 'png' });
+                  await uploadScreenshotToCp(ctx.tenantId, ctx.jobId, screenshotFilename, buf);
+                } catch (err) {
+                  ctx.logger.warn({ err, jobId: ctx.jobId }, 'Screenshot upload failed for security code HITL (normal booking path)');
+                }
+                const hitlExpiresSeconds = ctx.portalConfig.hitl.maxWaitSeconds > 0 ? ctx.portalConfig.hitl.maxWaitSeconds : undefined;
+                const enteredCodeHitl = await waitForHitlResolution({
+                  job_id: ctx.jobId,
+                  job_run_id: ctx.jobRunId,
+                  tenant_id: ctx.tenantId,
+                  type: 'SECURITY_CODE',
+                  context: {
+                    prompt: 'Enter the 6-digit security code (6 Haneli Kod) shown on the page.',
+                    screenshot_url: screenshotUrl,
+                    input_type: 'text',
+                    metadata: { state: JOB_STATES.SLOT_FOUND, selector: 'input[name="enteredCode"]' },
+                  },
+                  timeoutSeconds: hitlExpiresSeconds,
+                  fromState: JOB_STATES.SLOT_FOUND,
+                  workerId: ctx.workerId,
+                  logger: ctx.logger,
+                }).catch((err) => {
+                  if (err instanceof HitlExpiredError) throw new FSMHalt({ lastState: JOB_STATES.HITL_EXPIRED });
+                  throw err;
+                });
+                if (enteredCodeHitl) {
+                  await ctx.rateLimiter.take();
+                  await ctx.throttler.beforeAction();
+                  await codeInputN.fill(enteredCodeHitl);
+                  ctx.logger.info({ jobId: ctx.jobId }, 'Security code filled via HITL (normal booking path)');
+                }
+              }
+            }
+          }
+        }
+
         await ctx.rateLimiter.take();
         await ctx.throttler.beforeAction();
         // CAPTCHA auto-solve bekleme: submit disabled iken bekle (turnstile enable olunca click)

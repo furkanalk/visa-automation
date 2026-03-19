@@ -70,6 +70,8 @@ export default function PortalsPage() {
       cpApi.updatePortal(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["portals"] });
+      // Invalidate individual portal queries so the config modal shows fresh data on next open.
+      queryClient.invalidateQueries({ queryKey: ["portal"] });
       showBanner("success", "Saved.");
     },
     onError: (err) => showBanner("error", err instanceof Error ? err.message : "Failed to save."),

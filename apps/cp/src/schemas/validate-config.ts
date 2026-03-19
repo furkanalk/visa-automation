@@ -69,9 +69,11 @@ export function validatePortalConfig(config: unknown): void {
   if (c.hitl !== undefined) {
     if (!isPlainObject(c.hitl)) throw new Error('portal config.hitl must be an object');
     const h = c.hitl as Record<string, unknown>;
+    checkString(h.hitlMode, 'config.hitl.hitlMode');
+    checkNumber(h.maxWaitSeconds, 'config.hitl.maxWaitSeconds');
+    // Legacy fields tolerated for backward compat with old DB rows (no longer emitted by UI).
     checkString(h.otpMode, 'config.hitl.otpMode');
     checkString(h.captchaMode, 'config.hitl.captchaMode');
-    checkNumber(h.maxWaitSeconds, 'config.hitl.maxWaitSeconds');
   }
   if (c.slotHunt !== undefined) {
     if (!isPlainObject(c.slotHunt)) throw new Error('portal config.slotHunt must be an object');
@@ -137,9 +139,11 @@ export function validateProfileConfig(config: unknown): void {
   if (c.hitl !== undefined) {
     if (!isPlainObject(c.hitl)) throw new Error('profile config.hitl must be an object');
     const h = c.hitl as Record<string, unknown>;
+    checkString(h.hitlMode, 'config.hitl.hitlMode');
+    checkNumber(h.maxWaitSeconds, 'config.hitl.maxWaitSeconds');
+    // Legacy fields tolerated for backward compat.
     checkString(h.otpMode, 'config.hitl.otpMode');
     checkString(h.captchaMode, 'config.hitl.captchaMode');
-    checkNumber(h.maxWaitSeconds, 'config.hitl.maxWaitSeconds');
   }
   if (c.slotHunt !== undefined) {
     if (!isPlainObject(c.slotHunt)) throw new Error('profile config.slotHunt must be an object');
