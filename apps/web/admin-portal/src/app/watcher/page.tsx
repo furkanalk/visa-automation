@@ -1303,17 +1303,22 @@ export default function WatcherPage() {
               >
                 Diff View
               </Button>
-              {(selectedSnapshot.metadata as Record<string, unknown>)?.js_scripts &&
-                ((selectedSnapshot.metadata as Record<string, unknown>).js_scripts as unknown[]).length > 0 && (
-                <Button
-                  variant={snapshotView === 'js' ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setSnapshotView('js')}
-                  type="button"
-                >
-                  JS Scripts ({((selectedSnapshot.metadata as Record<string, unknown>).js_scripts as unknown[]).length})
-                </Button>
-              )}
+              {(() => {
+                const meta = selectedSnapshot.metadata as unknown as { js_scripts?: unknown };
+                const scripts = (meta?.js_scripts as unknown[] | undefined) ?? undefined;
+                const len = Array.isArray(scripts) ? scripts.length : 0;
+                if (len <= 0) return null;
+                return (
+                  <Button
+                    variant={snapshotView === 'js' ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setSnapshotView('js')}
+                    type="button"
+                  >
+                    JS Scripts ({len})
+                  </Button>
+                );
+              })()}
               {snapshotView === 'html' && (
                 <Button
                   variant="outline"
