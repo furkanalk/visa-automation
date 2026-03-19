@@ -39,23 +39,44 @@ async function dumpPostBookingArtifacts(
     }
 
     // Fetch same-origin external scripts; inline scripts are already in the HTML dump.
+    // IMPORTANT: This must be bounded (script count + per-script fetch timeout),
+    // otherwise the booking step can time out and the job escalates to HITL.
     const scriptBundles = await page.evaluate(async () => {
+      const MAX_SCRIPTS = 12;
+      const PER_SCRIPT_TIMEOUT_MS = 2500;
+      const MAX_CHARS_PER_SCRIPT = 200_000;
+
       const origin = window.location.origin;
+
       const els = Array.from(document.querySelectorAll('script[src]')) as HTMLScriptElement[];
+      const sameOriginSrcs = els
+        .map((el) => el.src)
+        .filter((src) => typeof src === 'string' && src.startsWith(origin));
+
+      const limited = sameOriginSrcs.slice(0, MAX_SCRIPTS);
       const settled = await Promise.allSettled(
-        els.map(async (el) => {
-          const src = el.src;
-          if (!src.startsWith(origin)) return `/* EXTERNAL — skipped: ${src} */`;
+        limited.map(async (src) => {
+          const controller = new AbortController();
+          const t = setTimeout(() => controller.abort(), PER_SCRIPT_TIMEOUT_MS);
           try {
-            const r = await fetch(src);
-            const text = r.ok ? await r.text() : `/* HTTP ${r.status} */`;
+            const r = await fetch(src, { signal: controller.signal });
+            if (!r.ok) return `/* HTTP ${r.status} — ${src} */`;
+            const text = await r.text();
+            if (text.length > MAX_CHARS_PER_SCRIPT) {
+              return `/* SKIPPED (too large: ${text.length} chars): ${src} */`;
+            }
             return `/* === ${src} === */\n${text}`;
           } catch {
-            return `/* fetch error: ${src} */`;
+            return `/* fetch timeout/error: ${src} */`;
+          } finally {
+            clearTimeout(t);
           }
         }),
       );
-      return settled.map((r) => (r.status === 'fulfilled' ? r.value : '/* fetch failed */'));
+
+      return settled
+        .map((r) => (r.status === 'fulfilled' ? r.value : '/* fetch failed */'))
+        .filter((s) => typeof s === 'string' && s.length > 0);
     }).catch(() => [] as string[]);
 
     if (scriptBundles.length > 0) {
@@ -67,6 +88,57 @@ async function dumpPostBookingArtifacts(
   } catch (e) {
     logger.warn({ err: e }, 'dumpPostBookingArtifacts failed');
   }
+}
+
+/**
+ * Handles the two-step SweetAlert booking confirmation flow used on AS-Visa (real site + mock).
+ *
+ * Flow:
+ *   1. Click UYARI! Swal "Evet" — triggers AJAX POST on the page.
+ *   2. Wait for "Başarılı!" Swal (success icon, "Tamam" confirm button) to appear.
+ *   3. Click "Tamam" — triggers window.location.href → page navigates to confirmation page.
+ *   4. Wait for navigation to complete.
+ *
+ * Throws FSMHalt(SLOT_FOUND) if an error Swal (non-success icon) appears after AJAX failure.
+ * Falls through to navWaiter if no success Swal appears (e.g. auto-close fallback).
+ */
+async function clickEvetAndNavigate(
+  page: Page,
+  evetBtn: ReturnType<Page['locator']>,
+  logger: Logger,
+  jobId: string,
+  pathLabel: string,
+): Promise<void> {
+  // Set up navigation listener BEFORE clicking so we don't miss the event.
+  const navWaiter = page.waitForNavigation({ waitUntil: 'load', timeout: 45_000 });
+
+  // Click UYARI! Evet — triggers AJAX on the page.
+  await evetBtn.click();
+  logger.info({ jobId, path: pathLabel }, 'UYARI! Evet clicked — waiting for Başarılı! swal');
+
+  // After AJAX success: "Başarılı!" Swal with confirmButtonText:"Tamam" appears.
+  // User (automation) must click Tamam to trigger window.location.href redirect.
+  const successSwal = page.locator(S.swalConfirm);
+  const successVisible = await successSwal.waitFor({ state: 'visible', timeout: 12_000 }).then(() => true).catch(() => false);
+
+  if (successVisible) {
+    // Distinguish success ("Başarılı!" has .swal2-success icon) from error ("Hata!" has .swal2-error icon).
+    const isSuccess = await page.locator('.swal2-icon.swal2-success').isVisible().catch(() => false);
+    if (isSuccess) {
+      logger.info({ jobId, path: pathLabel }, 'Başarılı! swal — clicking Tamam');
+      await successSwal.click(); // Tamam → window.location.href → navigation starts
+    } else {
+      const swalText = await page.locator('.swal2-html-container, .swal2-content').textContent().catch(() => '');
+      await successSwal.click().catch(() => {}); // close error swal
+      void navWaiter.catch(() => {}); // prevent unhandled rejection
+      logger.warn({ jobId, swalText, path: pathLabel }, 'Error Swal after booking confirm — AJAX failed');
+      throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND });
+    }
+  }
+
+  // Await final navigation (triggered by Tamam click above, or auto-redirect fallback).
+  await navWaiter;
+  logger.info({ jobId, url: page.url(), path: pathLabel }, 'Navigation complete after booking confirm');
 }
 
 /**
@@ -227,49 +299,70 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
 
         // Security code check — mirrors slotHunt normal path exactly.
         // If portal rendered enteredCode input (showSecurityCode: true), agent must fill it.
-        // Browser context stays open: we inline-wait for the operator to resolve the HITL
-        // (waitForHitlResolution polls DB until resolved, then returns the entered code).
-        // This avoids a page reload → new random code → stale code mismatch.
+        // Browser context stays open to avoid page reload → new random code → stale code mismatch.
+        //
+        // hitlMode (portal/profile config):
+        //   'auto' (default) → try to solve challenges automatically (e.g. read security code
+        //                       from window.expectedSecurityCode); fallback to human HITL if not found.
+        //   'human'          → always escalate to human HITL immediately.
+        const secCodeMode = ctx.portalConfig.hitl.hitlMode ?? 'auto';
         const codeInput = ctx.page.locator(S.inputs.enteredCode);
         const codeInputExists = await codeInput.count().then((n) => n > 0).catch(() => false);
         if (codeInputExists) {
-          // Take a screenshot and trigger HITL — wait inline for operator to enter the code.
-          const screenshotFilename = 'SLOT_SEARCHING_security_code.png';
-          const screenshotUrl = `/cp/screenshots/${ctx.jobId}/${screenshotFilename}`;
-          try {
-            await codeInput.scrollIntoViewIfNeeded().catch(() => {});
-            await ctx.page.waitForTimeout(300);
-            const buf = await ctx.page.screenshot({ type: 'png' });
-            await uploadScreenshotToCp(ctx.tenantId, ctx.jobId, screenshotFilename, buf);
-          } catch (err) {
-            ctx.logger.warn({ err, jobId: ctx.jobId }, 'Screenshot upload failed for security code HITL');
+          let codeFromPage: string | null = null;
+          if (secCodeMode === 'auto') {
+            codeFromPage = await ctx.page.evaluate(() => {
+              const g = globalThis as unknown as { expectedSecurityCode?: string };
+              return typeof g.expectedSecurityCode === 'string' && g.expectedSecurityCode.length > 0
+                ? g.expectedSecurityCode
+                : null;
+            }).catch(() => null);
           }
-          const prompt = 'Enter the 6-digit security code (6 Haneli Kod) shown on the page.';
-          const hitlExpiresSeconds = ctx.portalConfig.hitl.maxWaitSeconds > 0 ? ctx.portalConfig.hitl.maxWaitSeconds : undefined;
-          const enteredCode = await waitForHitlResolution({
-            job_id: ctx.jobId,
-            job_run_id: ctx.jobRunId,
-            tenant_id: ctx.tenantId,
-            type: 'SECURITY_CODE',
-            context: {
-              prompt,
-              screenshot_url: screenshotUrl,
-              input_type: 'text',
-              metadata: { state: JOB_STATES.SLOT_SEARCHING, selector: 'input[name="enteredCode"]' },
-            },
-            timeoutSeconds: hitlExpiresSeconds,
-            fromState: JOB_STATES.SLOT_SEARCHING,
-            workerId: ctx.workerId,
-            logger: ctx.logger,
-          });
-          if (!enteredCode) {
-            ctx.logger.warn({ jobId: ctx.jobId }, 'HITL resolved but no code provided — aborting');
-            throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND });
+
+          if (codeFromPage) {
+            await ctx.rateLimiter.take();
+            await ctx.throttler.beforeAction();
+            await codeInput.fill(codeFromPage);
+            ctx.logger.info({ jobId: ctx.jobId, hitlMode: secCodeMode }, 'Security code auto-filled from page JS context (preloaded path)');
+          } else {
+            // HITL fallback — take a screenshot and wait inline for operator to enter the code.
+            const screenshotFilename = 'SLOT_SEARCHING_security_code.png';
+            const screenshotUrl = `/cp/screenshots/${ctx.jobId}/${screenshotFilename}`;
+            try {
+              await codeInput.scrollIntoViewIfNeeded().catch(() => {});
+              await ctx.page.waitForTimeout(300);
+              const buf = await ctx.page.screenshot({ type: 'png' });
+              await uploadScreenshotToCp(ctx.tenantId, ctx.jobId, screenshotFilename, buf);
+            } catch (err) {
+              ctx.logger.warn({ err, jobId: ctx.jobId }, 'Screenshot upload failed for security code HITL');
+            }
+            const prompt = 'Enter the 6-digit security code (6 Haneli Kod) shown on the page.';
+            const hitlExpiresSeconds = ctx.portalConfig.hitl.maxWaitSeconds > 0 ? ctx.portalConfig.hitl.maxWaitSeconds : undefined;
+            const enteredCode = await waitForHitlResolution({
+              job_id: ctx.jobId,
+              job_run_id: ctx.jobRunId,
+              tenant_id: ctx.tenantId,
+              type: 'SECURITY_CODE',
+              context: {
+                prompt,
+                screenshot_url: screenshotUrl,
+                input_type: 'text',
+                metadata: { state: JOB_STATES.SLOT_SEARCHING, selector: 'input[name="enteredCode"]' },
+              },
+              timeoutSeconds: hitlExpiresSeconds,
+              fromState: JOB_STATES.SLOT_SEARCHING,
+              workerId: ctx.workerId,
+              logger: ctx.logger,
+            });
+            if (!enteredCode) {
+              ctx.logger.warn({ jobId: ctx.jobId }, 'HITL resolved but no code provided — aborting');
+              throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND });
+            }
+            await ctx.rateLimiter.take();
+            await ctx.throttler.beforeAction();
+            await codeInput.fill(enteredCode);
+            ctx.logger.info({ jobId: ctx.jobId }, 'Security code filled after inline HITL resolution (preloaded path)');
           }
-          await ctx.rateLimiter.take();
-          await ctx.throttler.beforeAction();
-          await codeInput.fill(enteredCode);
-          ctx.logger.info({ jobId: ctx.jobId }, 'Security code filled after inline HITL resolution (preloaded path)');
         }
 
         await ctx.rateLimiter.take();
@@ -326,13 +419,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
           // Confirm Swal'ı mı, error Swal'ı mı? Cancel butonu varsa confirm Swal'dır.
           const hasCancelBtn = await ctx.page.locator('.swal2-cancel').isVisible().catch(() => false);
           if (hasCancelBtn) {
-            // Confirm Swal "UYARI!" — Evet'e tıkla ve navigation'ı bekle (Promise.all garantiler)
-            ctx.logger.info({ jobId: ctx.jobId }, 'Swal Evet clicking — waiting for navigation (preloaded path)');
-            await Promise.all([
-              ctx.page.waitForNavigation({ waitUntil: 'load', timeout: 45_000 }),
-              swal.click(),
-            ]);
-            ctx.logger.info({ jobId: ctx.jobId, url: ctx.page.url() }, 'Navigation complete (preloaded path)');
+            await clickEvetAndNavigate(ctx.page, swal, ctx.logger, ctx.jobId, 'preloaded');
             await dumpPostBookingArtifacts(ctx.page, ctx.tenantId, ctx.jobId, ctx.logger);
           } else {
             // Error Swal — form validation failed; close it and throw fast
@@ -412,55 +499,83 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
       // Normal booking job: inline HITL wait — browser stays open, no page reload.
       // slotHunt already has the page loaded; operator enters the code, we fill it and re-run slotHunt.
       const isBlocked = res.reason === 'blocked';
-      const screenshotFilename = isBlocked ? 'SLOT_SEARCHING_blocked.png' : 'SLOT_SEARCHING_security_code.png';
-      const screenshotUrl = `/cp/screenshots/${ctx.jobId}/${screenshotFilename}`;
-      try {
-        const codeInput = ctx.page.locator(S.inputs.enteredCode);
-        await codeInput.scrollIntoViewIfNeeded().catch(() => {});
-        await ctx.page.waitForTimeout(300);
-        const buf = await ctx.page.screenshot({ type: 'png' });
-        await uploadScreenshotToCp(ctx.tenantId, ctx.jobId, screenshotFilename, buf);
-      } catch (err) {
-        ctx.logger.warn({ err, jobId: ctx.jobId }, 'Screenshot upload failed for HITL');
-      }
-      const prompt = isBlocked
-        ? 'The portal appears to be blocking the agent. Check the screenshot and enter any required value or "unblocked" once resolved.'
-        : 'Enter the 6-digit security code (6 Haneli Kod) shown on the page.';
-      const hitlExpiresSeconds = ctx.portalConfig.hitl.maxWaitSeconds > 0 ? ctx.portalConfig.hitl.maxWaitSeconds : undefined;
-      let enteredCode: string;
-      try {
-        enteredCode = await waitForHitlResolution({
-          job_id: ctx.jobId,
-          job_run_id: ctx.jobRunId,
-          tenant_id: ctx.tenantId,
-          type: isBlocked ? 'MANUAL_REVIEW' : 'SECURITY_CODE',
-          context: {
-            prompt,
-            screenshot_url: screenshotUrl,
-            input_type: 'text',
-            metadata: { state: JOB_STATES.SLOT_SEARCHING, selector: 'input[name="enteredCode"]' },
-          },
-          timeoutSeconds: hitlExpiresSeconds,
-          fromState: JOB_STATES.SLOT_SEARCHING,
-          workerId: ctx.workerId,
-          logger: ctx.logger,
-        });
-      } catch (err) {
-        if (err instanceof HitlExpiredError) {
-          ctx.logger.warn({ err, jobId: ctx.jobId }, 'HITL expired — job parked at HITL_EXPIRED');
-          throw new FSMHalt({ lastState: JOB_STATES.HITL_EXPIRED });
+
+      // Auto-fill shortcut for security code (not applicable when blocked).
+      // hitlMode 'auto' (default): read window.expectedSecurityCode from page.
+      // hitlMode 'human': always use HITL immediately.
+      const secCodeModeNormal = ctx.portalConfig.hitl.hitlMode ?? 'auto';
+      let autoFilled = false;
+      if (!isBlocked && secCodeModeNormal === 'auto') {
+        const codeFromPage = await ctx.page.evaluate(() => {
+          const g = globalThis as unknown as { expectedSecurityCode?: string };
+          return typeof g.expectedSecurityCode === 'string' && g.expectedSecurityCode.length > 0
+            ? g.expectedSecurityCode
+            : null;
+        }).catch(() => null);
+        if (codeFromPage) {
+          const codeInput = ctx.page.locator(S.inputs.enteredCode);
+          const exists = await codeInput.count().then((n) => n > 0).catch(() => false);
+          if (exists) {
+            await ctx.rateLimiter.take();
+            await ctx.throttler.beforeAction();
+            await codeInput.fill(codeFromPage);
+            ctx.logger.info({ jobId: ctx.jobId, hitlMode: secCodeModeNormal }, 'Security code auto-filled from page JS context (normal path)');
+            autoFilled = true;
+          }
         }
-        throw err;
       }
-      if (!isBlocked && enteredCode) {
-        // Fill the security code on the still-open page and re-run slotHunt
-        const codeInput = ctx.page.locator(S.inputs.enteredCode);
-        const stillExists = await codeInput.count().then((n) => n > 0).catch(() => false);
-        if (stillExists) {
-          await ctx.rateLimiter.take();
-          await ctx.throttler.beforeAction();
-          await codeInput.fill(enteredCode);
-          ctx.logger.info({ jobId: ctx.jobId }, 'Security code filled after inline HITL (normal path) — re-running slotHunt');
+
+      if (!autoFilled) {
+        const screenshotFilename = isBlocked ? 'SLOT_SEARCHING_blocked.png' : 'SLOT_SEARCHING_security_code.png';
+        const screenshotUrl = `/cp/screenshots/${ctx.jobId}/${screenshotFilename}`;
+        try {
+          const codeInput = ctx.page.locator(S.inputs.enteredCode);
+          await codeInput.scrollIntoViewIfNeeded().catch(() => {});
+          await ctx.page.waitForTimeout(300);
+          const buf = await ctx.page.screenshot({ type: 'png' });
+          await uploadScreenshotToCp(ctx.tenantId, ctx.jobId, screenshotFilename, buf);
+        } catch (err) {
+          ctx.logger.warn({ err, jobId: ctx.jobId }, 'Screenshot upload failed for HITL');
+        }
+        const prompt = isBlocked
+          ? 'The portal appears to be blocking the agent. Check the screenshot and enter any required value or "unblocked" once resolved.'
+          : 'Enter the 6-digit security code (6 Haneli Kod) shown on the page.';
+        const hitlExpiresSeconds = ctx.portalConfig.hitl.maxWaitSeconds > 0 ? ctx.portalConfig.hitl.maxWaitSeconds : undefined;
+        let enteredCode: string;
+        try {
+          enteredCode = await waitForHitlResolution({
+            job_id: ctx.jobId,
+            job_run_id: ctx.jobRunId,
+            tenant_id: ctx.tenantId,
+            type: isBlocked ? 'MANUAL_REVIEW' : 'SECURITY_CODE',
+            context: {
+              prompt,
+              screenshot_url: screenshotUrl,
+              input_type: 'text',
+              metadata: { state: JOB_STATES.SLOT_SEARCHING, selector: 'input[name="enteredCode"]' },
+            },
+            timeoutSeconds: hitlExpiresSeconds,
+            fromState: JOB_STATES.SLOT_SEARCHING,
+            workerId: ctx.workerId,
+            logger: ctx.logger,
+          });
+        } catch (err) {
+          if (err instanceof HitlExpiredError) {
+            ctx.logger.warn({ err, jobId: ctx.jobId }, 'HITL expired — job parked at HITL_EXPIRED');
+            throw new FSMHalt({ lastState: JOB_STATES.HITL_EXPIRED });
+          }
+          throw err;
+        }
+        if (!isBlocked && enteredCode) {
+          // Fill the security code on the still-open page and re-run slotHunt
+          const codeInput = ctx.page.locator(S.inputs.enteredCode);
+          const stillExists = await codeInput.count().then((n) => n > 0).catch(() => false);
+          if (stillExists) {
+            await ctx.rateLimiter.take();
+            await ctx.throttler.beforeAction();
+            await codeInput.fill(enteredCode);
+            ctx.logger.info({ jobId: ctx.jobId }, 'Security code filled after inline HITL (normal path) — re-running slotHunt');
+          }
         }
       }
       // Re-run slotHunt now that the code is filled (or operator unblocked manually)
@@ -527,10 +642,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
         if (dlgVisible2) {
           const hasCancelBtn2 = await ctx.page.locator('.swal2-cancel').isVisible().catch(() => false);
           if (hasCancelBtn2) {
-            await Promise.all([
-              ctx.page.waitForNavigation({ waitUntil: 'load', timeout: 45_000 }),
-              swal2.click(),
-            ]);
+            await clickEvetAndNavigate(ctx.page, swal2, ctx.logger, ctx.jobId, 'post-hitl');
             await dumpPostBookingArtifacts(ctx.page, ctx.tenantId, ctx.jobId, ctx.logger);
           } else {
             const swalText2 = await ctx.page.locator('.swal2-html-container, .swal2-content').textContent().catch(() => '');
@@ -637,13 +749,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
           // Confirm Swal'ı mı, error Swal'ı mı? Cancel butonu varsa confirm Swal'dır.
           const hasCancelBtn = await ctx.page.locator('.swal2-cancel').isVisible().catch(() => false);
           if (hasCancelBtn) {
-            // Confirm Swal "UYARI!" — Evet'e tıkla ve navigation'ı bekle (Promise.all garantiler)
-            ctx.logger.info({ jobId: ctx.jobId }, 'Swal Evet clicking — waiting for navigation (normal path)');
-            await Promise.all([
-              ctx.page.waitForNavigation({ waitUntil: 'load', timeout: 45_000 }),
-              swal.click(),
-            ]);
-            ctx.logger.info({ jobId: ctx.jobId, url: ctx.page.url() }, 'Navigation complete (normal path)');
+            await clickEvetAndNavigate(ctx.page, swal, ctx.logger, ctx.jobId, 'normal');
             await dumpPostBookingArtifacts(ctx.page, ctx.tenantId, ctx.jobId, ctx.logger);
           } else {
             // Error Swal — form validation failed; close it and throw fast

@@ -23,6 +23,7 @@
 
 import express from 'express';
 import cors from 'cors';
+import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { mockState } from './state.js';
@@ -33,6 +34,9 @@ const publicDir = path.join(__dirname, '..', 'public');
 
 const app = express();
 const PORT = process.env.PORT || 3004;
+
+// multer: memory storage for multipart/form-data (used by /tr/ankara-bireysel-basvuru)
+const upload = multer({ storage: multer.memoryStorage() });
 
 // Middleware
 app.use(cors());
@@ -404,7 +408,9 @@ async function processSubmit(
 }
 
 // Main booking endpoint — mirrors real site: POST /tr/ankara-bireysel-basvuru → JSON { url }
-app.post('/tr/ankara-bireysel-basvuru', async (req, res) => {
+// Accepts both multipart/form-data (real site / birebir mock) and urlencoded (legacy tests).
+// upload.none() parses multipart fields into req.body without accepting file uploads.
+app.post('/tr/ankara-bireysel-basvuru', upload.none(), async (req, res) => {
   await processSubmit(req, res, 'json');
 });
 

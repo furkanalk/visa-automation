@@ -42,8 +42,7 @@ function defaultConfigFromSettings(settings: SettingsGrouped | undefined): Profi
       actionMs: num(portal.action_timeout_ms, 10000),
     },
     hitl: {
-      otpMode: "pause",
-      captchaMode: "hitl",
+      hitlMode: "auto",
       maxWaitSeconds: hitlMaxSec,
     },
     retry: {
@@ -88,8 +87,7 @@ interface ProfileFormData {
       actionMs: number;
     };
     hitl: {
-      otpMode: string;
-      captchaMode: string;
+      hitlMode: string;
       maxWaitSeconds: number;
     };
     retry: {
@@ -131,8 +129,7 @@ const defaultConfig: ProfileFormData["config"] = {
     actionMs: 10000,
   },
   hitl: {
-    otpMode: "pause",
-    captchaMode: "hitl",
+    hitlMode: "auto",
     maxWaitSeconds: 300,
   },
   retry: {
@@ -233,8 +230,7 @@ export function ProfileModal({
       },
       hitl: h
         ? {
-            otpMode: (h.otpMode as string) || base.hitl.otpMode,
-            captchaMode: (h.captchaMode as string) || base.hitl.captchaMode,
+            hitlMode: (h.hitlMode as string) || base.hitl.hitlMode,
             maxWaitSeconds: num(h.maxWaitSeconds, base.hitl.maxWaitSeconds),
           }
         : base.hitl,
@@ -547,32 +543,21 @@ export function ProfileModal({
                 HITL (human in the loop)
               </h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <FormField label="OTP mode" htmlFor="hitlOtp" hint="pause / auto / skip">
+                <FormField
+                  label="HITL mode"
+                  htmlFor="hitlMode"
+                  hint="auto = agent solves challenges automatically, falls back to human if needed. human = always ask operator."
+                >
                   <select
-                    id="hitlOtp"
-                    value={formData.config.hitl.otpMode}
+                    id="hitlMode"
+                    value={formData.config.hitl.hitlMode}
                     onChange={(e) =>
-                      updateConfig("hitl", "otpMode", e.target.value)
+                      updateConfig("hitl", "hitlMode", e.target.value)
                     }
                     className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white"
                   >
-                    <option value="pause">pause (wait for human)</option>
-                    <option value="auto">auto (use provider)</option>
-                    <option value="skip">skip</option>
-                  </select>
-                </FormField>
-                <FormField label="Captcha mode" htmlFor="hitlCaptcha" hint="hitl / solver / skip">
-                  <select
-                    id="hitlCaptcha"
-                    value={formData.config.hitl.captchaMode}
-                    onChange={(e) =>
-                      updateConfig("hitl", "captchaMode", e.target.value)
-                    }
-                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white"
-                  >
-                    <option value="hitl">hitl (human solves)</option>
-                    <option value="solver">solver (automated)</option>
-                    <option value="skip">skip</option>
+                    <option value="auto">auto (solve automatically, fallback to human)</option>
+                    <option value="human">human (always ask operator)</option>
                   </select>
                 </FormField>
                 <FormField label="Max wait (seconds)" htmlFor="hitlMaxWait">

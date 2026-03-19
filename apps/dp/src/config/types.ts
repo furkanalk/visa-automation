@@ -41,12 +41,21 @@ export interface PortalProxy {
   providers: ProxyProvider[];
 }
 
-export type OtpMode = 'pause' | 'auto' | 'skip';
-export type CaptchaMode = 'hitl' | 'solver' | 'skip';
+/**
+ * Single HITL strategy for all portal challenges (security code, OTP, captcha).
+ *
+ * 'auto'  — agent tries to solve challenges automatically (e.g. reads security code
+ *            from page JS, uses captcha solver, uses OTP integration); falls back to
+ *            human HITL only when auto-solve is not possible.
+ * 'human' — agent immediately escalates all challenges to a human operator.
+ *
+ * Default (undefined) = 'auto'.
+ */
+export type HitlMode = 'auto' | 'human';
 
 export interface PortalHitl {
-  otpMode: OtpMode;
-  captchaMode: CaptchaMode;
+  /** Strategy for handling portal challenges. Default: 'auto'. */
+  hitlMode?: HitlMode;
   maxWaitSeconds: number;
 }
 

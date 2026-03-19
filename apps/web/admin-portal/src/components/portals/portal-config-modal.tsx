@@ -88,8 +88,7 @@ export function PortalConfigModal({
   });
   const [rateLimitExpanded, setRateLimitExpanded] = useState(false);
   const [hitl, setHitl] = useState({
-    otpMode: "",
-    captchaMode: "",
+    hitlMode: "",
     maxWaitSeconds: "",
   });
   const [selectorsVersion, setSelectorsVersion] = useState("");
@@ -143,8 +142,7 @@ export function PortalConfigModal({
       burst: r.burst != null ? String(r.burst) : "",
     });
     setHitl({
-      otpMode: typeof h.otpMode === "string" ? h.otpMode : "",
-      captchaMode: typeof h.captchaMode === "string" ? h.captchaMode : "",
+      hitlMode: typeof h.hitlMode === "string" ? h.hitlMode : "",
       maxWaitSeconds: h.maxWaitSeconds != null ? String(h.maxWaitSeconds) : "",
     });
     setSelectorsVersion(typeof c.selectorsVersion === "string" ? c.selectorsVersion : "");
@@ -207,11 +205,10 @@ export function PortalConfigModal({
       actionsPerMinute: num(rateLimit.actionsPerMinute) ?? 30,
       burst: num(rateLimit.burst) ?? 5,
     } as Record<string, unknown>;
-    if (hitl.otpMode !== "" || hitl.captchaMode !== "" || hitl.maxWaitSeconds !== "") {
+    if (hitl.hitlMode !== "" || hitl.maxWaitSeconds !== "") {
       out.hitl = {
         ...(out.hitl as Record<string, unknown>),
-        otpMode: hitl.otpMode || undefined,
-        captchaMode: hitl.captchaMode || undefined,
+        hitlMode: hitl.hitlMode || undefined,
         maxWaitSeconds: num(hitl.maxWaitSeconds),
       } as Record<string, unknown>;
     }
@@ -357,10 +354,13 @@ export function PortalConfigModal({
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-white border-b border-gray-200 dark:border-slate-600 pb-1">
                   HITL (human in the loop)
                 </h3>
-                <FormField label="OTP mode" hint="pause = wait for human; auto = use provider; skip = don't request OTP">
+                <FormField
+                  label="HITL mode"
+                  hint="auto = agent tries to solve challenges automatically, falls back to human if needed. human = always ask operator."
+                >
                   <select
-                    value={hitl.otpMode}
-                    onChange={(e) => setHitl((h) => ({ ...h, otpMode: e.target.value }))}
+                    value={hitl.hitlMode}
+                    onChange={(e) => setHitl((h) => ({ ...h, hitlMode: e.target.value }))}
                     className={cn(
                       "w-full rounded-lg border px-3 py-2 text-sm transition-colors",
                       "bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-600",
@@ -368,33 +368,9 @@ export function PortalConfigModal({
                       "focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 dark:focus:border-slate-500"
                     )}
                   >
-                    <option value="">—</option>
-                    <option value="pause">pause (wait for human)</option>
-                    <option value="auto">auto (use provider)</option>
-                    <option value="skip">skip</option>
-                    {hitl.otpMode && !["pause", "auto", "skip"].includes(hitl.otpMode) && (
-                      <option value={hitl.otpMode}>{hitl.otpMode}</option>
-                    )}
-                  </select>
-                </FormField>
-                <FormField label="Captcha mode" hint="hitl = human solves; solver = automated; skip = don't solve">
-                  <select
-                    value={hitl.captchaMode}
-                    onChange={(e) => setHitl((h) => ({ ...h, captchaMode: e.target.value }))}
-                    className={cn(
-                      "w-full rounded-lg border px-3 py-2 text-sm transition-colors",
-                      "bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-600",
-                      "text-gray-900 dark:text-gray-100",
-                      "focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 dark:focus:border-slate-500"
-                    )}
-                  >
-                    <option value="">—</option>
-                    <option value="hitl">hitl (human solves)</option>
-                    <option value="solver">solver (automated)</option>
-                    <option value="skip">skip</option>
-                    {hitl.captchaMode && !["hitl", "solver", "skip"].includes(hitl.captchaMode) && (
-                      <option value={hitl.captchaMode}>{hitl.captchaMode}</option>
-                    )}
+                    <option value="">— (default: auto)</option>
+                    <option value="auto">auto (solve automatically, fallback to human)</option>
+                    <option value="human">human (always ask operator)</option>
                   </select>
                 </FormField>
                 <FormField label="Max wait (seconds)">

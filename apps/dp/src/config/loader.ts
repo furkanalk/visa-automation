@@ -69,9 +69,8 @@ function assertFullPortalConfig(portalId: PortalId, m: Record<string, unknown>):
   if (!m.proxy || typeof (m.proxy as any).enabled !== 'boolean') missing.push('proxy.enabled');
   if (!m.proxy || typeof (m.proxy as any).strategy !== 'string') missing.push('proxy.strategy');
   if (!m.proxy || !Array.isArray((m.proxy as any).providers)) missing.push('proxy.providers');
-  if (!m.hitl || typeof (m.hitl as any).otpMode !== 'string') missing.push('hitl.otpMode');
-  if (!m.hitl || typeof (m.hitl as any).captchaMode !== 'string') missing.push('hitl.captchaMode');
   if (!m.hitl || typeof (m.hitl as any).maxWaitSeconds !== 'number') missing.push('hitl.maxWaitSeconds');
+  // hitlMode is optional (defaults to 'auto' in handlers); no required validation needed.
   if (typeof m.selectorsVersion !== 'string') missing.push('selectorsVersion');
   if (missing.length > 0) {
     throw new Error(
@@ -116,7 +115,7 @@ function profileToPortalPartial(profile: AgentProfileConfig | null | undefined):
     out.timeouts = timeouts;
   }
   const h = profile.hitl as Record<string, unknown> | undefined;
-  if (h && (h.otpMode !== undefined || h.captchaMode !== undefined || h.maxWaitSeconds !== undefined)) {
+  if (h && (h.hitlMode !== undefined || h.maxWaitSeconds !== undefined)) {
     out.hitl = { ...((out.hitl as object) ?? {}), ...h };
   }
   if (profile.minRunDurationMs !== undefined) out.minRunDurationMs = profile.minRunDurationMs;

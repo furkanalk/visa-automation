@@ -851,21 +851,63 @@ export function renderPage1(options: Partial<Page1Options> = {}): string {
           cancelButtonText: 'Hayır'
         }).then(function(result) {
           if (result.isConfirmed) {
-            // Mimic real AS-Visa: AJAX POST → server returns { url } → JS redirect
+            // Birebir real AS-Visa: createRequest with FormData → sendRequest AJAX
+            var travelDateVal = String($('input[name=TravelDate]').val() || '');
+            var apptDateVal   = String($('input[name=AppointmentDate]').val() || '');
+            var lessThan15Days = (function() {
+              try {
+                var p1 = travelDateVal.split('/'), p2 = apptDateVal.split('/');
+                if (p1.length === 3 && p2.length === 3) {
+                  var tDate = new Date(+p1[2], +p1[1]-1, +p1[0]);
+                  var aDate = new Date(+p2[2], +p2[1]-1, +p2[0]);
+                  return (tDate.getTime() - aDate.getTime()) < 15 * 24 * 60 * 60 * 1000;
+                }
+              } catch(e) {}
+              return false;
+            })();
+
+            var fdata = new FormData();
+            fdata.append('Nationality',               String($('select[name=Nationality]').val()   || ''));
+            fdata.append('Appointment',               String($('select[name=Appointment]').val()   || ''));
+            fdata.append('TravelDate',                travelDateVal);
+            fdata.append('TravelSubject',             String($('select[name=TravelSubject]').val() || ''));
+            fdata.append('AppointmentDate',           apptDateVal);
+            fdata.append('AppointmentTime',           String($('select[name=AppointmentTime]').val() || '0'));
+            fdata.append('TcKimlikNo',                String($('input[name=TcKimlikNo]').val()     || ''));
+            fdata.append('reTCKN',                    String($('input[name=reTCKN]').val()         || ''));
+            fdata.append('PassaportNumber',           String($('input[name=PassaportNumber]').val()|| ''));
+            fdata.append('Name',                      String($('input[name=Name]').val()           || ''));
+            fdata.append('Surname',                   String($('input[name=Surname]').val()        || ''));
+            fdata.append('Phone',                     String($('input[name=Phone]').val()          || ''));
+            fdata.append('Email',                     String($('input[name=Email]').val()          || ''));
+            fdata.append('reEmail',                   String($('input[name=reEmail]').val()        || ''));
+            fdata.append('DogumYili',                 String($('input[name=DogumYili]').val()      || ''));
+            fdata.append('enteredCode',               String($('input[name=enteredCode]').val()    || ''));
+            fdata.append('verificationCodeServer',    String($('input[name=verificationCodeServer]').val() || ''));
+            fdata.append('__RequestVerificationToken',String($('input[name=__RequestVerificationToken]').val() || ''));
+            fdata.append('formStartTime',             String($('input[name=formStartTime]').val()  || ''));
+            fdata.append('cfToken',                   String($('#cfToken').val()                   || ''));
+            fdata.append('lessThan15Days',            String(lessThan15Days));
+
             $.ajax({
               url: '/tr/ankara-bireysel-basvuru',
               type: 'POST',
-              data: $('#apForm').serialize(),
+              processData: false,
+              contentType: false,
+              data: fdata,
               success: function(response) {
                 hideSpinner();
+                // Birebir real site: "Başarılı!" Swal with Tamam button — user must click to proceed
                 Swal.fire({
                   title: 'Başarılı!',
-                  text: 'Randevu işleminizde son adım kalmıştır...',
+                  text: 'Randevu işleminizde son adım kalmıştır. Açılan Sayfadaki Talimatları yerine getirmeyi unutmayın.',
                   icon: 'success',
                   background: '#1d2657',
                   color: '#f15a29',
-                  timer: 1500,
-                  showConfirmButton: false
+                  confirmButtonText: 'Tamam',
+                  allowOutsideClick: false,
+                  allowEscapeKey: false,
+                  allowEnterKey: false
                 }).then(function() {
                   window.location.href = response.url;
                 });

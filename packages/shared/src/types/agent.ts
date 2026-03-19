@@ -79,10 +79,9 @@ export interface AgentProfileConfig {
     actionMs?: number;
     pageLoadMs?: number;
   };
-  /** Same shape as portal: otpMode, captchaMode, maxWaitSeconds. */
+  /** Same shape as portal: hitlMode, maxWaitSeconds. */
   hitl?: {
-    otpMode?: string;
-    captchaMode?: string;
+    hitlMode?: string;
     maxWaitSeconds?: number;
   };
   retry?: {
