@@ -114,29 +114,34 @@ async function clickEvetAndNavigate(
 
   // Click UYARI! Evet — triggers AJAX on the page.
   await evetBtn.click();
-  logger.info({ jobId, path: pathLabel }, 'UYARI! Evet clicked — waiting for Başarılı! swal');
+  logger.info({ jobId, path: pathLabel }, 'UYARI! Evet clicked — waiting for UYARI! swal to close');
 
-  // After AJAX success: "Başarılı!" Swal with confirmButtonText:"Tamam" appears.
-  // User (automation) must click Tamam to trigger window.location.href redirect.
-  const successSwal = page.locator(S.swalConfirm);
-  const successVisible = await successSwal.waitFor({ state: 'visible', timeout: 12_000 }).then(() => true).catch(() => false);
+  // CRITICAL: Wait for the UYARI! swal popup to fully close BEFORE looking for the outcome swal.
+  // Without this, waitFor({state:'visible'}) on .swal2-confirm resolves immediately on the
+  // still-animating UYARI! swal (which has no .swal2-success icon), causing a false "AJAX failed".
+  await page.locator('.swal2-popup').waitFor({ state: 'hidden', timeout: 8_000 }).catch(() => {});
 
-  if (successVisible) {
-    // Distinguish success ("Başarılı!" has .swal2-success icon) from error ("Hata!" has .swal2-error icon).
+  // After UYARI! closes: AJAX runs → Başarılı! (icon: success) or Hata! (icon: error) swal appears.
+  const outcomeSwal = page.locator('.swal2-popup');
+  const outcomeVisible = await outcomeSwal.waitFor({ state: 'visible', timeout: 15_000 }).then(() => true).catch(() => false);
+
+  if (outcomeVisible) {
     const isSuccess = await page.locator('.swal2-icon.swal2-success').isVisible().catch(() => false);
     if (isSuccess) {
       logger.info({ jobId, path: pathLabel }, 'Başarılı! swal — clicking Tamam');
-      await successSwal.click(); // Tamam → window.location.href → navigation starts
+      await page.locator(S.swalConfirm).click(); // Tamam → window.location.href → navigation starts
     } else {
       const swalText = await page.locator('.swal2-html-container, .swal2-content').textContent().catch(() => '');
-      await successSwal.click().catch(() => {}); // close error swal
+      await page.locator(S.swalConfirm).click().catch(() => {}); // close error swal
       void navWaiter.catch(() => {}); // prevent unhandled rejection
       logger.warn({ jobId, swalText, path: pathLabel }, 'Error Swal after booking confirm — AJAX failed');
       throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND });
     }
+  } else {
+    logger.info({ jobId, path: pathLabel }, 'No outcome swal appeared — may have navigated directly');
   }
 
-  // Await final navigation (triggered by Tamam click above, or auto-redirect fallback).
+  // Await final navigation (triggered by Tamam click above, or direct redirect without swal).
   await navWaiter;
   logger.info({ jobId, url: page.url(), path: pathLabel }, 'Navigation complete after booking confirm');
 }
