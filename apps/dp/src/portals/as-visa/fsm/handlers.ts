@@ -19,6 +19,30 @@ import { waitForHitlResolution, HitlExpiredError } from '../../../core/hitl/hand
  * Saves: final URL (txt), full HTML, same-origin JS files (bundled).
  * All operations are best-effort — failures are logged but never throw.
  */
+/**
+ * Reads the 6-digit security code shown on the page using two strategies (in order):
+ *   1. window.expectedSecurityCode — set by mock portal for automated tests.
+ *   2. label[for="enteredCode"] text — real AS-Visa site embeds the code in the label, e.g.
+ *      "6 Haneli Kod (6-Digit Code): 324826". Extracted with /\b(\d{6})\b/.
+ * Returns the code string or null if neither strategy finds a 6-digit value.
+ */
+async function readSecurityCodeFromPage(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    // Strategy 1: mock-portal global variable
+    const g = globalThis as unknown as { expectedSecurityCode?: string };
+    if (typeof g.expectedSecurityCode === 'string' && /^\d{6}$/.test(g.expectedSecurityCode.trim())) {
+      return g.expectedSecurityCode.trim();
+    }
+    // Strategy 2: real site — code is in label text, e.g. "6 Haneli Kod (6-Digit Code): 324826"
+    const label = document.querySelector('label[for="enteredCode"]');
+    if (label) {
+      const m = (label.textContent ?? '').match(/\b(\d{6})\b/);
+      if (m) return m[1];
+    }
+    return null;
+  }).catch(() => null);
+}
+
 async function dumpPostBookingArtifacts(
   page: Page,
   tenantId: string,
@@ -316,19 +340,14 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
         if (codeInputExists) {
           let codeFromPage: string | null = null;
           if (secCodeMode === 'auto') {
-            codeFromPage = await ctx.page.evaluate(() => {
-              const g = globalThis as unknown as { expectedSecurityCode?: string };
-              return typeof g.expectedSecurityCode === 'string' && g.expectedSecurityCode.length > 0
-                ? g.expectedSecurityCode
-                : null;
-            }).catch(() => null);
+            codeFromPage = await readSecurityCodeFromPage(ctx.page);
           }
 
           if (codeFromPage) {
             await ctx.rateLimiter.take();
             await ctx.throttler.beforeAction();
             await codeInput.fill(codeFromPage);
-            ctx.logger.info({ jobId: ctx.jobId, hitlMode: secCodeMode }, 'Security code auto-filled from page JS context (preloaded path)');
+            ctx.logger.info({ jobId: ctx.jobId, hitlMode: secCodeMode }, 'Security code auto-filled from page (preloaded path)');
           } else {
             // HITL fallback — take a screenshot and wait inline for operator to enter the code.
             const screenshotFilename = 'SLOT_SEARCHING_security_code.png';
@@ -506,17 +525,12 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
       const isBlocked = res.reason === 'blocked';
 
       // Auto-fill shortcut for security code (not applicable when blocked).
-      // hitlMode 'auto' (default): read window.expectedSecurityCode from page.
+      // hitlMode 'auto' (default): read code from page (window.expectedSecurityCode or DOM label).
       // hitlMode 'human': always use HITL immediately.
       const secCodeModeNormal = ctx.portalConfig.hitl.hitlMode ?? 'auto';
       let autoFilled = false;
       if (!isBlocked && secCodeModeNormal === 'auto') {
-        const codeFromPage = await ctx.page.evaluate(() => {
-          const g = globalThis as unknown as { expectedSecurityCode?: string };
-          return typeof g.expectedSecurityCode === 'string' && g.expectedSecurityCode.length > 0
-            ? g.expectedSecurityCode
-            : null;
-        }).catch(() => null);
+        const codeFromPage = await readSecurityCodeFromPage(ctx.page);
         if (codeFromPage) {
           const codeInput = ctx.page.locator(S.inputs.enteredCode);
           const exists = await codeInput.count().then((n) => n > 0).catch(() => false);
@@ -524,7 +538,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
             await ctx.rateLimiter.take();
             await ctx.throttler.beforeAction();
             await codeInput.fill(codeFromPage);
-            ctx.logger.info({ jobId: ctx.jobId, hitlMode: secCodeModeNormal }, 'Security code auto-filled from page JS context (normal path)');
+            ctx.logger.info({ jobId: ctx.jobId, hitlMode: secCodeModeNormal }, 'Security code auto-filled from page (needsHitl path)');
             autoFilled = true;
           }
         }
@@ -730,12 +744,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
               // Field is empty — need to fill it
               let codeToUse: string | null = null;
               if (hitlModeNormal === 'auto') {
-                codeToUse = await ctx.page.evaluate(() => {
-                  const g = globalThis as unknown as { expectedSecurityCode?: string };
-                  return typeof g.expectedSecurityCode === 'string' && g.expectedSecurityCode.length > 0
-                    ? g.expectedSecurityCode
-                    : null;
-                }).catch(() => null);
+                codeToUse = await readSecurityCodeFromPage(ctx.page);
               }
               if (codeToUse) {
                 await ctx.rateLimiter.take();
