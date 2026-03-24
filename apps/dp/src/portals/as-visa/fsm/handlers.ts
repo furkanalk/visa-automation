@@ -1,7 +1,8 @@
 import type { JobState } from '@visa-automation/shared';
 import { JOB_STATES } from '@visa-automation/shared';
-import { FSMHalt } from '../../../core/fsm/runner.js';
+import { FSMHalt, humanLikeMouseMove } from '../../../core/fsm/runner.js';
 import type { StateHandler } from '../../../core/fsm/runner.js';
+import type { PortalConfig } from '../../../config/types.js';
 import { slotHunt, selectSlotForBooking } from '../steps/slot-hunt.js';
 import { fillForm } from '../steps/fill-form.js';
 import { AS_VISA_SELECTORS as S } from '../pages/make-appointment/index.js';
@@ -270,10 +271,49 @@ function buildBookingMeta(
  * - cfToken input'u varsa value set edilene kadar da bekler.
  * - maxWaitMs: toplam bekleme süresi (captchaAutoSolveDelayMs + buffer olmalı).
  */
-async function waitForSubmitReady(page: Page, maxWaitMs = 15_000): Promise<void> {
+async function waitForSubmitReady(page: Page, maxWaitMs = 15_000, portalConfig?: PortalConfig): Promise<void> {
   const submitLocator = page.locator(S.submit);
-  // Wait until button is not disabled (Playwright `enabled` state = no disabled attr)
+  // Wait until button is visible first
   await submitLocator.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {});
+
+  // Real-site bot detection: createRequest() aborts if < 40s passed since pageLoadTime.
+  // pageLoadTime is set via $(document).ready() on the form page (both real site and mock).
+  // We enforce ≥ 42s (2s buffer) before clicking submit to avoid "Şüpheli İşlem" redirect.
+  const BOT_DETECTION_MIN_MS = 42_000;
+  const pageLoadTime = await page.evaluate(() => {
+    const g = globalThis as unknown as { pageLoadTime?: number };
+    return typeof g.pageLoadTime === 'number' && g.pageLoadTime > 0 ? g.pageLoadTime : null;
+  }).catch(() => null);
+  if (pageLoadTime) {
+    const elapsed = Date.now() - pageLoadTime;
+    if (elapsed < BOT_DETECTION_MIN_MS) {
+      const holdMs = BOT_DETECTION_MIN_MS - elapsed;
+      // During the hold, periodically move the mouse so the real site's
+      // startSuspiciousCheck() sees userHasMovedMouse = true.
+      // Interval uses portal mouseMoveIntervalMs setting (default 5s).
+      const holdDeadline = Date.now() + holdMs;
+      const moveIntervalMs = portalConfig?.mouseMoveIntervalMs ?? 5_000;
+      while (Date.now() < holdDeadline) {
+        if (page.isClosed()) break;
+        if (portalConfig) {
+          await humanLikeMouseMove(page, portalConfig).catch(() => {});
+        } else {
+          // Fallback: simple random move when no config available
+          const v = page.viewportSize();
+          const vw = v?.width ?? 1280;
+          const vh = v?.height ?? 720;
+          const rx = Math.floor(80 + Math.random() * (vw - 160));
+          const ry = Math.floor(80 + Math.random() * (vh - 160));
+          await page.mouse.move(rx, ry, { steps: 12 }).catch(() => {});
+        }
+        const remaining = holdDeadline - Date.now();
+        if (remaining <= 0) break;
+        await page.waitForTimeout(Math.min(moveIntervalMs, remaining)).catch(() => {});
+      }
+    }
+  }
+
+  // Wait until submit button is not disabled (Cloudflare Turnstile may keep it disabled)
   const deadline = Date.now() + maxWaitMs;
   while (Date.now() < deadline) {
     const disabled = await submitLocator.getAttribute('disabled').catch(() => null);
@@ -408,7 +448,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
         }
 
         // CAPTCHA auto-solve bekleme: submit disabled iken bekle (turnstile enable olunca click)
-        await waitForSubmitReady(ctx.page, 15_000);
+        await waitForSubmitReady(ctx.page, 15_000, ctx.portalConfig);
         // Pre-submit diagnostic: log ALL required form field values to catch validation mismatches
         preSubmitDiag = await ctx.page.evaluate(() => {
           const g = (sel: string) => (document.querySelector(sel) as HTMLInputElement | HTMLSelectElement | null)?.value ?? '(missing)';
@@ -636,7 +676,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
       try {
         await ctx.rateLimiter.take();
         await ctx.throttler.beforeAction();
-        await waitForSubmitReady(ctx.page, 15_000);
+        await waitForSubmitReady(ctx.page, 15_000, ctx.portalConfig);
         preSubmitDiagPost = await ctx.page.evaluate(() => {
           const g = (sel: string) => (document.querySelector(sel) as HTMLInputElement | HTMLSelectElement | null)?.value ?? '';
           return {
@@ -797,7 +837,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
         await ctx.rateLimiter.take();
         await ctx.throttler.beforeAction();
         // CAPTCHA auto-solve bekleme: submit disabled iken bekle (turnstile enable olunca click)
-        await waitForSubmitReady(ctx.page, 15_000);
+        await waitForSubmitReady(ctx.page, 15_000, ctx.portalConfig);
         // Pre-submit diagnostic: log ALL required form field values to catch validation mismatches
         preSubmitDiag = await ctx.page.evaluate(() => {
           const g = (sel: string) => (document.querySelector(sel) as HTMLInputElement | HTMLSelectElement | null)?.value ?? '(missing)';

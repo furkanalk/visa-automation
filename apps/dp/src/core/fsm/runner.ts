@@ -367,7 +367,7 @@ const MOUSE_MOVE_DEFAULTS = {
 };
 
 /** Human-like mouse movement: wavy, slightly shaky path; options from portal config (optional). */
-async function humanLikeMouseMove(
+export async function humanLikeMouseMove(
   page: import('playwright').Page,
   portalConfig: Pick<
     PortalConfig,
