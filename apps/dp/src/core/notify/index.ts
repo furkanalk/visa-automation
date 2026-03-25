@@ -240,7 +240,8 @@ export async function notifyBookingConfirmed(args: {
   logger: Logger;
 }): Promise<void> {
   const { cpApiUrl, tenantId, internalSecret } = getCpNotifyContext(args.tenantId);
-  const settings = await getNotifySettings(cpApiUrl, tenantId, internalSecret);
+  // Skip cache so notify_routing / SMTP changes from Admin apply immediately (same as slot_open)
+  const settings = await getNotifySettings(cpApiUrl, tenantId, internalSecret, { skipCache: true });
   const token = settings.telegram_bot_token;
   const { bookings: bookingsChatIds } = getOpsBookingsWatcherChatIds(settings.telegram_chat_ids ?? []);
   const bookingRouting = getEventRouting(settings.notify_routing, 'booking');
@@ -385,7 +386,7 @@ export async function notifyHitlRequired(args: {
   logger: Logger;
 }): Promise<void> {
   const { cpApiUrl, tenantId, internalSecret } = getCpNotifyContext(args.tenantId);
-  const settings = await getNotifySettings(cpApiUrl, tenantId, internalSecret);
+  const settings = await getNotifySettings(cpApiUrl, tenantId, internalSecret, { skipCache: true });
   const notifyConfig = getConfigService().get('notify');
   const actionBase = (notifyConfig.notify_action_base_url ?? '').replace(/\/+$/, '');
   const panelBase = process.env.HITL_PANEL_BASE_URL?.replace(/\/+$/, '') || actionBase;
@@ -459,7 +460,7 @@ export async function notifyAgentStarted(args: {
   logger: Logger;
 }): Promise<void> {
   const { cpApiUrl, tenantId, internalSecret } = getCpNotifyContext(args.tenantId);
-  const settings = await getNotifySettings(cpApiUrl, tenantId, internalSecret);
+  const settings = await getNotifySettings(cpApiUrl, tenantId, internalSecret, { skipCache: true });
   const token = settings.telegram_bot_token;
   const { ops: opsChatIds } = getOpsBookingsWatcherChatIds(settings.telegram_chat_ids ?? []);
   if (!token || opsChatIds.length === 0) return;
@@ -509,7 +510,7 @@ export async function notifyAgentCompleted(args: {
   logger: Logger;
 }): Promise<void> {
   const { cpApiUrl, tenantId, internalSecret } = getCpNotifyContext(args.tenantId);
-  const settings = await getNotifySettings(cpApiUrl, tenantId, internalSecret);
+  const settings = await getNotifySettings(cpApiUrl, tenantId, internalSecret, { skipCache: true });
   const token = settings.telegram_bot_token;
   const { ops: opsChatIds } = getOpsBookingsWatcherChatIds(settings.telegram_chat_ids ?? []);
   if (!token || opsChatIds.length === 0) return;
@@ -564,7 +565,7 @@ export async function notifyAgentFailed(args: {
   logger: Logger;
 }): Promise<void> {
   const { cpApiUrl, tenantId, internalSecret } = getCpNotifyContext(args.tenantId);
-  const settings = await getNotifySettings(cpApiUrl, tenantId, internalSecret);
+  const settings = await getNotifySettings(cpApiUrl, tenantId, internalSecret, { skipCache: true });
   const token = settings.telegram_bot_token;
   const { ops: opsChatIds } = getOpsBookingsWatcherChatIds(settings.telegram_chat_ids ?? []);
   if (!token || opsChatIds.length === 0) return;

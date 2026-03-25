@@ -38,6 +38,7 @@ export interface NotifySettingsFromCP {
   booking_send_to_customer: boolean;
 }
 
+/** In-memory cache per tenant. Notification send paths use `skipCache: true` so `notify_routing` changes apply immediately; cache remains for other potential callers. */
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const cache = new Map<string, { data: NotifySettingsFromCP; expiresAt: number }>();
 
