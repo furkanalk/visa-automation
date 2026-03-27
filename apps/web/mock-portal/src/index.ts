@@ -87,6 +87,20 @@ app.post('/api/config/:portalId', (req, res) => {
   res.json({ success: true, data: config });
 });
 
+// Apply config preset
+app.post('/api/presets/:portalId/:presetId', (req, res) => {
+  const portalId = req.params.portalId;
+  const presetId = req.params.presetId;
+  if (presetId !== 'strict-real-mode' && presetId !== 'fast-mock') {
+    return res.status(400).json({
+      success: false,
+      error: 'Unknown preset. Use strict-real-mode or fast-mock.',
+    });
+  }
+  const config = mockState.applyPreset(portalId, presetId);
+  return res.json({ success: true, data: config, preset: presetId });
+});
+
 // Reset all state
 app.post('/api/reset', (req, res) => {
   mockState.reset();
@@ -173,6 +187,7 @@ app.get('/as-visa', async (req, res) => {
 
   // Render page — pass openDates as blockedDates param (template uses this as dateDisabled JS var)
   // showSecurityCode: her zaman true — mock'un amacı bu kodu her zaman göstermek.
+  const strictRealMode = config.presets?.strictRealMode === true;
   const html = renderPage1({
     blockedDates: openDates,
     availableTimes: times,
@@ -181,9 +196,10 @@ app.get('/as-visa', async (req, res) => {
     captchaAutoSolveDelayMs: config.captcha.autoSolveDelayMs,
     showSecurityCode: true, // Mock'ta her zaman göster (auto-solve da olsa HITL de olsa)
     securityCode,
-    skipInfoPopup: true, // Skip for faster testing
-    skipBotDetection: true, // Skip for automation
-    mouseSimulationMode: config.mouseSimulation.mode,
+    // Strict preset emulates real site constraints.
+    skipInfoPopup: !strictRealMode,
+    skipBotDetection: !strictRealMode,
+    mouseSimulationMode: strictRealMode ? 'disabled' : config.mouseSimulation.mode,
     mouseSimulationIntervalMs: config.mouseSimulation.intervalMs,
   });
 
@@ -513,6 +529,27 @@ app.get('/', (req, res) => {
           .portal-toggle.disabled { background: #555; color: #ccc; }
           .portal-toggle.disabled:hover { background: #666; }
           .portal-toggle:disabled { opacity: 0.7; cursor: wait; }
+          .preset-actions {
+            display: flex;
+            gap: 10px;
+            margin: 10px 0 0;
+          }
+          .preset-btn {
+            border: 1px solid #667eea;
+            background: transparent;
+            color: #c7d2fe;
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+          }
+          .preset-btn:hover { background: rgba(102,126,234,0.15); }
+          .preset-btn.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+          }
+          .preset-btn:disabled { opacity: 0.7; cursor: wait; }
           .stats {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
@@ -575,6 +612,21 @@ app.get('/', (req, res) => {
                   <div>
                     <a href="/${c.portalId}">${c.portalId}</a>
                     <br><small style="color: #666;">Mock ${c.portalId} appointment portal</small>
+                    <br><small style="color: #8aa0ff;">Preset: ${(c as any).presets?.strictRealMode ? 'strict-real-mode' : 'fast-mock'}</small>
+                    <div class="preset-actions">
+                      <button
+                        type="button"
+                        class="preset-btn ${(c as any).presets?.strictRealMode ? 'active' : ''}"
+                        data-portal-id="${c.portalId}"
+                        data-preset-id="strict-real-mode"
+                      >Strict Real Mode</button>
+                      <button
+                        type="button"
+                        class="preset-btn ${(c as any).presets?.strictRealMode ? '' : 'active'}"
+                        data-portal-id="${c.portalId}"
+                        data-preset-id="fast-mock"
+                      >Fast Mock</button>
+                    </div>
                   </div>
                   <button type="button" class="portal-toggle ${c.enabled ? 'enabled' : 'disabled'}" data-portal-id="${c.portalId}" data-enabled="${c.enabled}">
                     ${c.enabled ? '✓ On' : 'Off'}
@@ -602,6 +654,20 @@ app.get('/', (req, res) => {
                   .catch(function() { btn.disabled = false; });
               });
             });
+            document.querySelectorAll('.preset-btn').forEach(function(btn) {
+              btn.addEventListener('click', function() {
+                var portalId = this.getAttribute('data-portal-id');
+                var presetId = this.getAttribute('data-preset-id');
+                if (!portalId || !presetId) return;
+                btn.disabled = true;
+                fetch('/api/presets/' + encodeURIComponent(portalId) + '/' + encodeURIComponent(presetId), {
+                  method: 'POST'
+                })
+                  .then(function(r) { return r.json(); })
+                  .then(function() { window.location.reload(); })
+                  .catch(function() { btn.disabled = false; });
+              });
+            });
           </script>
           
           <div class="card api-section">
@@ -610,6 +676,7 @@ app.get('/', (req, res) => {
 GET  /api/config              - Get all portal configs
 GET  /api/config/:portalId    - Get specific portal config
 POST /api/config/:portalId    - Update portal config
+POST /api/presets/:portalId/:presetId - Apply preset (strict-real-mode | fast-mock)
 POST /api/reset               - Reset all state
 GET  /api/stats               - Get server stats
             </pre>

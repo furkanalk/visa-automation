@@ -18,6 +18,17 @@ export interface PortalConfig {
     maintenanceMode: boolean;
   };
 
+  /**
+   * Scenario presets that change page behavior to emulate production constraints.
+   */
+  presets: {
+    /**
+     * true  -> strict real-site mode (no bot-detection bypass, no synthetic mouse simulation, info popup enabled)
+     * false -> fast mock mode
+     */
+    strictRealMode: boolean;
+  };
+
   // Turnstile/CAPTCHA simulation
   captcha: {
     enabled: boolean;
@@ -90,6 +101,9 @@ const defaultAsVisaConfig: PortalConfig = {
     errorRate: 0,
     maintenanceMode: false,
   },
+  presets: {
+    strictRealMode: false,
+  },
   captcha: {
     enabled: true,
     autoSolveDelayMs: 3000, // Auto-solve after 3s for testing
@@ -140,6 +154,7 @@ class MockPortalState {
       ...existing,
       ...config,
       behavior: { ...existing.behavior, ...config.behavior },
+      presets: { ...existing.presets, ...config.presets },
       captcha: { ...existing.captcha, ...config.captcha },
       security: { ...existing.security, ...config.security },
       slots: { ...existing.slots, ...config.slots },
@@ -148,6 +163,18 @@ class MockPortalState {
     };
     this.configs.set(portalId, updated);
     return updated;
+  }
+
+  applyPreset(portalId: string, preset: 'strict-real-mode' | 'fast-mock'): PortalConfig {
+    if (preset === 'strict-real-mode') {
+      return this.setConfig(portalId, {
+        presets: { strictRealMode: true },
+        mouseSimulation: { mode: 'disabled' },
+      });
+    }
+    return this.setConfig(portalId, {
+      presets: { strictRealMode: false },
+    });
   }
 
   resetConfig(portalId: string): PortalConfig {
