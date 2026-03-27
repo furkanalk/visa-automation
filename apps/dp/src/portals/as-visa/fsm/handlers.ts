@@ -160,7 +160,7 @@ async function clickEvetAndNavigate(
       await page.locator(S.swalConfirm).click().catch(() => {}); // close error swal
       void navWaiter.catch(() => {}); // prevent unhandled rejection
       logger.warn({ jobId, swalText, path: pathLabel }, 'Error Swal after booking confirm — AJAX failed');
-      throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND });
+      await throwBookingFailureHalt(page, pathLabel, 'ajax_error_swal_after_confirm', swalText ?? '');
     }
   } else {
     logger.info({ jobId, path: pathLabel }, 'No outcome swal appeared — may have navigated directly');
@@ -265,6 +265,57 @@ function buildBookingMeta(
   };
 }
 
+async function collectBookingFailureMeta(
+  page: Page,
+  path: string,
+  reason: string,
+  swalText?: string
+): Promise<Record<string, unknown>> {
+  const runtime = await page
+    .evaluate(
+      ({ submitSelector, enteredCodeSelector }) => {
+        const submit = document.querySelector(submitSelector) as HTMLButtonElement | HTMLInputElement | null;
+        const enteredCode = document.querySelector(enteredCodeSelector) as HTMLInputElement | null;
+        const cfToken = (document.querySelector('[name="cfToken"]') as HTMLInputElement | null)?.value ?? '';
+        return {
+          currentUrl: window.location.href,
+          title: document.title ?? '',
+          submitDisabledAttr: submit?.getAttribute('disabled') ?? null,
+          submitAriaDisabled: submit?.getAttribute('aria-disabled') ?? null,
+          enteredCodeLen: (enteredCode?.value ?? '').trim().length,
+          cfTokenLen: cfToken.trim().length,
+        };
+      },
+      { submitSelector: S.submit, enteredCodeSelector: S.inputs.enteredCode }
+    )
+    .catch(() => null);
+
+  return {
+    bookingFailure: {
+      path,
+      reason,
+      url: runtime?.currentUrl ?? page.url(),
+      title: runtime?.title ?? '',
+      submitDisabledAttr: runtime?.submitDisabledAttr ?? null,
+      submitAriaDisabled: runtime?.submitAriaDisabled ?? null,
+      enteredCodeLen: runtime?.enteredCodeLen ?? null,
+      cfTokenLen: runtime?.cfTokenLen ?? null,
+      swalText: (swalText ?? '').trim() || null,
+      capturedAt: new Date().toISOString(),
+    },
+  };
+}
+
+async function throwBookingFailureHalt(
+  page: Page,
+  path: string,
+  reason: string,
+  swalText?: string
+): Promise<never> {
+  const meta = await collectBookingFailureMeta(page, path, reason, swalText);
+  throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND, meta });
+}
+
 /**
  * Submit öncesi CAPTCHA / turnstile'ın çözülmesini bekler.
  * - Submit butonu disabled iken bekler (auto-solve: captchaAutoSolveDelayMs ms sonra enable olur).
@@ -363,7 +414,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
         ctx.logger.info({ slotSelected: slotSelectedResult }, 'SLOT_SEARCHING: selectSlotForBooking result (preloaded path)');
         if (!slotSelectedResult.selected) {
           ctx.logger.warn({ jobId: ctx.jobId }, 'selectSlotForBooking failed (preloaded path), halting at SLOT_FOUND');
-          throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND });
+          await throwBookingFailureHalt(ctx.page, 'preloaded', 'slot_selection_failed');
         }
 
         // Security code check — mirrors slotHunt normal path exactly.
@@ -420,7 +471,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
             });
             if (!enteredCode) {
               ctx.logger.warn({ jobId: ctx.jobId }, 'HITL resolved but no code provided — aborting');
-              throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND });
+              await throwBookingFailureHalt(ctx.page, 'preloaded', 'security_code_missing_after_hitl');
             }
             await ctx.rateLimiter.take();
             await ctx.throttler.beforeAction();
@@ -490,7 +541,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
             const swalText = await ctx.page.locator('.swal2-html-container, .swal2-content').textContent().catch(() => '');
             await swal.click().catch(() => {});
             ctx.logger.warn({ jobId: ctx.jobId, swalText }, 'Form validation error Swal (preloaded path) — booking failed');
-            throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND });
+            await throwBookingFailureHalt(ctx.page, 'preloaded', 'form_validation_error_swal', swalText ?? '');
           }
         } else {
           ctx.logger.warn({ jobId: ctx.jobId }, 'Swal did not appear — form may have submitted directly or validation failed (preloaded path)');
@@ -509,7 +560,12 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
           throw new FSMHalt({ lastState: JOB_STATES.HITL_EXPIRED });
         }
         ctx.logger.warn({ err, jobId: ctx.jobId }, 'Book step failed (preloaded path), halting at SLOT_FOUND');
-        throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND });
+        await throwBookingFailureHalt(
+          ctx.page,
+          'preloaded',
+          'book_step_exception',
+          err instanceof Error ? err.message : String(err)
+        );
       }
       // Submit tıklandı → randevu alındı kabul et; confirmation number varsa ekle, yoksa da COMPLETED.
       ctx.logger.info({ jobId: ctx.jobId, confirmationNumber }, 'Appointment booked (preloaded path)');
@@ -707,7 +763,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
             const swalText2 = await ctx.page.locator('.swal2-html-container, .swal2-content').textContent().catch(() => '');
             await swal2.click().catch(() => {});
             ctx.logger.warn({ jobId: ctx.jobId, swalText: swalText2 }, 'Form validation error Swal (post-HITL normal path)');
-            throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND });
+            await throwBookingFailureHalt(ctx.page, 'post-hitl', 'form_validation_error_swal', swalText2 ?? '');
           }
         } else {
           await dumpPostBookingArtifacts(ctx.page, ctx.tenantId, ctx.jobId, ctx.logger);
@@ -716,7 +772,12 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
       } catch (err) {
         if (err instanceof FSMHalt) throw err;
         ctx.logger.warn({ err, jobId: ctx.jobId }, 'Book step failed (post-HITL normal path)');
-        throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND });
+        await throwBookingFailureHalt(
+          ctx.page,
+          'post-hitl',
+          'book_step_exception',
+          err instanceof Error ? err.message : String(err)
+        );
       }
       ctx.logger.info({ jobId: ctx.jobId, confirmationNumber: confirmationNumberPost }, 'Appointment booked (post-HITL normal path)');
       throw new FSMHalt({
@@ -879,7 +940,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
             const swalText = await ctx.page.locator('.swal2-html-container, .swal2-content').textContent().catch(() => '');
             await swal.click().catch(() => {});
             ctx.logger.warn({ jobId: ctx.jobId, swalText }, 'Form validation error Swal (normal path) — booking failed');
-            throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND });
+            await throwBookingFailureHalt(ctx.page, 'normal', 'form_validation_error_swal', swalText ?? '');
           }
         } else {
           ctx.logger.warn({ jobId: ctx.jobId }, 'Swal did not appear — form may have submitted directly or validation failed (normal path)');
@@ -893,7 +954,12 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
         // FSMHalt thrown intentionally (e.g. HITL escalation) — must propagate, not be swallowed.
         if (err instanceof FSMHalt) throw err;
         ctx.logger.warn({ err, jobId: ctx.jobId }, 'Book step failed, halting at SLOT_FOUND');
-        throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND });
+        await throwBookingFailureHalt(
+          ctx.page,
+          'normal',
+          'book_step_exception',
+          err instanceof Error ? err.message : String(err)
+        );
       }
 
       // Submit tıklandı → randevu alındı kabul et; confirmation number varsa ekle, yoksa da COMPLETED.

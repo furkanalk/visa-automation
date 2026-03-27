@@ -21,6 +21,35 @@ function requireEnv(name: string): string {
 
 const CP_API_URL = requireEnv('CP_API_URL');
 
+function asPlainObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function toPromptLine(label: string, value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  return `- ${label}: ${text}`;
+}
+
+function buildBookingFailurePrompt(bookingFailure: Record<string, unknown> | null): string {
+  const base = 'Booking step failed after slot was found. Please check the portal and confirm or retry manually.';
+  if (!bookingFailure) return base;
+  const lines = [
+    toPromptLine('reason', bookingFailure.reason),
+    toPromptLine('path', bookingFailure.path),
+    toPromptLine('url', bookingFailure.url),
+    toPromptLine('submitDisabledAttr', bookingFailure.submitDisabledAttr),
+    toPromptLine('submitAriaDisabled', bookingFailure.submitAriaDisabled),
+    toPromptLine('enteredCodeLen', bookingFailure.enteredCodeLen),
+    toPromptLine('cfTokenLen', bookingFailure.cfTokenLen),
+    toPromptLine('swalText', bookingFailure.swalText),
+    toPromptLine('capturedAt', bookingFailure.capturedAt),
+  ].filter((line): line is string => Boolean(line));
+  return lines.length > 0 ? `${base}\n\nDetected diagnostics:\n${lines.join('\n')}` : base;
+}
+
 /** Thrown when job transitions to WAITING_HITL; runner must not release the agent (no completeJob/failJob). */
 export class HitlWaitingError extends Error {
   constructor(public readonly jobId: string) {
@@ -281,13 +310,16 @@ export async function processJob(
       const hitlType = 'MANUAL_REVIEW';
       const hitlExpiresSeconds =
         portalConfig.hitl.maxWaitSeconds > 0 ? portalConfig.hitl.maxWaitSeconds : undefined;
+      const resultMeta = asPlainObject((result as { meta?: unknown }).meta);
+      const bookingFailure = asPlainObject(resultMeta?.bookingFailure);
+      const prompt = buildBookingFailurePrompt(bookingFailure);
       const taskId = await createHitlTask({
         job_id,
         job_run_id: jobRun.id,
         tenant_id,
         type: hitlType,
         context: {
-          prompt: 'Booking step failed after slot was found. Please check the portal and confirm or retry manually.',
+          prompt,
           input_type: 'text',
           screenshot_url: (result as unknown as Record<string, unknown>).screenshotUrl as string | undefined,
         },
@@ -308,7 +340,10 @@ export async function processJob(
         tenant_id,
         JOB_STATES.SLOT_FOUND,
         JOB_STATES.WAITING_HITL,
-        { reason: 'Booking step failed after slot found; HITL required' },
+        {
+          reason: 'Booking step failed after slot found; HITL required',
+          ...(bookingFailure ? { booking_failure: bookingFailure } : {}),
+        },
         jobRun.id
       );
       await db.instance
