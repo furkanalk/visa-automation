@@ -24,8 +24,8 @@ export async function fillForm(args: FillFormArgs): Promise<void> {
   await throttler.beforeAction();
   await page.waitForSelector(S.form, { timeout: 15_000 });
 
-  // Fill selects (nationality, appointment, travelSubject, appointmentTime)
-  const selectKeys = ['nationality', 'appointment', 'travelSubject', 'appointmentTime'] as const;
+  // Fill customer-managed selects (appointmentTime is agent-managed later via slot selection).
+  const selectKeys = ['nationality', 'appointment', 'travelSubject'] as const;
   for (const key of selectKeys) {
     const value = formValues[key];
     if (!value) continue;

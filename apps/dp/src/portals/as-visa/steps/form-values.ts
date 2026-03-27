@@ -4,7 +4,7 @@
  *
  * Customer form stores: idNo, passportNumber, name, surname, middleName, birthDate, email, phone,
  * travelDateMode, travelDateAlgorithm, travelDateSingle, travelDateFrom, travelDateTo,
- * plus portal-specific keys: nationality, appointment, travelSubject, travelDate, appointmentDate, appointmentTime.
+ * plus portal-specific keys: nationality, appointment/appointmentType, travelSubject, travelDate, appointmentDate.
  *
  * open_dates (injected by CP slot-open): pre-filtered list of available dates within the customer's
  * appointment window. Used to pick appointmentDate automatically when not already set.
@@ -187,10 +187,13 @@ export function buildAsVisaFormValues(applicantData: Record<string, unknown>): R
 
     // Portal-specific (schema keys align with selectors)
     nationality: get('nationality'),
-    appointment: get('appointment'),
+    // customerFormSchema may expose either "appointment" or "appointmentType".
+    // Real AS-VISA payload key is "Appointment", so normalize both to appointment.
+    appointment: get('appointment') || get('appointmentType'),
     travelSubject: get('travelSubject'),
     travelDate,
     appointmentDate,
-    appointmentTime: get('appointmentTime'),
+    // appointmentTime is agent-managed (selected after datepicker/slot APIs), not customer-managed.
+    appointmentTime: '',
   };
 }

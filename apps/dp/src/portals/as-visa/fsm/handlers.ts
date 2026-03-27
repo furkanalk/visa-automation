@@ -316,6 +316,29 @@ async function throwBookingFailureHalt(
   throw new FSMHalt({ lastState: JOB_STATES.SLOT_FOUND, meta });
 }
 
+async function ensureRequiredDatesBeforeSubmit(page: Page, path: string): Promise<void> {
+  const dateState = await page
+    .evaluate(() => {
+      const travelDate = (document.querySelector('[name="TravelDate"]') as HTMLInputElement | null)?.value ?? '';
+      const appointmentDate = (document.querySelector('#datepicker') as HTMLInputElement | null)?.value ?? '';
+      return {
+        travelDate: travelDate.trim(),
+        appointmentDate: appointmentDate.trim(),
+      };
+    })
+    .catch(() => ({ travelDate: '', appointmentDate: '' }));
+
+  if (!dateState.travelDate || !dateState.appointmentDate) {
+    const missing = [
+      !dateState.travelDate ? 'TravelDate' : null,
+      !dateState.appointmentDate ? 'AppointmentDate' : null,
+    ]
+      .filter((v): v is string => Boolean(v))
+      .join(', ');
+    await throwBookingFailureHalt(page, path, 'required_date_missing_pre_submit', `Missing required date field(s): ${missing}`);
+  }
+}
+
 /**
  * Submit öncesi CAPTCHA / turnstile'ın çözülmesini bekler.
  * - Submit butonu disabled iken bekler (auto-solve: captchaAutoSolveDelayMs ms sonra enable olur).
@@ -517,6 +540,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
             reTCKN: g('[name="reTCKN"]'),
           };
         }).catch(() => ({}));
+        await ensureRequiredDatesBeforeSubmit(ctx.page, 'preloaded');
         ctx.logger.info({ jobId: ctx.jobId, ...preSubmitDiag }, 'Submit ready (preloaded path), clicking');
         // HTML dump: capture full page HTML just before submit for post-mortem analysis
         try {
@@ -744,6 +768,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
             appointmentTime: g('#AppointmentTime'),
           };
         }).catch(() => ({}));
+        await ensureRequiredDatesBeforeSubmit(ctx.page, 'post-hitl');
         // HTML dump: capture full page HTML just before submit for post-mortem analysis
         try {
           const html = await ctx.page.content();
@@ -916,6 +941,7 @@ export const asVisaHandlers: Partial<Record<JobState, StateHandler>> = {
             reTCKN: g('[name="reTCKN"]'),
           };
         }).catch(() => ({}));
+        await ensureRequiredDatesBeforeSubmit(ctx.page, 'normal');
         ctx.logger.info({ jobId: ctx.jobId, ...preSubmitDiag }, 'Submit ready (normal path), clicking');
         // HTML dump: capture full page HTML just before submit for post-mortem analysis
         try {

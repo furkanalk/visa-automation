@@ -582,12 +582,12 @@ function JobDetailModal({
   isRetryPending: boolean;
   isRequeuePending: boolean;
 }) {
-  const [activeTab, setActiveTab] = useState<"details" | "events" | "runs" | "files">("details");
+  const [activeTab, setActiveTab] = useState<"details" | "events" | "errors" | "runs" | "files">("details");
 
   const { data: events, isLoading: eventsLoading } = useQuery({
     queryKey: ["job-events", job.id],
     queryFn: () => cpApi.getJobEvents(job.id, 50),
-    enabled: activeTab === "events",
+    enabled: activeTab === "events" || activeTab === "errors",
   });
 
   const { data: runs, isLoading: runsLoading } = useQuery({
@@ -664,6 +664,16 @@ function JobDetailModal({
             }`}
           >
             Run History
+          </button>
+          <button
+            onClick={() => setActiveTab("errors")}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === "errors"
+                ? "border-primary text-primary"
+                : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+            }`}
+          >
+            Error Diagnostics
           </button>
           <button
             onClick={() => setActiveTab("files")}
@@ -890,6 +900,10 @@ function JobDetailModal({
             </div>
           )}
 
+          {activeTab === "errors" && (
+            <ErrorDiagnostics events={events?.items ?? []} loading={eventsLoading} />
+          )}
+
           {activeTab === "files" && (
             <div className="space-y-3">
               {screenshotsLoading ? (
@@ -909,6 +923,160 @@ function JobDetailModal({
       </div>
     </div>
   );
+}
+
+function ErrorDiagnostics({ events, loading }: { events: JobEvent[]; loading: boolean }) {
+  const [copied, setCopied] = useState(false);
+  if (loading) return <div className="text-center py-8 text-gray-500">Loading diagnostics...</div>;
+  if (!events.length) return <div className="text-center py-8 text-gray-500">No events recorded</div>;
+
+  const diag = getLatestErrorDiagnostics(events);
+  if (!diag) {
+    return (
+      <div className="space-y-3">
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-900/20 p-3 text-sm text-emerald-700 dark:text-emerald-400">
+          No error-like event found in recent timeline.
+        </div>
+      </div>
+    );
+  }
+
+  const bookingFailure = asRecord(diag.payload.booking_failure) ?? asRecord(diag.payload.bookingFailure);
+  const fromState = asText(diag.payload.from_state);
+  const toState = asText(diag.payload.to_state);
+  const reason = asText(diag.payload.reason);
+  const error = asText(diag.payload.error);
+  const errorKind = asText(diag.payload.error_kind);
+  const hint = asText(diag.payload.hint);
+
+  const handleCopy = async () => {
+    try {
+      const lines = [
+        `event_type: ${diag.event.event_type}`,
+        `created_at: ${diag.event.created_at}`,
+        `transition: ${fromState && toState ? `${fromState} -> ${toState}` : "-"}`,
+        `reason: ${reason || "-"}`,
+        `error: ${error || "-"}`,
+        `error_kind: ${errorKind || "-"}`,
+        ...(hint ? [`hint: ${hint}`] : []),
+        "",
+        "payload:",
+        JSON.stringify(diag.payload, null, 2),
+      ];
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // ignore clipboard errors (browser permission/context)
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-md border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20 p-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+            Last error event: {diag.event.event_type}
+          </p>
+          <span className="text-xs text-amber-700 dark:text-amber-400">
+            {new Date(diag.event.created_at).toLocaleString()}
+          </span>
+        </div>
+        <div className="mt-2">
+          <Button size="sm" variant="outline" onClick={handleCopy}>
+            {copied ? "Copied" : "Copy diagnostics"}
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <InfoCard label="Transition" value={fromState && toState ? `${fromState} → ${toState}` : "-"} />
+        <InfoCard label="Reason" value={reason || "-"} />
+        <InfoCard label="Error" value={error || "-"} />
+        <InfoCard label="Error kind" value={errorKind || "-"} />
+      </div>
+
+      {hint && (
+        <Card>
+          <CardHeader className="py-3">
+            <CardTitle className="text-sm">Hint</CardTitle>
+          </CardHeader>
+          <CardContent className="py-2">
+            <p className="text-sm text-gray-900 dark:text-white">{hint}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {bookingFailure && (
+        <Card>
+          <CardHeader className="py-3">
+            <CardTitle className="text-sm">Booking Failure Diagnostics</CardTitle>
+          </CardHeader>
+          <CardContent className="py-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <InfoCard label="Path" value={asText(bookingFailure.path) || "-"} />
+              <InfoCard label="Reason" value={asText(bookingFailure.reason) || "-"} />
+              <InfoCard label="URL" value={asText(bookingFailure.url) || "-"} />
+              <InfoCard label="Title" value={asText(bookingFailure.title) || "-"} />
+              <InfoCard label="submitDisabledAttr" value={asText(bookingFailure.submitDisabledAttr) || "-"} />
+              <InfoCard label="submitAriaDisabled" value={asText(bookingFailure.submitAriaDisabled) || "-"} />
+              <InfoCard label="enteredCodeLen" value={asText(bookingFailure.enteredCodeLen) || "-"} />
+              <InfoCard label="cfTokenLen" value={asText(bookingFailure.cfTokenLen) || "-"} />
+              <InfoCard label="capturedAt" value={asText(bookingFailure.capturedAt) || "-"} />
+              <InfoCard label="swalText" value={asText(bookingFailure.swalText) || "-"} />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader className="py-3">
+          <CardTitle className="text-sm">Raw payload</CardTitle>
+        </CardHeader>
+        <CardContent className="py-2">
+          <pre className="text-xs bg-gray-50 dark:bg-slate-900 p-3 rounded overflow-x-auto">
+            {JSON.stringify(diag.payload, null, 2)}
+          </pre>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function asText(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  return String(value);
+}
+
+function isErrorLikeEvent(event: JobEvent): boolean {
+  const t = (event.event_type || "").toLowerCase();
+  const payload = asRecord(event.payload);
+  if (!payload) return false;
+  if (t === "job_failed") return true;
+  if (payload.error || payload.error_kind || payload.booking_failure || payload.bookingFailure) return true;
+  const reason = asText(payload.reason).toLowerCase();
+  if (!reason) return false;
+  return (
+    reason.includes("failed") ||
+    reason.includes("error") ||
+    reason.includes("hitl required") ||
+    reason.includes("suspicious")
+  );
+}
+
+function getLatestErrorDiagnostics(events: JobEvent[]): { event: JobEvent; payload: Record<string, unknown> } | null {
+  const errorEvents = events
+    .filter(isErrorLikeEvent)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const first = errorEvents[0];
+  if (!first) return null;
+  const payload = asRecord(first.payload) ?? {};
+  return { event: first, payload };
 }
 
 function FileItem({ file }: { file: { job_id: string; filename: string; content_type: string } }) {
